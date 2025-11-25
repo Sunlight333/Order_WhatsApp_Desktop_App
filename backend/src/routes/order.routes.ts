@@ -4,6 +4,7 @@ import {
   getOrderController,
   createOrderController,
   updateOrderStatusController,
+  updateOrderController,
 } from '../controllers/order.controller';
 import { authenticate } from '../middleware/auth.middleware';
 
@@ -29,6 +30,13 @@ router.get('/:id', authenticate, getOrderController);
  * @access  Private
  */
 router.post('/', authenticate, createOrderController);
+
+/**
+ * @route   PUT /api/v1/orders/:id
+ * @desc    Update order details
+ * @access  Private
+ */
+router.put('/:id', authenticate, updateOrderController);
 
 /**
  * @route   PATCH /api/v1/orders/:id/status

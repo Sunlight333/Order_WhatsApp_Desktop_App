@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import { createOrderSchema, CreateOrderInput } from '../validators/order.validator';
-import { createOrder, getOrderById, listOrders, updateOrderStatus } from '../services/order.service';
+import { createOrderSchema, updateOrderSchema, CreateOrderInput, UpdateOrderInput } from '../validators/order.validator';
+import { createOrder, getOrderById, listOrders, updateOrderStatus, updateOrder } from '../services/order.service';
 import { createSuccessResponse } from '../utils/response.util';
 import { z } from 'zod';
 
@@ -103,6 +103,37 @@ export async function updateOrderStatusController(req: Request, res: Response): 
     const order = await updateOrderStatus(id, req.user.userId, status, notificationMethod);
 
     res.status(200).json(createSuccessResponse(order, 'Order status updated successfully'));
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * PUT /api/v1/orders/:id
+ * Update order details
+ */
+export async function updateOrderController(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+      });
+      return;
+    }
+
+    const { id } = req.params;
+
+    // Validate input
+    const validatedData: UpdateOrderInput = updateOrderSchema.parse(req.body);
+
+    // Update order
+    const order = await updateOrder(id, req.user.userId, validatedData);
+
+    res.status(200).json(createSuccessResponse(order, 'Order updated successfully'));
   } catch (error) {
     throw error;
   }

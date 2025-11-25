@@ -1,0 +1,22 @@
+/* Edit Order Form Styles - Reuses most styles from create-order.css */
+.edit-order-form {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+/* Additional styles specific to edit order if needed */
+.edit-notice {
+  background: var(--info-bg);
+  color: var(--info-color);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  margin-bottom: var(--spacing-lg);
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  border: 1px solid var(--info-border);
+}
+
+.edit-notice svg {
+  flex-shrink: 0;
+}

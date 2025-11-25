@@ -21,13 +21,14 @@ import orderRoutes from './routes/order.routes';
 import supplierRoutes from './routes/supplier.routes';
 import productRoutes from './routes/product.routes';
 import configRoutes from './routes/config.routes';
+import userRoutes from './routes/user.routes';
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/suppliers', supplierRoutes);
 app.use('/api/v1/products', productRoutes);
 app.use('/api/v1/config', configRoutes);
-// app.use('/api/v1/users', userRoutes);
+app.use('/api/v1/users', userRoutes);
 // etc.
 
 // Error handling middleware (must be last)

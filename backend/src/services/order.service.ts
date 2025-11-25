@@ -19,6 +19,22 @@ export interface CreateOrderInput {
   }>;
 }
 
+export interface UpdateOrderInput {
+  customerName?: string;
+  customerPhone: string;
+  observations?: string;
+  suppliers: Array<{
+    name: string;
+    supplierId?: string;
+    products: Array<{
+      productRef: string;
+      productId?: string;
+      quantity: string;
+      price: string;
+    }>;
+  }>;
+}
+
 /**
  * Create a new order
  */
@@ -363,4 +379,159 @@ export async function listOrders(options: {
       totalPages: Math.ceil(total / limit),
     },
   };
+}
+
+/**
+ * Update an existing order
+ */
+export async function updateOrder(orderId: string, userId: string, input: UpdateOrderInput) {
+  // Check if order exists
+  const existingOrder = await prisma.order.findUnique({
+    where: { id: orderId },
+  });
+
+  if (!existingOrder) {
+    throw createError('ORDER_NOT_FOUND', 'Order not found', 404);
+  }
+
+  // Execute transaction to update order and related data
+  await prisma.$transaction(async (tx) => {
+    // Helper functions for transaction context
+    const findOrCreateSupplierInTx = async (name: string) => {
+      const trimmedName = name.trim();
+      const allSuppliers = await tx.supplier.findMany();
+      let supplier = allSuppliers.find(
+        (s) => s.name.toLowerCase() === trimmedName.toLowerCase()
+      );
+
+      if (!supplier) {
+        supplier = await tx.supplier.create({
+          data: {
+            name: trimmedName,
+          },
+        });
+      }
+
+      return supplier;
+    };
+
+    const findOrCreateProductInTx = async (supplierId: string, reference: string) => {
+      const trimmedRef = reference.trim();
+      const products = await tx.product.findMany({
+        where: { supplierId },
+      });
+      
+      let product = products.find(
+        (p) => p.reference.toLowerCase() === trimmedRef.toLowerCase()
+      );
+
+      if (!product) {
+        product = await tx.product.create({
+          data: {
+            supplierId,
+            reference: trimmedRef,
+          },
+        });
+      }
+
+      return product;
+    };
+
+    // Update order basic info
+    const updatedOrder = await tx.order.update({
+      where: { id: orderId },
+      data: {
+        customerName: input.customerName?.trim(),
+        customerPhone: input.customerPhone.trim(),
+        observations: input.observations?.trim(),
+      },
+    });
+
+    // Delete existing order-supplier and order-product relationships
+    await tx.orderSupplier.deleteMany({
+      where: { orderId },
+    });
+
+    await tx.orderProduct.deleteMany({
+      where: { orderId },
+    });
+
+    // Process suppliers and products (similar to create)
+    const orderSuppliers: Array<{ orderId: string; supplierId: string }> = [];
+    const orderProducts: Array<{
+      orderId: string;
+      supplierId: string;
+      productRef: string;
+      quantity: string;
+      price: string;
+    }> = [];
+
+    for (const supplierData of input.suppliers) {
+      // Find or create supplier
+      let supplier;
+      if (supplierData.supplierId) {
+        supplier = await tx.supplier.findUnique({ where: { id: supplierData.supplierId } });
+        if (!supplier) {
+          throw createError('SUPPLIER_NOT_FOUND', 'Supplier not found', 404);
+        }
+      } else {
+        supplier = await findOrCreateSupplierInTx(supplierData.name);
+      }
+
+      orderSuppliers.push({
+        orderId,
+        supplierId: supplier.id,
+      });
+
+      // Process products for this supplier
+      for (const productData of supplierData.products) {
+        // Find or create product
+        let product;
+        if (productData.productId) {
+          product = await tx.product.findUnique({ where: { id: productData.productId } });
+          if (!product) {
+            throw createError('PRODUCT_NOT_FOUND', 'Product not found', 404);
+          }
+        } else {
+          product = await findOrCreateProductInTx(supplier.id, productData.productRef);
+        }
+
+        orderProducts.push({
+          orderId,
+          supplierId: supplier.id,
+          productRef: product.reference,
+          quantity: productData.quantity.trim(),
+          price: productData.price.trim(),
+        });
+      }
+    }
+
+    // Create new order-supplier relationships
+    await tx.orderSupplier.createMany({
+      data: orderSuppliers,
+    });
+
+    // Create new order products
+    if (orderProducts.length > 0) {
+      await tx.orderProduct.createMany({
+        data: orderProducts,
+      });
+    }
+
+    // Create audit log
+    await tx.auditLog.create({
+      data: {
+        orderId,
+        userId,
+        action: 'UPDATE',
+        metadata: JSON.stringify({
+          suppliersCount: input.suppliers.length,
+          productsCount: input.suppliers.reduce((sum, s) => sum + s.products.length, 0),
+        }),
+      },
+    });
+  });
+
+  // Return updated order
+  return getOrderById(orderId);
 }

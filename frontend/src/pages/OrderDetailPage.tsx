@@ -5,19 +5,17 @@ import {
   Phone, 
   MessageSquare, 
   Edit2, 
-  Save, 
-  X, 
   Clock,
   User,
   Package,
   AlertCircle,
-  CheckCircle,
   PhoneCall,
   Loader2,
   Plus
 } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
+import ConfirmModal from '../components/ConfirmModal';
 import '../styles/order-detail.css';
 
 interface Supplier {
@@ -464,56 +462,27 @@ export default function OrderDetailPage() {
       </div>
 
       {/* Status Update Modal */}
-      {showStatusModal && (
-        <div className="modal-overlay" onClick={() => setShowStatusModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
-            <div className="modal-header">
-              <h3>Confirm Status Update</h3>
-              <button
-                className="btn-icon"
-                onClick={() => setShowStatusModal(false)}
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="modal-body">
-              <p>Are you sure you want to update the order status to:</p>
-              <div className="status-preview">
-                <span className={`status-badge ${getStatusColor(selectedStatus!)}`}>
-                  {getStatusIcon(selectedStatus!)}
-                  {getStatusLabel(selectedStatus!)}
-                </span>
-              </div>
-            </div>
-            <div className="modal-actions">
-              <button
-                className="btn-secondary"
-                onClick={() => setShowStatusModal(false)}
-                disabled={updating}
-              >
-                Cancel
-              </button>
-              <button
-                className="btn-primary"
-                onClick={confirmStatusUpdate}
-                disabled={updating}
-              >
-                {updating ? (
-                  <>
-                    <Loader2 className="spinner" size={18} />
-                    Updating...
-                  </>
-                ) : (
-                  <>
-                    <CheckCircle size={18} />
-                    Confirm Update
-                  </>
-                )}
-              </button>
+      <ConfirmModal
+        isOpen={showStatusModal}
+        onClose={() => setShowStatusModal(false)}
+        onConfirm={confirmStatusUpdate}
+        title="Confirm Status Update"
+        message={
+          <div>
+            <p>Are you sure you want to update the order status to:</p>
+            <div className="status-preview">
+              <span className={`status-badge ${getStatusColor(selectedStatus!)}`}>
+                {getStatusIcon(selectedStatus!)}
+                {getStatusLabel(selectedStatus!)}
+              </span>
             </div>
           </div>
-        </div>
-      )}
+        }
+        confirmText="Confirm Update"
+        cancelText="Cancel"
+        type="info"
+        loading={updating}
+      />
     </div>
   );
 }

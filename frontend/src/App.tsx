@@ -6,6 +6,10 @@ import DashboardPage from './pages/DashboardPage';
 import OrdersPage from './pages/OrdersPage';
 import CreateOrderPage from './pages/CreateOrderPage';
 import OrderDetailPage from './pages/OrderDetailPage';
+import EditOrderPage from './pages/EditOrderPage';
+import UsersPage from './pages/UsersPage';
+import SuppliersPage from './pages/SuppliersPage';
+import ProductsPage from './pages/ProductsPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import MainLayout from './components/layout/MainLayout';
 import Toaster from './components/Toaster';
@@ -79,14 +83,21 @@ function App() {
           }
         />
         <Route
+          path="/orders/:id/edit"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <EditOrderPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/suppliers"
           element={
             <ProtectedRoute>
               <MainLayout>
-                <div className="page-container">
-                  <h1>Suppliers</h1>
-                  <p>Supplier management will be implemented in Phase 4</p>
-                </div>
+                <SuppliersPage />
               </MainLayout>
             </ProtectedRoute>
           }
@@ -96,10 +107,7 @@ function App() {
           element={
             <ProtectedRoute>
               <MainLayout>
-                <div className="page-container">
-                  <h1>Products</h1>
-                  <p>Product management will be implemented in Phase 4</p>
-                </div>
+                <ProductsPage />
               </MainLayout>
             </ProtectedRoute>
           }
@@ -109,10 +117,7 @@ function App() {
           element={
             <ProtectedRoute>
               <MainLayout>
-                <div className="page-container">
-                  <h1>Users</h1>
-                  <p>User management will be implemented in Phase 4</p>
-                </div>
+                <UsersPage />
               </MainLayout>
             </ProtectedRoute>
           }

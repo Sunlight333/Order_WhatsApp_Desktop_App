@@ -84,10 +84,13 @@ button {
   /* Semantic Colors */
   --success: #10b981;
   --success-light: #d1fae5;
+  --success-hover: #059669;
   --warning: #f59e0b;
   --warning-light: #fef3c7;
+  --warning-hover: #d97706;
   --error: #ef4444;
   --error-light: #fee2e2;
+  --error-hover: #dc2626;
   --info: #0891b2;
   --info-light: #cffafe;
 
@@ -103,6 +106,19 @@ button {
   --radius-lg: 0.75rem;
   --radius-xl: 1rem;
   --radius-full: 9999px;
+  
+  /* Component mappings */
+  --primary-color: var(--primary);
+  --primary-color-alpha: rgba(8, 145, 178, 0.1);
+  --success-color: var(--success);
+  --warning-color: var(--warning);
+  --error-color: var(--error);
+  --info-color: var(--info);
+  --card-bg: var(--bg-primary);
+  --input-bg: var(--bg-primary);
+  --hover-bg: var(--bg-hover);
+  --border-color: var(--border-primary);
+  --border-light: var(--border-secondary);
 }
 
 /* Button Base Styles */
@@ -183,10 +199,13 @@ button {
   /* Semantic Colors */
   --success: #34d399;
   --success-light: #065f46;
+  --success-hover: #10b981;
   --warning: #fbbf24;
   --warning-light: #78350f;
+  --warning-hover: #f59e0b;
   --error: #f87171;
   --error-light: #7f1d1d;
+  --error-hover: #ef4444;
   --info: #06b6d4;
   --info-light: #155e75;
 
@@ -195,6 +214,19 @@ button {
   --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
   --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+  
+  /* Component mappings */
+  --primary-color: var(--primary);
+  --primary-color-alpha: rgba(6, 182, 212, 0.1);
+  --success-color: var(--success);
+  --warning-color: var(--warning);
+  --error-color: var(--error);
+  --info-color: var(--info);
+  --card-bg: var(--bg-primary);
+  --input-bg: var(--bg-secondary);
+  --hover-bg: var(--bg-hover);
+  --border-color: var(--border-primary);
+  --border-light: var(--border-secondary);
 }
 
 body {

@@ -1,16 +1,118 @@
 import { Request, Response } from 'express';
-import { listProductsBySupplier } from '../services/product.service';
+import {
+  listProducts,
+  getProductById,
+  createProduct,
+  updateProduct,
+  deleteProduct,
+  CreateProductInput,
+  UpdateProductInput,
+} from '../services/product.service';
+import { createProductSchema, updateProductSchema } from '../validators/product.validator';
 import { createSuccessResponse } from '../utils/response.util';
 
 /**
  * GET /api/v1/products
- * List products, optionally filtered by supplier (for autocomplete hints)
+ * List products (optionally filtered by supplier)
  */
 export async function listProductsController(req: Request, res: Response): Promise<void> {
   try {
     const supplierId = req.query.supplierId as string | undefined;
-    const products = await listProductsBySupplier(supplierId);
+    const products = await listProducts(supplierId);
     res.status(200).json(createSuccessResponse(products));
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * GET /api/v1/products/:id
+ * Get product by ID
+ */
+export async function getProductController(req: Request, res: Response): Promise<void> {
+  try {
+    const { id } = req.params;
+    const product = await getProductById(id);
+    res.status(200).json(createSuccessResponse(product));
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * POST /api/v1/products
+ * Create a new product
+ */
+export async function createProductController(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+      });
+      return;
+    }
+
+    const validatedData: CreateProductInput = createProductSchema.parse(req.body);
+    const product = await createProduct(validatedData);
+
+    res.status(201).json(createSuccessResponse(product, 'Product created successfully'));
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * PUT /api/v1/products/:id
+ * Update product
+ */
+export async function updateProductController(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+      });
+      return;
+    }
+
+    const { id } = req.params;
+    const validatedData: UpdateProductInput = updateProductSchema.parse(req.body);
+    const product = await updateProduct(id, validatedData);
+
+    res.status(200).json(createSuccessResponse(product, 'Product updated successfully'));
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * DELETE /api/v1/products/:id
+ * Delete product
+ */
+export async function deleteProductController(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+      });
+      return;
+    }
+
+    const { id } = req.params;
+    await deleteProduct(id);
+
+    res.status(200).json(createSuccessResponse(null, 'Product deleted successfully'));
   } catch (error) {
     throw error;
   }

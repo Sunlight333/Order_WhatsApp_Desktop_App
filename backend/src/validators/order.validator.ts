@@ -26,3 +26,7 @@ export const createOrderSchema = z.object({
 
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 
+// Update order schema (same as create)
+export const updateOrderSchema = createOrderSchema;
+export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;
+
