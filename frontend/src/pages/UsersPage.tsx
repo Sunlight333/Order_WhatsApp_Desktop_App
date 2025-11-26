@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Shield, User as UserIcon, Loader2, Search, X } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Plus, Edit2, Trash2, Shield, User as UserIcon, Loader2, Search, X, Upload, Image as ImageIcon } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
@@ -9,6 +9,7 @@ interface User {
   id: string;
   username: string;
   role: 'SUPER_ADMIN' | 'USER';
+  avatar?: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -17,6 +18,8 @@ interface UserFormData {
   username: string;
   password: string;
   role: 'SUPER_ADMIN' | 'USER';
+  avatar?: File | null;
+  avatarPreview?: string | null;
 }
 
 export default function UsersPage() {
@@ -31,9 +34,13 @@ export default function UsersPage() {
     username: '',
     password: '',
     role: 'USER',
+    avatar: null,
+    avatarPreview: null,
   });
   const [submitting, setSubmitting] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const editAvatarInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     fetchUsers();
@@ -60,6 +67,8 @@ export default function UsersPage() {
       username: '',
       password: '',
       role: 'USER',
+      avatar: null,
+      avatarPreview: null,
     });
     setShowCreateModal(true);
   };
@@ -70,8 +79,42 @@ export default function UsersPage() {
       username: user.username,
       password: '',
       role: user.role,
+      avatar: null,
+      avatarPreview: user.avatar ? `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}${user.avatar}` : null,
     });
     setShowEditModal(true);
+  };
+
+  const handleAvatarChange = (e: React.ChangeEvent<HTMLInputElement>, isEdit: boolean = false) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        toast.error('Please select an image file');
+        return;
+      }
+      // Validate file size (5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error('Image size must be less than 5MB');
+        return;
+      }
+      
+      setFormData({
+        ...formData,
+        avatar: file,
+        avatarPreview: URL.createObjectURL(file),
+      });
+    }
+  };
+
+  const handleRemoveAvatar = () => {
+    setFormData({
+      ...formData,
+      avatar: null,
+      avatarPreview: null,
+    });
+    if (avatarInputRef.current) avatarInputRef.current.value = '';
+    if (editAvatarInputRef.current) editAvatarInputRef.current.value = '';
   };
 
   const handleDelete = (user: User) => {
@@ -87,7 +130,29 @@ export default function UsersPage() {
 
     try {
       setSubmitting(true);
-      await api.post('/users', formData);
+      
+      // Create user first
+      const userData: any = {
+        username: formData.username,
+        password: formData.password,
+        role: formData.role,
+      };
+      
+      const response = await api.post('/users', userData);
+      const newUser = response.data.data;
+
+      // Upload avatar if provided
+      if (formData.avatar) {
+        const formDataUpload = new FormData();
+        formDataUpload.append('avatar', formData.avatar);
+        
+        await api.post(`/users/${newUser.id}/avatar`, formDataUpload, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      }
+
       toast.success('User created successfully');
       setShowCreateModal(false);
       fetchUsers();
@@ -120,7 +185,21 @@ export default function UsersPage() {
         updateData.password = formData.password;
       }
 
+      // Update user data
       await api.put(`/users/${selectedUser?.id}`, updateData);
+
+      // Upload new avatar if provided
+      if (formData.avatar) {
+        const formDataUpload = new FormData();
+        formDataUpload.append('avatar', formData.avatar);
+        
+        await api.post(`/users/${selectedUser?.id}/avatar`, formDataUpload, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      }
+
       toast.success('User updated successfully');
       setShowEditModal(false);
       setSelectedUser(null);
@@ -234,7 +313,13 @@ export default function UsersPage() {
                 <tr key={user.id} className="user-row">
                   <td>
                     <div className="user-info">
-                      {user.role === 'SUPER_ADMIN' ? (
+                      {user.avatar ? (
+                        <img 
+                          src={`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}${user.avatar}`} 
+                          alt={user.username}
+                          className="user-avatar"
+                        />
+                      ) : user.role === 'SUPER_ADMIN' ? (
                         <Shield size={18} className="role-icon admin" />
                       ) : (
                         <UserIcon size={18} className="role-icon user" />
@@ -282,6 +367,46 @@ export default function UsersPage() {
         title="Create New User"
         message={
           <div className="user-form">
+            <div className="form-group">
+              <label>Avatar (Optional)</label>
+              <div className="avatar-upload-container">
+                {formData.avatarPreview ? (
+                  <div className="avatar-preview">
+                    <img src={formData.avatarPreview} alt="Avatar preview" />
+                    <button
+                      type="button"
+                      className="btn-remove-avatar"
+                      onClick={handleRemoveAvatar}
+                      title="Remove avatar"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="avatar-placeholder">
+                    <ImageIcon size={24} />
+                    <span>No avatar</span>
+                  </div>
+                )}
+                <input
+                  ref={avatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleAvatarChange(e, false)}
+                  className="avatar-input"
+                  id="avatar-upload"
+                  style={{ display: 'none' }}
+                />
+                <button
+                  type="button"
+                  className="btn-upload-avatar"
+                  onClick={() => avatarInputRef.current?.click()}
+                >
+                  <Upload size={16} />
+                  {formData.avatarPreview ? 'Change Avatar' : 'Upload Avatar'}
+                </button>
+              </div>
+            </div>
             <div className="form-group">
               <label>
                 Username <span className="required">*</span>
@@ -340,6 +465,46 @@ export default function UsersPage() {
         title="Edit User"
         message={
           <div className="user-form">
+            <div className="form-group">
+              <label>Avatar (Optional)</label>
+              <div className="avatar-upload-container">
+                {formData.avatarPreview ? (
+                  <div className="avatar-preview">
+                    <img src={formData.avatarPreview} alt="Avatar preview" />
+                    <button
+                      type="button"
+                      className="btn-remove-avatar"
+                      onClick={handleRemoveAvatar}
+                      title="Remove avatar"
+                    >
+                      <X size={16} />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="avatar-placeholder">
+                    <ImageIcon size={24} />
+                    <span>No avatar</span>
+                  </div>
+                )}
+                <input
+                  ref={editAvatarInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={(e) => handleAvatarChange(e, true)}
+                  className="avatar-input"
+                  id="edit-avatar-upload"
+                  style={{ display: 'none' }}
+                />
+                <button
+                  type="button"
+                  className="btn-upload-avatar"
+                  onClick={() => editAvatarInputRef.current?.click()}
+                >
+                  <Upload size={16} />
+                  {formData.avatarPreview ? 'Change Avatar' : 'Upload Avatar'}
+                </button>
+              </div>
+            </div>
             <div className="form-group">
               <label>
                 Username <span className="required">*</span>

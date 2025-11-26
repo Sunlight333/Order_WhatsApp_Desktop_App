@@ -1,5 +1,9 @@
 import { PrismaClient } from '@prisma/client';
 import bcrypt from 'bcrypt';
+import dotenv from 'dotenv';
+
+// Load environment variables
+dotenv.config();
 
 const prisma = new PrismaClient();
 
@@ -36,6 +40,29 @@ async function main() {
     console.log(`   Role: ${admin.role}`);
     console.log('');
     console.log('⚠️  IMPORTANT: Change the default password after first login!');
+  }
+
+  // Create default configurations
+  const defaultConfigs = [
+    {
+      key: 'whatsapp_default_message',
+      value: 'Hola, tu pedido está listo para recoger.',
+    },
+  ];
+
+  for (const config of defaultConfigs) {
+    const existingConfig = await prisma.config.findUnique({
+      where: { key: config.key },
+    });
+
+    if (existingConfig) {
+      console.log(`✅ Config '${config.key}' already exists, skipping creation`);
+    } else {
+      await prisma.config.create({
+        data: config,
+      });
+      console.log(`✅ Config '${config.key}' created`);
+    }
   }
 
   console.log('✅ Seeding completed!');

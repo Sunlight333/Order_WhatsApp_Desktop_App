@@ -1,6 +1,8 @@
-import React, { useEffect } from 'react';
+import { useEffect } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
+import { configService } from './services/config.service';
+import { updateApiBaseUrl } from './lib/api';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import OrdersPage from './pages/OrdersPage';
@@ -10,6 +12,7 @@ import EditOrderPage from './pages/EditOrderPage';
 import UsersPage from './pages/UsersPage';
 import SuppliersPage from './pages/SuppliersPage';
 import ProductsPage from './pages/ProductsPage';
+import SettingsPage from './pages/SettingsPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import MainLayout from './components/layout/MainLayout';
 import Toaster from './components/Toaster';
@@ -19,6 +22,35 @@ function App() {
   const { checkAuth, isAuthenticated } = useAuthStore();
 
   useEffect(() => {
+    // Initialize config service and update API base URL
+    const initConfig = async () => {
+      try {
+        const config = await configService.loadConfig();
+        
+        // Apply theme from config
+        if (config.theme) {
+          const root = document.documentElement;
+          if (config.theme === 'system') {
+            const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+            root.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+            // Sync localStorage with config
+            localStorage.removeItem('theme');
+          } else {
+            root.setAttribute('data-theme', config.theme);
+            // Sync localStorage with config
+            localStorage.setItem('theme', config.theme);
+          }
+        }
+        
+        // Update API base URL after config is loaded
+        updateApiBaseUrl();
+      } catch (error) {
+        console.error('Failed to initialize config:', error);
+      }
+    };
+
+    initConfig();
+    
     // Check authentication on app load
     checkAuth();
   }, [checkAuth]);
@@ -30,7 +62,7 @@ function App() {
         {/* Public routes */}
         <Route
           path="/login"
-          element={isAuthenticated ? <Navigate to="/orders" replace /> : <LoginPage />}
+          element={isAuthenticated ? <Navigate to="/dashboard" replace /> : <LoginPage />}
         />
 
         {/* Protected routes */}
@@ -38,7 +70,7 @@ function App() {
           path="/"
           element={
             <ProtectedRoute>
-              <Navigate to="/orders" replace />
+              <Navigate to="/dashboard" replace />
             </ProtectedRoute>
           }
         />
@@ -122,17 +154,17 @@ function App() {
             </ProtectedRoute>
           }
         />
+        {/* Public settings route - accessible without login */}
         <Route
           path="/settings"
           element={
-            <ProtectedRoute>
+            isAuthenticated ? (
               <MainLayout>
-                <div className="page-container">
-                  <h1>Settings</h1>
-                  <p>Settings page will be implemented in Phase 5</p>
-                </div>
+                <SettingsPage />
               </MainLayout>
-            </ProtectedRoute>
+            ) : (
+              <SettingsPage />
+            )
           }
         />
 

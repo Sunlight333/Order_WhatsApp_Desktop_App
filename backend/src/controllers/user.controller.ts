@@ -2,6 +2,8 @@ import { Request, Response } from 'express';
 import { createUserSchema, updateUserSchema, CreateUserInput, UpdateUserInput } from '../validators/user.validator';
 import { listUsers, getUserById, createUser, updateUser, deleteUser } from '../services/user.service';
 import { createSuccessResponse } from '../utils/response.util';
+import { getAvatarUrl } from '../middleware/upload.middleware';
+import path from 'path';
 
 /**
  * GET /api/v1/users
@@ -104,6 +106,51 @@ export async function deleteUserController(req: Request, res: Response): Promise
     await deleteUser(id, req.user.userId);
 
     res.status(200).json(createSuccessResponse(null, 'User deleted successfully'));
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * POST /api/v1/users/:id/avatar
+ * Upload user avatar
+ */
+export async function uploadAvatarController(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+      });
+      return;
+    }
+
+    const { id } = req.params;
+    const file = req.file;
+
+    if (!file) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'NO_FILE',
+          message: 'No file uploaded',
+        },
+      });
+      return;
+    }
+
+    // Get just the filename (not full path)
+    const filename = path.basename(file.path);
+    const avatarUrl = getAvatarUrl(filename);
+
+    // Update user with avatar
+    const updateData: UpdateUserInput = { avatar: avatarUrl };
+    const user = await updateUser(id, updateData, req.user.userId);
+
+    res.status(200).json(createSuccessResponse(user, 'Avatar uploaded successfully'));
   } catch (error) {
     throw error;
   }

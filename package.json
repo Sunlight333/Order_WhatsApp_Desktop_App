@@ -2,12 +2,12 @@
   "name": "order-whatsapp-desktop-app",
   "version": "1.0.0",
   "description": "Order Management Desktop Application with WhatsApp Integration",
-  "main": "electron/main.ts",
+  "main": "electron-main.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:electron\"",
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
-    "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "dev:electron": "wait-on http://localhost:5173 http://localhost:3000/api/v1/health && cross-env NODE_ENV=development electron .",
     "build": "npm run build:backend && npm run build:frontend && npm run build:electron",
     "build:backend": "cd backend && npm run build",
     "build:frontend": "cd frontend && npm run build",
@@ -26,14 +26,51 @@
   "license": "MIT",
   "devDependencies": {
     "concurrently": "^8.2.2",
+    "cross-env": "^7.0.3",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
+    "tsx": "^4.7.0",
     "wait-on": "^7.2.0"
   },
   "workspaces": [
     "backend",
     "frontend",
     "shared"
-  ]
+  ],
+  "build": {
+    "appId": "com.orderwhatsapp.desktop",
+    "productName": "Order WhatsApp Desktop",
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "electron/dist/**/*",
+      "frontend/dist/**/*",
+      "backend/dist/**/*",
+      "backend/prisma/**/*",
+      "!backend/prisma/**/*.db-journal"
+    ],
+    "win": {
+      "icon": "frontend/public/assets/images/logo.png",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ]
+    },
+    "mac": {
+      "icon": "frontend/public/assets/images/logo.png",
+      "category": "public.app-category.business"
+    },
+    "linux": {
+      "icon": "frontend/public/assets/images/logo.png",
+      "target": ["AppImage", "deb"]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
+  }
 }
 

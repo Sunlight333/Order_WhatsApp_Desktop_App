@@ -2,6 +2,7 @@ export interface User {
   id: string;
   username: string;
   role: 'SUPER_ADMIN' | 'USER';
+  avatar?: string | null;
   createdAt?: string;
 }
 

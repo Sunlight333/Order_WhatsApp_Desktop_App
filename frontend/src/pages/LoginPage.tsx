@@ -1,6 +1,6 @@
 import { useState, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { LogIn, Loader2 } from 'lucide-react';
+import { LogIn, Loader2, Settings } from 'lucide-react';
 import { useAuthStore } from '../store/authStore';
 import toast from 'react-hot-toast';
 
@@ -104,6 +104,22 @@ export default function LoginPage() {
           <p className="login-hint">
             Default credentials: <strong>admin</strong> / <strong>admin123</strong>
           </p>
+          <button
+            type="button"
+            onClick={() => navigate('/settings')}
+            className="btn-secondary"
+            style={{
+              marginTop: '1rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              width: '100%',
+              justifyContent: 'center',
+            }}
+          >
+            <Settings size={18} />
+            Configure Application Settings
+          </button>
         </div>
       </div>
     </div>

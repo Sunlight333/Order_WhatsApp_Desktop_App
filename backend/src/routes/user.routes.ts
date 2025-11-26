@@ -5,8 +5,10 @@ import {
   createUserController,
   updateUserController,
   deleteUserController,
+  uploadAvatarController,
 } from '../controllers/user.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
+import { uploadAvatar } from '../middleware/upload.middleware';
 
 const router = Router();
 
@@ -19,5 +21,6 @@ router.get('/:id', getUserController);
 router.post('/', createUserController);
 router.put('/:id', updateUserController);
 router.delete('/:id', deleteUserController);
+router.post('/:id/avatar', uploadAvatar.single('avatar'), uploadAvatarController);
 
 export default router;

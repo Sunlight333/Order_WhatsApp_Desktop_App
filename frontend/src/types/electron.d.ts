@@ -1,7 +1,7 @@
-import { contextBridge, ipcRenderer } from 'electron';
-
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
+/**
+ * Electron API Type Definitions
+ * These types match the API exposed in electron/preload.ts
+ */
 
 interface AppConfig {
   mode: 'server' | 'client';
@@ -20,15 +20,6 @@ interface AppConfig {
   theme?: 'light' | 'dark' | 'system';
 }
 
-contextBridge.exposeInMainWorld('electron', {
-  getVersion: () => ipcRenderer.invoke('get-app-version'),
-  config: {
-    get: (): Promise<AppConfig> => ipcRenderer.invoke('config:get'),
-    save: (config: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke('config:save', config),
-  },
-});
-
-// Type definitions for TypeScript
 declare global {
   interface Window {
     electron: {
@@ -40,4 +31,6 @@ declare global {
     };
   }
 }
+
+export {};
 

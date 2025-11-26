@@ -11,7 +11,8 @@ import {
   AlertCircle,
   PhoneCall,
   Loader2,
-  Plus
+  Plus,
+  CheckCircle
 } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
@@ -142,27 +143,42 @@ export default function OrderDetailPage() {
 
     try {
       // Get WhatsApp message template
-      const configResponse = await api.get<{
-        success: true;
-        data: { value: string };
-      }>('/config/whatsapp_default_message');
+      let message = 'Hola, tu pedido está listo para recoger.';
+      
+      try {
+        const configResponse = await api.get<{
+          success: true;
+          data: { value: string };
+        }>('/config/whatsapp_default_message');
+        
+        if (configResponse.data.data?.value) {
+          message = configResponse.data.data.value;
+        }
+      } catch (configError) {
+        console.warn('Failed to load WhatsApp message config, using default');
+      }
 
-      const message = configResponse.data.data.value || 'Hola, tu pedido está listo para recoger.';
       const phone = order.customerPhone.replace(/\D/g, ''); // Remove non-digits
       const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
 
-      // Open WhatsApp
+      // Open WhatsApp in new tab
       window.open(whatsappUrl, '_blank');
 
-      // Automatically update status to NOTIFIED_WHATSAPP
-      await updateOrderStatus('NOTIFIED_WHATSAPP');
+      // Automatically update status to NOTIFIED_WHATSAPP after a short delay
+      // This gives user time to see the WhatsApp window open
+      setTimeout(async () => {
+        try {
+          await updateOrderStatus('NOTIFIED_WHATSAPP');
+          toast.success('Order status updated to Notified (WhatsApp)');
+        } catch (error: any) {
+          console.error('Failed to update status:', error);
+          // Don't show error toast here to avoid interrupting user experience
+        }
+      }, 500);
       
     } catch (error: any) {
-      // If config fails, still open WhatsApp with default message
-      const phone = order.customerPhone.replace(/\D/g, '');
-      const defaultMessage = 'Hola, tu pedido está listo para recoger.';
-      const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(defaultMessage)}`;
-      window.open(whatsappUrl, '_blank');
+      toast.error('Failed to open WhatsApp. Please check the phone number.');
+      console.error('WhatsApp error:', error);
     }
   };
 
@@ -373,7 +389,7 @@ export default function OrderDetailPage() {
                 </button>
                 <button
                   className="status-action-btn green"
-                  onClick={() => handleWhatsAppClick}
+                  onClick={handleWhatsAppClick}
                   disabled={updating}
                 >
                   <MessageSquare size={20} />

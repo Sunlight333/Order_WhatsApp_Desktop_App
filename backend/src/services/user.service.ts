@@ -8,52 +8,98 @@ export interface CreateUserInput {
   username: string;
   password: string;
   role: 'SUPER_ADMIN' | 'USER';
+  avatar?: string | null;
 }
 
 export interface UpdateUserInput {
   username?: string;
   password?: string;
   role?: 'SUPER_ADMIN' | 'USER';
+  avatar?: string | null;
 }
 
 /**
  * List all users
  */
 export async function listUsers() {
-  const users = await prisma.user.findMany({
-    select: {
-      id: true,
-      username: true,
-      role: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+  try {
+    const users = await prisma.user.findMany({
+      select: {
+        id: true,
+        username: true,
+        role: true,
+        avatar: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+      orderBy: { createdAt: 'desc' },
+    });
 
-  return users;
+    return users;
+  } catch (error: any) {
+    // If avatar column doesn't exist yet, query without it
+    if (error.code === 'P2022' && error.meta?.column?.includes('avatar')) {
+      const users = await prisma.user.findMany({
+        select: {
+          id: true,
+          username: true,
+          role: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: { createdAt: 'desc' },
+      });
+
+      return users.map(user => ({ ...user, avatar: null }));
+    }
+    throw error;
+  }
 }
 
 /**
  * Get user by ID
  */
 export async function getUserById(userId: string) {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      username: true,
-      role: true,
-      createdAt: true,
-      updatedAt: true,
-    },
-  });
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        role: true,
+        avatar: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
 
-  if (!user) {
-    throw createError('USER_NOT_FOUND', 'User not found', 404);
+    if (!user) {
+      throw createError('USER_NOT_FOUND', 'User not found', 404);
+    }
+
+    return user;
+  } catch (error: any) {
+    // If avatar column doesn't exist yet, query without it
+    if (error.code === 'P2022' && error.meta?.column?.includes('avatar')) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          username: true,
+          role: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      });
+
+      if (!user) {
+        throw createError('USER_NOT_FOUND', 'User not found', 404);
+      }
+
+      return { ...user, avatar: null };
+    }
+    throw error;
   }
-
-  return user;
 }
 
 /**
@@ -78,11 +124,13 @@ export async function createUser(input: CreateUserInput) {
       username: input.username,
       password: hashedPassword,
       role: input.role,
+      avatar: input.avatar || null,
     },
     select: {
       id: true,
       username: true,
       role: true,
+      avatar: true,
       createdAt: true,
       updatedAt: true,
     },
@@ -135,6 +183,10 @@ export async function updateUser(userId: string, input: UpdateUserInput, current
     updateData.password = await bcrypt.hash(input.password, 10);
   }
 
+  if (input.avatar !== undefined) {
+    updateData.avatar = input.avatar;
+  }
+
   // Update user
   const updatedUser = await prisma.user.update({
     where: { id: userId },
@@ -143,6 +195,7 @@ export async function updateUser(userId: string, input: UpdateUserInput, current
       id: true,
       username: true,
       role: true,
+      avatar: true,
       createdAt: true,
       updatedAt: true,
     },

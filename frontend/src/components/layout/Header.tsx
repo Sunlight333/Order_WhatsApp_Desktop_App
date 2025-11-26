@@ -22,8 +22,12 @@ export default function Header() {
     <header className="app-header">
       <div className="header-left">
         <div className="logo">
-          <span className="logo-icon">📦</span>
-          <h1 className="logo-text">Order Management</h1>
+          <img 
+            src="/assets/images/logo.png" 
+            alt="Logo" 
+            className="logo-icon"
+          />
+          <h1 className="logo-text">Gestión de Pedidos</h1>
         </div>
       </div>
 
@@ -32,7 +36,15 @@ export default function Header() {
         
         <div className="user-menu">
           <div className="user-info">
-            <User size={20} />
+            {user?.avatar ? (
+              <img 
+                src={`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}${user.avatar}`} 
+                alt={user.username}
+                className="header-user-avatar"
+              />
+            ) : (
+              <User size={20} />
+            )}
             <span className="username">{user?.username}</span>
             {user?.role === 'SUPER_ADMIN' && (
               <span className="user-badge">Admin</span>

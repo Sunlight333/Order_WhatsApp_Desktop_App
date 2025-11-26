@@ -4,11 +4,8 @@ let prisma: PrismaClient;
 
 export function getPrismaClient(): PrismaClient {
   if (!prisma) {
-    const databaseUrl = process.env.DATABASE_URL;
-    
-    if (!databaseUrl) {
-      throw new Error('DATABASE_URL environment variable is not set');
-    }
+    // Use default if DATABASE_URL is not set (for development)
+    const databaseUrl = process.env.DATABASE_URL || 'file:./prisma/database.db';
 
     prisma = new PrismaClient({
       log: process.env.NODE_ENV === 'development' ? ['query', 'error', 'warn'] : ['error'],

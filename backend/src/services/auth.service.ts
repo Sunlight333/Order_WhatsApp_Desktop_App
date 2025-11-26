@@ -10,6 +10,7 @@ export interface LoginResult {
     id: string;
     username: string;
     role: 'SUPER_ADMIN' | 'USER';
+    avatar?: string | null;
   };
   token: string;
 }
@@ -48,6 +49,7 @@ export async function login(username: string, password: string): Promise<LoginRe
       id: user.id,
       username: user.username,
       role: user.role,
+      avatar: (user as any).avatar || null,
     },
     token,
   };
@@ -57,20 +59,43 @@ export async function login(username: string, password: string): Promise<LoginRe
  * Get user by ID (for token verification)
  */
 export async function getUserById(userId: string) {
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      username: true,
-      role: true,
-      createdAt: true,
-    },
-  });
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        role: true,
+        avatar: true,
+        createdAt: true,
+      },
+    });
 
-  if (!user) {
-    throw createError('USER_NOT_FOUND', 'User not found', 404);
+    if (!user) {
+      throw createError('USER_NOT_FOUND', 'User not found', 404);
+    }
+
+    return user;
+  } catch (error: any) {
+    // If avatar column doesn't exist yet, query without it
+    if (error.code === 'P2022' && error.meta?.column?.includes('avatar')) {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          username: true,
+          role: true,
+          createdAt: true,
+        },
+      });
+
+      if (!user) {
+        throw createError('USER_NOT_FOUND', 'User not found', 404);
+      }
+
+      return { ...user, avatar: null };
+    }
+    throw error;
   }
-
-  return user;
 }
 
