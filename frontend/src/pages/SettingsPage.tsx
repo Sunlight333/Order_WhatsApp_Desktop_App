@@ -10,6 +10,13 @@ import '../styles/settings.css';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 
+// Helper function to get full avatar URL
+function getAvatarUrl(avatarPath: string | null | undefined): string | null {
+  if (!avatarPath) return null;
+  const serverBaseUrl = configService.getServerBaseUrl();
+  return `${serverBaseUrl}${avatarPath}`;
+}
+
 export default function SettingsPage() {
   const navigate = useNavigate();
   const { isAuthenticated, user, checkAuth } = useAuthStore();
@@ -19,6 +26,7 @@ export default function SettingsPage() {
   const [testingConnection, setTestingConnection] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [connectionMessage, setConnectionMessage] = useState('');
+  const [initializingDatabase, setInitializingDatabase] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [localIp, setLocalIp] = useState<string>('');
   const [whatsappMessage, setWhatsappMessage] = useState<string>('');
@@ -63,9 +71,7 @@ export default function SettingsPage() {
       setWhatsappMessage(user.whatsappMessage || '');
       setProfileUsername(user.username || '');
       setProfileAvatarPreview(
-        user.avatar 
-          ? `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}${user.avatar}`
-          : null
+        user.avatar ? getAvatarUrl(user.avatar) : null
       );
       setAvatarRemoved(false);
     } else {
@@ -194,6 +200,71 @@ export default function SettingsPage() {
       setConnectionMessage(errorMessage);
     } finally {
       setTestingConnection(false);
+    }
+  };
+
+  const handleInitializeDatabase = async () => {
+    if (!config) return;
+    
+    try {
+      setInitializingDatabase(true);
+
+      // Validate required fields
+      if (config.database.type === 'sqlite') {
+        const dbPath = config.database.path || config.database.url?.replace('file:', '');
+        if (!dbPath || dbPath.trim().length === 0) {
+          toast.error('Please provide a database path for SQLite');
+          return;
+        }
+      } else {
+        if (!config.database.url || config.database.url.trim().length === 0) {
+          toast.error('Please provide a database connection URL');
+          return;
+        }
+      }
+
+      // Call the backend API to initialize the database
+      const response = await api.post('/database/initialize', {
+        type: config.database.type,
+        url: config.database.url,
+        path: config.database.type === 'sqlite' 
+          ? (config.database.path || config.database.url?.replace('file:', ''))
+          : undefined,
+        force: false, // Don't force if tables already exist
+      });
+
+      if (response.data.success) {
+        const message = response.data.data?.message || 'Database initialized successfully!';
+        
+        if (message.includes('already initialized')) {
+          toast.success(message, { duration: 3000 });
+        } else {
+          toast.success(
+            `${message}\n\nDatabase schema has been created and initial data has been seeded.\nDefault admin credentials:\nUsername: admin\nPassword: admin123\n\nYou can now log in with these credentials.`,
+            { duration: 10000 }
+          );
+        }
+        
+        // Update connection status
+        setConnectionStatus('success');
+        setConnectionMessage(message);
+      } else {
+        const errorMessage = response.data.error?.message || 'Failed to initialize database';
+        toast.error(errorMessage);
+        setConnectionStatus('error');
+        setConnectionMessage(errorMessage);
+      }
+    } catch (error: any) {
+      const errorMessage = 
+        error.response?.data?.error?.message || 
+        error.response?.data?.message ||
+        error.message || 
+        'Failed to initialize database';
+      toast.error(errorMessage);
+      setConnectionStatus('error');
+      setConnectionMessage(errorMessage);
+    } finally {
+      setInitializingDatabase(false);
     }
   };
 
@@ -902,11 +973,11 @@ export default function SettingsPage() {
             </div>
 
             {config.mode === 'server' && (
-            <div className="form-actions-inline">
+            <div className="form-actions-inline" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
               <button
                 className="btn-secondary"
                 onClick={testDatabaseConnection}
-                  disabled={testingConnection || !config.database.url}
+                disabled={testingConnection || initializingDatabase || !config.database.url}
               >
                 {testingConnection ? (
                   <>
@@ -920,8 +991,26 @@ export default function SettingsPage() {
                   </>
                 )}
               </button>
+              <button
+                className="btn-primary"
+                onClick={handleInitializeDatabase}
+                disabled={testingConnection || initializingDatabase || !config.database.url}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                {initializingDatabase ? (
+                  <>
+                    <Loader2 className="spinner" size={16} />
+                    Initializing...
+                  </>
+                ) : (
+                  <>
+                    <Database size={16} />
+                    Initialize Database
+                  </>
+                )}
+              </button>
               {connectionStatus !== 'idle' && (
-                <div className={`connection-status ${connectionStatus}`}>
+                <div className={`connection-status ${connectionStatus}`} style={{ width: '100%', marginTop: '0.5rem' }}>
                   {connectionStatus === 'success' ? (
                     <>
                       <CheckCircle size={16} />
@@ -935,6 +1024,10 @@ export default function SettingsPage() {
                   )}
                 </div>
               )}
+              <small className="form-hint" style={{ width: '100%', marginTop: '0.25rem' }}>
+                <strong>Initialize Database:</strong> Creates all required tables and seeds initial data (admin user). 
+                Use this if your database is new or missing tables. Safe to run multiple times.
+              </small>
             </div>
             )}
           </div>

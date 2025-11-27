@@ -2,8 +2,79 @@
 import { app, BrowserWindow, ipcMain, shell, dialog, protocol } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import util from 'util';
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
+
+// Logging utilities
+let logFilePath: string | null = null;
+
+function ensureLogsDirectory(): string {
+  const logsDir = path.join(app.getPath('userData'), 'logs');
+  if (!fs.existsSync(logsDir)) {
+    fs.mkdirSync(logsDir, { recursive: true });
+  }
+  return logsDir;
+}
+
+function serializeLogArg(arg: unknown): string {
+  if (arg instanceof Error) {
+    return `${arg.message}\n${arg.stack || ''}`.trim();
+  }
+  if (typeof arg === 'string') {
+    return arg;
+  }
+  if (typeof arg === 'object') {
+    try {
+      return util.inspect(arg, { depth: 4, colors: false, maxArrayLength: 50 });
+    } catch {
+      return '[Unserializable Object]';
+    }
+  }
+  return String(arg);
+}
+
+function appendLogEntry(level: string, args: unknown[]) {
+  if (!logFilePath) return;
+  const timestamp = new Date().toISOString();
+  const line = `[${timestamp}] [${level}] ${args.map(serializeLogArg).join(' ')}\n`;
+  fs.appendFile(logFilePath, line, (err) => {
+    if (err) {
+      process.stderr.write(`Failed to write log entry: ${err.message}\n`);
+    }
+  });
+}
+
+function setupLogging() {
+  try {
+    const logsDir = ensureLogsDirectory();
+    const timestamp = new Date().toISOString().replace(/[:]/g, '-');
+    logFilePath = path.join(logsDir, `main-${timestamp}.log`);
+    
+    const originalLog = console.log.bind(console);
+    const originalInfo = console.info.bind(console);
+    const originalWarn = console.warn.bind(console);
+    const originalError = console.error.bind(console);
+    const originalDebug = console.debug ? console.debug.bind(console) : console.log.bind(console);
+    
+    const wrapConsole = (level: string, original: (...data: any[]) => void) => {
+      return (...args: any[]) => {
+        appendLogEntry(level, args);
+        original(...args);
+      };
+    };
+    
+    console.log = wrapConsole('INFO', originalLog);
+    console.info = wrapConsole('INFO', originalInfo);
+    console.warn = wrapConsole('WARN', originalWarn);
+    console.error = wrapConsole('ERROR', originalError);
+    console.debug = wrapConsole('DEBUG', originalDebug);
+    
+    originalLog(`📝 Logging initialized. Log file: ${logFilePath}`);
+  } catch (error) {
+    process.stderr.write(`Failed to set up logging: ${(error as Error).message}\n`);
+  }
+}
 
 // Register custom protocol for serving static files in production
 // This must be called before app.whenReady()
@@ -47,8 +118,9 @@ function getBackendDistPath() {
     // Backend is at resources/app/backend/dist
     return path.join(app.getAppPath(), 'backend', 'dist');
   } else {
-    // In development, backend is relative to electron directory
-    return path.join(__dirname, '..', 'backend', 'dist');
+    // In development, __dirname is electron/dist, so we need to go up two levels
+    // to get to project root, then into backend/dist
+    return path.join(__dirname, '..', '..', 'backend', 'dist');
   }
 }
 
@@ -166,31 +238,87 @@ function setupDatabaseFromConfig(config: AppConfig): void {
 
 function loadBackendModules(): boolean {
   const backendDistPath = getBackendDistPath();
-  console.log('Loading backend from:', backendDistPath);
+  console.log('📦 Loading backend from:', backendDistPath);
+  console.log('📦 Current working directory:', process.cwd());
+  console.log('📦 __dirname:', __dirname);
+  console.log('📦 app.isPackaged:', app.isPackaged);
   
   try {
+    // In packaged app, set up module resolution for node_modules in extraResources
+    if (app.isPackaged) {
+      const resourcesPath = process.resourcesPath || path.dirname(app.getAppPath());
+      // extraResources places files in resources/ directory (same level as app.asar)
+      const extraResourcesNodeModules = path.join(resourcesPath, 'node_modules');
+      
+      // Add extraResources node_modules to module.paths for Node.js module resolution
+      const Module = require('module');
+      if (fs.existsSync(extraResourcesNodeModules)) {
+        // Prepend extraResources node_modules to module.paths
+        Module.globalPaths.unshift(extraResourcesNodeModules);
+        console.log('📦 Added extraResources node_modules to module resolution:', extraResourcesNodeModules);
+      } else {
+        console.warn('⚠️  ExtraResources node_modules not found at:', extraResourcesNodeModules);
+        // Try unpacked location as fallback
+        const unpackedNodeModules = path.join(resourcesPath, 'app.asar.unpacked', 'node_modules');
+        if (fs.existsSync(unpackedNodeModules)) {
+          Module.globalPaths.unshift(unpackedNodeModules);
+          console.log('📦 Added unpacked node_modules path:', unpackedNodeModules);
+        }
+      }
+    }
+    
     // Load config from file and set up database
     const config = loadConfigFromFile();
+    console.log('📋 Loaded config:', JSON.stringify(config, null, 2));
     setupDatabaseFromConfig(config);
+    
+    // Set uploads path for backend
+    const userDataPath = app.getPath('userData');
+    const uploadsPath = path.join(userDataPath, 'uploads');
+    if (!fs.existsSync(uploadsPath)) {
+      fs.mkdirSync(uploadsPath, { recursive: true });
+    }
+    process.env.UPLOADS_PATH = uploadsPath;
+    console.log('📁 Uploads directory:', uploadsPath);
     
     const serverPath = path.join(backendDistPath, 'server');
     const envPath = path.join(backendDistPath, 'config', 'env');
     
+    console.log('🔍 Checking for server file at:', serverPath + '.js');
+    console.log('🔍 Checking for env file at:', envPath + '.js');
+    
     // Check if files exist before requiring
     if (!fs.existsSync(serverPath + '.js')) {
+      // List directory contents for debugging
+      try {
+        const dirContents = fs.readdirSync(backendDistPath);
+        console.error('❌ Directory contents:', dirContents);
+      } catch (e) {
+        console.error('❌ Cannot read directory:', e);
+      }
       throw new Error(`Server file not found at: ${serverPath}.js`);
     }
     if (!fs.existsSync(envPath + '.js')) {
       throw new Error(`Env file not found at: ${envPath}.js`);
     }
     
+    console.log('✅ Files found, requiring modules...');
     const serverModule = require(serverPath);
     const envModule = require(envPath);
+    
+    if (!serverModule || !serverModule.createServer) {
+      throw new Error('Server module does not export createServer function');
+    }
+    if (!envModule || !envModule.env) {
+      throw new Error('Env module does not export env object');
+    }
     
     createServer = serverModule.createServer;
     env = envModule.env;
     
     console.log('✅ Backend modules loaded successfully');
+    console.log('✅ createServer function:', typeof createServer);
+    console.log('✅ env.port:', env?.port);
     return true;
   } catch (error: any) {
     console.error('❌ Failed to load backend modules:', error);
@@ -333,9 +461,31 @@ async function isPortAvailable(port: number): Promise<boolean> {
   });
 }
 
+// Helper function to show error to user via dialog
+async function showErrorDialogToUser(title: string, message: string, detail?: string) {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      await dialog.showMessageBox(mainWindow, {
+        type: 'error',
+        title: title,
+        message: message,
+        detail: detail,
+        buttons: ['OK'],
+        defaultId: 0,
+      });
+    } else {
+      console.error(`[Error Dialog] ${title}: ${message}`);
+      if (detail) console.error(`Detail: ${detail}`);
+    }
+  } catch (error: any) {
+    console.error('Failed to show error dialog:', error);
+  }
+}
+
 async function startServer() {
   try {
     const port = env.port;
+    console.log(`🚀 Starting server on port ${port}...`);
     
     // In development mode, check if server is already running
     // (started separately via npm run dev:backend)
@@ -349,9 +499,47 @@ async function startServer() {
     }
     
     // Start server if port is available or in production mode
+    console.log(`📡 Attempting to start server on port ${port}...`);
     const result = await createServer(port);
     server = result.server;
-    console.log(`✅ Server started on port ${port}`);
+    
+    if (!server) {
+      console.warn('⚠️  Server object is null, but continuing...');
+      // Show warning to user
+      setTimeout(() => {
+        showErrorDialogToUser(
+          'Server Warning',
+          'The server encountered an issue during startup.',
+          'The application will continue, but some features may not work properly. Please check the logs for details.'
+        );
+      }, 2000);
+      return;
+    }
+    
+    console.log(`✅ Server started successfully on port ${port}`);
+    
+    // Verify server is responding
+    setTimeout(async () => {
+      try {
+        const http = require('http');
+        const testReq = http.get(`http://localhost:${port}/api/v1/health`, (res: any) => {
+          console.log(`✅ Server health check passed: ${res.statusCode}`);
+        });
+        testReq.on('error', (err: any) => {
+          console.error(`⚠️  Server health check failed:`, err.message);
+          // Show warning to user if health check fails
+          setTimeout(() => {
+            showErrorDialogToUser(
+              'Server Health Check Failed',
+              'The server may not be responding correctly.',
+              `Error: ${err.message}. The application will continue, but some features may not work.`
+            );
+          }, 1000);
+        });
+      } catch (err: any) {
+        console.error('⚠️  Could not verify server health:', err);
+      }
+    }, 1000);
   } catch (error: any) {
     // If error is EADDRINUSE, server is already running (development mode)
     if (error?.code === 'EADDRINUSE') {
@@ -360,6 +548,21 @@ async function startServer() {
       return;
     }
     console.error('❌ Failed to start server:', error);
+    console.error('Error code:', error?.code);
+    console.error('Error message:', error?.message);
+    console.error('Error stack:', error?.stack);
+    
+    // Show error to user but don't throw - let app continue
+    setTimeout(() => {
+      showErrorDialogToUser(
+        'Server Startup Error',
+        'Failed to start the backend server.',
+        `Error: ${error?.message || 'Unknown error'}\n\nThe application will continue, but backend features may not work. Please check the logs for details.`
+      );
+    }, 2000);
+    
+    // Don't throw - let the app continue
+    console.warn('⚠️  Continuing despite server startup error...');
   }
 }
 
@@ -396,6 +599,7 @@ function registerProtocolHandler() {
 }
 
 app.whenReady().then(async () => {
+  setupLogging();
   // Register protocol handler first (after app is ready)
   registerProtocolHandler();
   
@@ -404,25 +608,122 @@ app.whenReady().then(async () => {
     app.setAppUserModelId('com.orderwhatsapp.desktop');
   }
   
-  // Create window first so user can see something immediately
-  createWindow();
-  
-  // Load backend modules before starting server
+  // Load backend modules and start server BEFORE creating window in production
+  console.log('📦 Loading backend modules...');
   const backendLoaded = loadBackendModules();
   
   if (backendLoaded && env) {
     try {
-      // Start Express server
+      // Start Express server first (especially important in production)
       await startServer();
+      console.log('✅ Application initialization complete');
+      
+      // Wait a bit for server to be fully ready
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      // Verify server is actually responding before creating window
+      const http = require('http');
+      let serverReady = false;
+      
+      // Try to connect to server health endpoint (with more retries)
+      console.log(`🔍 Verifying server is ready on port ${env.port}...`);
+      for (let i = 0; i < 20; i++) {
+        try {
+          await new Promise<void>((resolve, reject) => {
+            const testReq = http.get(`http://localhost:${env.port}/api/v1/health`, (res: any) => {
+              let data = '';
+              res.on('data', (chunk: any) => { data += chunk; });
+              res.on('end', () => {
+                if (res.statusCode === 200) {
+                  serverReady = true;
+                  console.log('✅ Server is responding and ready');
+                  resolve();
+                } else {
+                  reject(new Error(`Server returned status ${res.statusCode}`));
+                }
+              });
+            });
+            testReq.on('error', (err: any) => {
+              reject(err);
+            });
+            testReq.setTimeout(2000, () => {
+              testReq.destroy();
+              reject(new Error('Connection timeout'));
+            });
+          });
+          break; // Success, exit retry loop
+        } catch (err: any) {
+          if (i < 19) {
+            if (i % 5 === 0) { // Log every 5 attempts
+              console.log(`⏳ Waiting for server to be ready... (${i + 1}/20) - ${err.message}`);
+            }
+            await new Promise(resolve => setTimeout(resolve, 500));
+          } else {
+            console.error('❌ Server health check failed after 20 attempts');
+            console.error('Last error:', err.message);
+            // Still create window but log the error
+            console.warn('⚠️  Creating window anyway - server may not be ready');
+            serverReady = false;
+          }
+        }
+      }
+      
+      // Now create window (even if server check failed, so user can see what's wrong)
+      console.log('🪟 Creating application window...');
+      createWindow();
+      
+      if (!serverReady) {
+        // Show error in window
+        setTimeout(() => {
+          if (mainWindow) {
+            mainWindow.webContents.executeJavaScript(`
+              if (typeof window !== 'undefined' && window.document) {
+                const errorDiv = document.createElement('div');
+                errorDiv.style.cssText = 'position: fixed; top: 0; left: 0; right: 0; background: #fee; color: #c00; padding: 1rem; text-align: center; z-index: 10000; font-family: Arial;';
+                errorDiv.innerHTML = '<strong>Warning:</strong> Backend server is not responding. Some features may not work.';
+                document.body.prepend(errorDiv);
+              }
+            `).catch(() => {});
+          }
+        }, 2000);
+      }
     } catch (error: any) {
-      console.error('Failed to start server:', error);
-      // Show error to user but keep window visible
-      showErrorToUser(`Failed to start server: ${error.message}`);
+      console.error('❌ Failed to start server:', error);
+      console.error('Error details:', {
+        message: error.message,
+        code: error.code,
+        stack: error.stack
+      });
+      // Create window anyway to show error
+      createWindow();
+      // Show error to user via dialog
+      setTimeout(() => {
+        showErrorDialogToUser(
+          'Application Startup Error',
+          'Failed to start the backend server.',
+          `Error: ${error.message || 'Unknown error'}\n\nThe application will continue, but backend features may not work. Please check the logs for details.`
+        );
+      }, 2000);
+      // Also show in window
+      const errorMsg = `Failed to start server: ${error.message || 'Unknown error'}\n\nPlease check the console logs for details.`;
+      showErrorToUser(errorMsg);
     }
   } else {
     // Backend modules failed to load - show error but keep window visible
     const errorMsg = 'Failed to load backend modules. Please check console logs.';
-    console.error(errorMsg);
+    console.error('❌', errorMsg);
+    console.error('Backend loaded:', backendLoaded);
+    console.error('Env available:', !!env);
+    // Create window to show error
+    createWindow();
+    // Show error dialog
+    setTimeout(() => {
+      showErrorDialogToUser(
+        'Backend Module Error',
+        'Failed to load backend modules.',
+        'The application will continue, but backend features will not work. Please check the console logs for details.'
+      );
+    }, 2000);
     showErrorToUser(errorMsg);
   }
   
@@ -556,4 +857,67 @@ ipcMain.handle('dialog:showOpenDialog', async (_event, options: Electron.OpenDia
   const result = await dialog.showOpenDialog(mainWindow, options);
   return result;
 });
+
+// Show error dialog to user
+ipcMain.handle('dialog:showErrorDialog', async (_event, options: { title: string; message: string; detail?: string }) => {
+  if (!mainWindow) {
+    console.error('Cannot show error dialog: Main window not available');
+    return { response: 0 };
+  }
+  
+  try {
+    // Ensure window is focused and visible
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.focus();
+    mainWindow.show();
+    
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: 'error',
+      title: options.title || 'Error',
+      message: options.message || 'An error occurred',
+      detail: options.detail,
+      buttons: ['OK'],
+      defaultId: 0,
+    });
+    
+    return result;
+  } catch (error: any) {
+    console.error('Failed to show error dialog:', error);
+    return { response: 0 };
+  }
+});
+
+// Show warning dialog to user
+ipcMain.handle('dialog:showWarningDialog', async (_event, options: { title: string; message: string; detail?: string }) => {
+  if (!mainWindow) {
+    console.error('Cannot show warning dialog: Main window not available');
+    return { response: 0 };
+  }
+  
+  try {
+    // Ensure window is focused and visible
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.focus();
+    mainWindow.show();
+    
+    const result = await dialog.showMessageBox(mainWindow, {
+      type: 'warning',
+      title: options.title || 'Warning',
+      message: options.message || 'A warning occurred',
+      detail: options.detail,
+      buttons: ['OK'],
+      defaultId: 0,
+    });
+    
+    return result;
+  } catch (error: any) {
+    console.error('Failed to show warning dialog:', error);
+    return { response: 0 };
+  }
+});
+
 

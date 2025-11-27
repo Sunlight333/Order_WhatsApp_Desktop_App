@@ -32,6 +32,10 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('dialog:showSaveDialog', options),
     showOpenDialog: (options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> => 
       ipcRenderer.invoke('dialog:showOpenDialog', options),
+    showErrorDialog: (options: { title: string; message: string; detail?: string }): Promise<Electron.MessageBoxReturnValue> =>
+      ipcRenderer.invoke('dialog:showErrorDialog', options),
+    showWarningDialog: (options: { title: string; message: string; detail?: string }): Promise<Electron.MessageBoxReturnValue> =>
+      ipcRenderer.invoke('dialog:showWarningDialog', options),
   },
 });
 
@@ -45,6 +49,12 @@ declare global {
         save: (config: Partial<AppConfig>) => Promise<void>;
       };
       openExternal: (url: string) => Promise<{ success: boolean }>;
+      dialog: {
+        showSaveDialog: (options: Electron.SaveDialogOptions) => Promise<Electron.SaveDialogReturnValue>;
+        showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
+        showErrorDialog: (options: { title: string; message: string; detail?: string }) => Promise<Electron.MessageBoxReturnValue>;
+        showWarningDialog: (options: { title: string; message: string; detail?: string }) => Promise<Electron.MessageBoxReturnValue>;
+      };
     };
   }
 }

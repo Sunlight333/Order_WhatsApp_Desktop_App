@@ -41,15 +41,44 @@
     "appId": "com.orderwhatsapp.desktop",
     "productName": "Order WhatsApp Desktop",
     "directories": {
-      "output": "release"
+      "output": "build"
     },
     "files": [
       "electron/dist/**/*",
       "frontend/dist/**/*",
       "backend/dist/**/*",
       "backend/prisma/**/*",
+      "!backend/prisma/**/*.db*",
       "!backend/prisma/**/*.db-journal",
+      "!backend/prisma/**/*.db-shm",
+      "!backend/prisma/**/*.db-wal",
+      "!**/node_modules/**/prisma/**/*.db*",
+      "!**/node_modules/**/prisma/**/*.db-shm",
+      "!**/node_modules/**/prisma/**/*.db-wal",
+      "!**/node_modules/**/prisma/**/*.db-journal",
+      "!**/node_modules/**/order-app-backend/prisma/**/*.db*",
       "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules",
+        "to": "node_modules",
+        "filter": [
+          "**/*",
+          "!**/prisma/**/*.db*",
+          "!**/prisma/**/*.db-shm",
+          "!**/prisma/**/*.db-wal",
+          "!**/prisma/**/*.db-journal",
+          "!**/order-app-backend/prisma/**/*.db*",
+          "!**/order-app-backend/prisma/**/*.db-shm",
+          "!**/order-app-backend/prisma/**/*.db-wal",
+          "!**/order-app-backend/prisma/**/*.db-journal"
+        ]
+      }
+    ],
+    "asarUnpack": [
+      "backend/dist/**",
+      "backend/prisma/**"
     ],
     "win": {
       "icon": "frontend/public/assets/images/logo.png",

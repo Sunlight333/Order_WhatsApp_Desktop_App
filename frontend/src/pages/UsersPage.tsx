@@ -5,7 +5,15 @@ import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { useContextMenu } from '../hooks/useContextMenu';
 import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
+import { configService } from '../services/config.service';
 import '../styles/users.css';
+
+// Helper function to get full avatar URL
+function getAvatarUrl(avatarPath: string | null | undefined): string | null {
+  if (!avatarPath) return null;
+  const serverBaseUrl = configService.getServerBaseUrl();
+  return `${serverBaseUrl}${avatarPath}`;
+}
 
 interface User {
   id: string;
@@ -84,7 +92,7 @@ export default function UsersPage() {
       password: '',
       role: user.role,
       avatar: null,
-      avatarPreview: user.avatar ? `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}${user.avatar}` : null,
+      avatarPreview: user.avatar ? getAvatarUrl(user.avatar) : null,
     });
     setShowEditModal(true);
   };
@@ -284,7 +292,7 @@ export default function UsersPage() {
             password: '',
             role: user.role,
             avatar: null,
-            avatarPreview: user.avatar ? `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}${user.avatar}` : null,
+            avatarPreview: user.avatar ? getAvatarUrl(user.avatar) : null,
           });
           setShowEditModal(true);
         },
@@ -391,7 +399,7 @@ export default function UsersPage() {
                     <div className="user-info">
                       {user.avatar ? (
                         <img 
-                          src={`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}${user.avatar}`} 
+                          src={getAvatarUrl(user.avatar) || ''} 
                           alt={user.username}
                           className="user-avatar"
                         />

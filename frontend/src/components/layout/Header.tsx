@@ -3,6 +3,14 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import ThemeToggle from '../ThemeToggle';
 import toast from 'react-hot-toast';
+import { configService } from '../../services/config.service';
+
+// Helper function to get full avatar URL
+function getAvatarUrl(avatarPath: string | null | undefined): string | null {
+  if (!avatarPath) return null;
+  const serverBaseUrl = configService.getServerBaseUrl();
+  return `${serverBaseUrl}${avatarPath}`;
+}
 
 export default function Header() {
   const navigate = useNavigate();
@@ -38,7 +46,7 @@ export default function Header() {
           <div className="user-info">
             {user?.avatar ? (
               <img 
-                src={`${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}${user.avatar}`} 
+                src={getAvatarUrl(user.avatar) || ''} 
                 alt={user.username}
                 className="header-user-avatar"
               />

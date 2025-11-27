@@ -58,10 +58,21 @@ api.interceptors.request.use(
   }
 );
 
-// Response interceptor - Handle auth errors
+// Response interceptor - Handle auth errors and connection issues
 api.interceptors.response.use(
   (response) => response,
   (error: AxiosError<{ error: { code: string; message: string } }>) => {
+    // Handle connection refused errors (server not started)
+    if (error.code === 'ECONNREFUSED' || error.message?.includes('ERR_CONNECTION_REFUSED')) {
+      console.error('❌ Cannot connect to server. Is the backend server running?');
+      // Don't redirect on connection errors - let the user see the error
+      return Promise.reject({
+        ...error,
+        message: 'Cannot connect to server. Please ensure the application is running correctly.',
+        isConnectionError: true,
+      });
+    }
+    
     if (error.response?.status === 401) {
       // Clear token and redirect to login
       localStorage.removeItem('auth_token');

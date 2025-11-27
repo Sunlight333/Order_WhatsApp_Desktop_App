@@ -16,9 +16,19 @@ export interface DatabaseTestResult {
 }
 
 /**
- * Create database schema for SQLite database
+ * Create database schema for database
  */
-async function createDatabaseSchema(prismaClient: PrismaClient): Promise<void> {
+async function createDatabaseSchema(prismaClient: PrismaClient, dbType: string = 'sqlite'): Promise<void> {
+  // MySQL/PostgreSQL use different syntax for some things
+  const isMySQL = dbType === 'mysql';
+  const isPostgreSQL = dbType === 'postgresql';
+  const textType = isMySQL ? 'TEXT' : isPostgreSQL ? 'TEXT' : 'TEXT';
+  const datetimeType = isMySQL ? 'DATETIME' : isPostgreSQL ? 'TIMESTAMP' : 'DATETIME';
+  const uuidType = isMySQL ? 'CHAR(36)' : isPostgreSQL ? 'UUID' : 'TEXT';
+  
+  // Use appropriate auto-increment/sequence for ID generation
+  const idDefault = isPostgreSQL ? 'uuid_generate_v4()' : "REPLACE(UUID(), '-', '')";
+  
   const createTablesSQL = `
     -- Create users table
     CREATE TABLE IF NOT EXISTS "users" (
@@ -28,8 +38,8 @@ async function createDatabaseSchema(prismaClient: PrismaClient): Promise<void> {
       "role" TEXT NOT NULL DEFAULT 'USER',
       "avatar" TEXT,
       "whatsappMessage" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     -- Create suppliers table
@@ -37,8 +47,8 @@ async function createDatabaseSchema(prismaClient: PrismaClient): Promise<void> {
       "id" TEXT NOT NULL PRIMARY KEY,
       "name" TEXT NOT NULL,
       "description" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
 
     -- Create products table
@@ -48,8 +58,8 @@ async function createDatabaseSchema(prismaClient: PrismaClient): Promise<void> {
       "reference" TEXT NOT NULL,
       "description" TEXT,
       "defaultPrice" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY ("supplierId") REFERENCES "suppliers"("id") ON DELETE CASCADE ON UPDATE CASCADE,
       UNIQUE("supplierId", "reference")
     );
@@ -63,9 +73,9 @@ async function createDatabaseSchema(prismaClient: PrismaClient): Promise<void> {
       "notificationMethod" TEXT,
       "observations" TEXT,
       "createdById" TEXT NOT NULL,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "notifiedAt" DATETIME,
+      "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "notifiedAt" ${datetimeType},
       FOREIGN KEY ("createdById") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE
     );
 
@@ -79,7 +89,7 @@ async function createDatabaseSchema(prismaClient: PrismaClient): Promise<void> {
       "id" TEXT NOT NULL PRIMARY KEY,
       "orderId" TEXT NOT NULL,
       "supplierId" TEXT NOT NULL,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE CASCADE ON UPDATE CASCADE,
       FOREIGN KEY ("supplierId") REFERENCES "suppliers"("id") ON DELETE CASCADE ON UPDATE CASCADE,
       UNIQUE("orderId", "supplierId")
@@ -93,8 +103,8 @@ async function createDatabaseSchema(prismaClient: PrismaClient): Promise<void> {
       "productRef" TEXT NOT NULL,
       "quantity" TEXT NOT NULL,
       "price" TEXT NOT NULL,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE CASCADE ON UPDATE CASCADE,
       FOREIGN KEY ("supplierId") REFERENCES "suppliers"("id") ON DELETE CASCADE ON UPDATE CASCADE
     );
@@ -111,7 +121,7 @@ async function createDatabaseSchema(prismaClient: PrismaClient): Promise<void> {
       "fieldChanged" TEXT,
       "oldValue" TEXT,
       "newValue" TEXT,
-      "timestamp" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "timestamp" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "metadata" TEXT,
       FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE CASCADE ON UPDATE CASCADE,
       FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE
@@ -127,7 +137,7 @@ async function createDatabaseSchema(prismaClient: PrismaClient): Promise<void> {
       "id" TEXT NOT NULL PRIMARY KEY,
       "key" TEXT NOT NULL UNIQUE,
       "value" TEXT,
-      "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP
     );
   `;
   
@@ -176,6 +186,56 @@ async function seedInitialData(prismaClient: PrismaClient): Promise<void> {
 }
 
 /**
+ * Required tables for the application
+ */
+const REQUIRED_TABLES = [
+  'users',
+  'orders',
+  'suppliers',
+  'products',
+  'orderSuppliers',
+  'orderProducts',
+  'auditLogs',
+  'config',
+];
+
+/**
+ * Check if database schema is complete (all required tables exist)
+ */
+async function isSchemaComplete(prismaClient: PrismaClient, dbType: string): Promise<boolean> {
+  try {
+    if (dbType === 'sqlite') {
+      // Check if all required tables exist
+      const tables = await prismaClient.$queryRaw<Array<{ name: string }>>`
+        SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';
+      `;
+      const tableNames = tables.map(t => t.name);
+      const missingTables = REQUIRED_TABLES.filter(table => !tableNames.includes(table));
+      
+      if (missingTables.length > 0) {
+        console.log(`📋 Schema incomplete. Missing tables: ${missingTables.join(', ')}`);
+        return false;
+      }
+      return true;
+    } else {
+      // For MySQL/PostgreSQL, check each required table
+      for (const tableName of REQUIRED_TABLES) {
+        try {
+          await prismaClient.$queryRawUnsafe(`SELECT 1 FROM ${tableName} LIMIT 1`);
+        } catch {
+          console.log(`📋 Schema incomplete. Missing table: ${tableName}`);
+          return false;
+        }
+      }
+      return true;
+    }
+  } catch (error: any) {
+    console.warn('⚠️  Error checking schema completeness:', error.message);
+    return false; // Assume incomplete if check fails
+  }
+}
+
+/**
  * Check if database needs initialization (empty or no tables)
  */
 async function needsInitialization(prismaClient: PrismaClient, dbType: string): Promise<boolean> {
@@ -202,12 +262,14 @@ async function needsInitialization(prismaClient: PrismaClient, dbType: string): 
 
 /**
  * Initialize database schema and seed data
+ * @param force - If true, force re-initialization even if tables exist
  */
-async function initializeDatabase(
+export async function initializeDatabase(
   prismaClient: PrismaClient,
   dbType: string,
-  connectionUrl: string
-): Promise<void> {
+  connectionUrl: string,
+  force: boolean = false
+): Promise<{ success: boolean; message: string }> {
   try {
     // Ensure database directory exists for SQLite
     if (dbType === 'sqlite') {
@@ -224,27 +286,69 @@ async function initializeDatabase(
       }
     }
 
-    // Check if database needs initialization
-    const needsInit = await needsInitialization(prismaClient, dbType);
+    // Check if database needs initialization (unless forcing)
+    let needsInit = force || await needsInitialization(prismaClient, dbType);
     
     if (needsInit) {
       if (dbType === 'sqlite') {
-        // Set SQLite optimizations
-        await prismaClient.$executeRawUnsafe('PRAGMA journal_mode = WAL;');
-        await prismaClient.$executeRawUnsafe('PRAGMA synchronous = NORMAL;');
-        await prismaClient.$executeRawUnsafe('PRAGMA foreign_keys = ON;');
+        // Set SQLite optimizations (use $queryRaw because PRAGMA returns results)
+        await prismaClient.$queryRawUnsafe('PRAGMA journal_mode = WAL;');
+        await prismaClient.$queryRawUnsafe('PRAGMA synchronous = NORMAL;');
+        await prismaClient.$queryRawUnsafe('PRAGMA foreign_keys = ON;');
         
         // Create schema
-        await createDatabaseSchema(prismaClient);
+        await createDatabaseSchema(prismaClient, dbType);
         
         // Seed data
         await seedInitialData(prismaClient);
+        
+        return {
+          success: true,
+          message: 'Database initialized successfully. Default admin user created (username: admin, password: admin123).',
+        };
+      } else if (dbType === 'mysql' || dbType === 'postgresql') {
+        // For MySQL/PostgreSQL, create schema compatible SQL
+        await createDatabaseSchema(prismaClient, dbType);
+        
+        // Seed data
+        await seedInitialData(prismaClient);
+        
+        return {
+          success: true,
+          message: 'Database initialized successfully. Default admin user created (username: admin, password: admin123).',
+        };
       }
-      // Note: MySQL/PostgreSQL initialization would require migrations
-      // For now, we only auto-initialize SQLite databases
+    } else if (force) {
+      // Force mode: even if tables exist, ensure schema is complete and seeders run
+      // Check if schema is actually complete
+      const schemaComplete = await isSchemaComplete(prismaClient, dbType);
+      
+      if (!schemaComplete) {
+        // Schema is incomplete, create missing tables
+        if (dbType === 'sqlite') {
+          await prismaClient.$queryRawUnsafe('PRAGMA foreign_keys = ON;');
+        }
+        await createDatabaseSchema(prismaClient, dbType);
+      }
+      
+      // Always run seeders in force mode to ensure initial data exists
+      await seedInitialData(prismaClient);
+      
+      return {
+        success: true,
+        message: 'Database schema verified and seeders executed. Default admin user ensured (username: admin, password: admin123).',
+      };
     }
+    
+    // Tables exist and not forcing - just ensure seeders are up to date
+    await seedInitialData(prismaClient);
+    
+    return {
+      success: true,
+      message: 'Database already initialized. Tables exist. Seeders verified.',
+    };
   } catch (error: any) {
-    console.warn('⚠️  Could not initialize database:', error.message);
+    console.error('⚠️  Could not initialize database:', error.message);
     throw error;
   }
 }
@@ -308,13 +412,35 @@ export async function testDatabaseConnection(
         };
       }
       
-      // Try to initialize database if it's empty
+      // Check if schema is complete, and initialize if needed
       try {
-        await initializeDatabase(testPrisma, config.type, connectionUrl);
+        const schemaComplete = await isSchemaComplete(testPrisma, config.type);
+        let initialized = false;
+        
+        if (!schemaComplete) {
+          console.log('📦 Schema is incomplete, running migrations and seeders...');
+          // Force initialization to ensure all tables and seeders run
+          await initializeDatabase(testPrisma, config.type, connectionUrl, true);
+          initialized = true;
+        } else {
+          // Schema is complete, but always run seeders to ensure initial data exists
+          console.log('📦 Schema is complete, ensuring seeders are up to date...');
+          await seedInitialData(testPrisma);
+          // Check if seeders created anything
+          const adminUser = await testPrisma.user.findUnique({
+            where: { username: 'admin' },
+          });
+          if (adminUser) {
+            initialized = true; // Seeders were already run or just ran
+          }
+        }
+        
         return {
           success: true,
-          message: `Successfully connected to ${config.type.toUpperCase()} database. Database schema initialized.`,
-          initialized: true,
+          message: initialized 
+            ? `Successfully connected to ${config.type.toUpperCase()} database. Database schema and seeders verified/initialized.`
+            : `Successfully connected to ${config.type.toUpperCase()} database. Schema is up to date.`,
+          initialized: initialized,
         };
       } catch (initError: any) {
         // If initialization fails but connection works, still report success
@@ -322,7 +448,7 @@ export async function testDatabaseConnection(
         console.warn('Initialization warning:', initError.message);
         return {
           success: true,
-          message: `Successfully connected to ${config.type.toUpperCase()} database.`,
+          message: `Successfully connected to ${config.type.toUpperCase()} database. Warning: ${initError.message}`,
           initialized: false,
         };
       }
@@ -338,11 +464,38 @@ export async function testDatabaseConnection(
         };
       }
 
-      return {
-        success: true,
-        message: `Successfully connected to ${config.type.toUpperCase()} database`,
-        initialized: false,
-      };
+      // Check if schema is complete, and initialize if needed
+      try {
+        const schemaComplete = await isSchemaComplete(testPrisma, config.type);
+        let initialized = false;
+        
+        if (!schemaComplete) {
+          console.log('📦 Schema is incomplete, running migrations and seeders...');
+          // Force initialization to ensure all tables and seeders run
+          await initializeDatabase(testPrisma, config.type, connectionUrl, true);
+          initialized = true;
+        } else {
+          // Schema is complete, but always run seeders to ensure initial data exists
+          console.log('📦 Schema is complete, ensuring seeders are up to date...');
+          await seedInitialData(testPrisma);
+          initialized = true; // Seeders were verified/run
+        }
+        
+        return {
+          success: true,
+          message: initialized 
+            ? `Successfully connected to ${config.type.toUpperCase()} database. Database schema and seeders verified/initialized.`
+            : `Successfully connected to ${config.type.toUpperCase()} database. Schema is up to date.`,
+          initialized: initialized,
+        };
+      } catch (initError: any) {
+        console.warn('Initialization warning:', initError.message);
+        return {
+          success: true,
+          message: `Successfully connected to ${config.type.toUpperCase()} database. Warning: ${initError.message}`,
+          initialized: false,
+        };
+      }
     }
   } catch (error: any) {
     // Handle specific error cases
@@ -374,10 +527,11 @@ export async function testDatabaseConnection(
             await fs.mkdir(dbDir, { recursive: true });
             // SQLite will create the file on first connection, so try again
             await testPrisma.$connect();
-            await initializeDatabase(testPrisma, config.type, connectionUrl);
+            // Force initialization to ensure all migrations and seeders run
+            await initializeDatabase(testPrisma, config.type, connectionUrl, true);
             return {
               success: true,
-              message: `Database created and initialized successfully.`,
+              message: `Database created and initialized successfully. All migrations and seeders have been executed.`,
               initialized: true,
             };
           }

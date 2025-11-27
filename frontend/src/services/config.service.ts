@@ -123,6 +123,22 @@ class ConfigService {
   }
 
   /**
+   * Get base server URL (without /api/v1) for static assets like avatars
+   */
+  getServerBaseUrl(): string {
+    const config = this.config || this.getDefaultConfig();
+    
+    if (config.mode === 'client' && config.serverAddress) {
+      const port = config.serverPort || 3000;
+      return `http://${config.serverAddress}:${port}`;
+    }
+    
+    // Server mode or fallback
+    const port = config.serverPort || 3000;
+    return `http://localhost:${port}`;
+  }
+
+  /**
    * Subscribe to config changes
    */
   subscribe(listener: () => void): () => void {

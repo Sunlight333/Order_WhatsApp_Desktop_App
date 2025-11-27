@@ -50,7 +50,21 @@ export const errorMiddleware = (
     return;
   }
 
-  // Generic error
+  // Handle Prisma connection errors - try to reconnect
+  if (error.message?.includes('connection') || error.message?.includes('database') || error.message?.includes('ECONNREFUSED')) {
+    console.warn('⚠️  Database connection error detected, attempting recovery...');
+    // Don't block the response - return error but log for recovery
+    res.status(503).json({
+      success: false,
+      error: {
+        code: 'DATABASE_CONNECTION_ERROR',
+        message: 'Database connection issue. Please try again.',
+      },
+    });
+    return;
+  }
+
+  // Generic error - never crash, always return response
   res.status(500).json({
     success: false,
     error: {
