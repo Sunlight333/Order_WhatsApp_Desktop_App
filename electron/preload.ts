@@ -26,6 +26,13 @@ contextBridge.exposeInMainWorld('electron', {
     get: (): Promise<AppConfig> => ipcRenderer.invoke('config:get'),
     save: (config: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke('config:save', config),
   },
+  openExternal: (url: string): Promise<{ success: boolean }> => ipcRenderer.invoke('open-external', url),
+  dialog: {
+    showSaveDialog: (options: Electron.SaveDialogOptions): Promise<Electron.SaveDialogReturnValue> => 
+      ipcRenderer.invoke('dialog:showSaveDialog', options),
+    showOpenDialog: (options: Electron.OpenDialogOptions): Promise<Electron.OpenDialogReturnValue> => 
+      ipcRenderer.invoke('dialog:showOpenDialog', options),
+  },
 });
 
 // Type definitions for TypeScript
@@ -37,6 +44,7 @@ declare global {
         get: () => Promise<AppConfig>;
         save: (config: Partial<AppConfig>) => Promise<void>;
       };
+      openExternal: (url: string) => Promise<{ success: boolean }>;
     };
   }
 }

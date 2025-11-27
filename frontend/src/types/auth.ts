@@ -3,6 +3,7 @@ export interface User {
   username: string;
   role: 'SUPER_ADMIN' | 'USER';
   avatar?: string | null;
+  whatsappMessage?: string | null;
   createdAt?: string;
 }
 

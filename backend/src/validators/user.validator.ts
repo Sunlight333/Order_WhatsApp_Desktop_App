@@ -12,7 +12,17 @@ export const updateUserSchema = z.object({
   password: z.string().min(6, 'Password must be at least 6 characters').max(100, 'Password must be at most 100 characters').optional(),
   role: z.enum(['SUPER_ADMIN', 'USER']).optional(),
   avatar: z.string().nullable().optional(),
+  whatsappMessage: z.string().nullable().optional(),
+});
+
+// Schema for users updating their own profile (no role changes)
+export const updateProfileSchema = z.object({
+  username: z.string().min(3, 'Username must be at least 3 characters').max(50, 'Username must be at most 50 characters').optional(),
+  password: z.string().min(6, 'Password must be at least 6 characters').max(100, 'Password must be at most 100 characters').optional(),
+  avatar: z.string().nullable().optional(),
+  whatsappMessage: z.string().nullable().optional(),
 });
 
 export type CreateUserInput = z.infer<typeof createUserSchema>;
 export type UpdateUserInput = z.infer<typeof updateUserSchema>;
+export type UpdateProfileInput = z.infer<typeof updateProfileSchema>;

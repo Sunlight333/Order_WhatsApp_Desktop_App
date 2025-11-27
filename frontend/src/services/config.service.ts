@@ -30,19 +30,31 @@ class ConfigService {
    */
   async loadConfig(): Promise<AppConfig> {
     try {
+      let loadedConfig: any;
+      
       if (window.electron?.config) {
-        this.config = await window.electron.config.get();
-        this.notifyListeners();
-        return this.config;
+        loadedConfig = await window.electron.config.get();
+      } else {
+        // Fallback to localStorage if Electron is not available (web mode)
+        const stored = localStorage.getItem('app_config');
+        if (stored) {
+          loadedConfig = JSON.parse(stored);
+        } else {
+          return this.getDefaultConfig();
+        }
       }
-      // Fallback to localStorage if Electron is not available (web mode)
-      const stored = localStorage.getItem('app_config');
-      if (stored) {
-        this.config = JSON.parse(stored);
-        return this.config;
+
+      // Normalize config: handle both "provider" and "type" for backward compatibility
+      if (loadedConfig?.database) {
+        if (loadedConfig.database.provider && !loadedConfig.database.type) {
+          loadedConfig.database.type = loadedConfig.database.provider;
+          delete loadedConfig.database.provider;
+        }
       }
-      // Return default config
-      return this.getDefaultConfig();
+
+      this.config = loadedConfig as AppConfig;
+      this.notifyListeners();
+      return this.config;
     } catch (error) {
       console.error('Failed to load config:', error);
       return this.getDefaultConfig();

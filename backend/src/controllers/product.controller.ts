@@ -83,7 +83,13 @@ export async function updateProductController(req: Request, res: Response): Prom
     }
 
     const { id } = req.params;
-    const validatedData: UpdateProductInput = updateProductSchema.parse(req.body);
+    const parsed = updateProductSchema.parse(req.body);
+    // Filter out null values to match UpdateProductInput type
+    const validatedData: UpdateProductInput = {
+      ...(parsed.reference !== undefined && { reference: parsed.reference }),
+      ...(parsed.description !== null && parsed.description !== undefined && { description: parsed.description }),
+      ...(parsed.defaultPrice !== null && parsed.defaultPrice !== undefined && { defaultPrice: parsed.defaultPrice }),
+    };
     const product = await updateProduct(id, validatedData);
 
     res.status(200).json(createSuccessResponse(product, 'Product updated successfully'));

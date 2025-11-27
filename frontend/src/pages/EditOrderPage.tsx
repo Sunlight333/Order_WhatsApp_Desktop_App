@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { Plus, X, Save, Loader2, ArrowLeft } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
+import ConfirmModal from '../components/ConfirmModal';
 import '../styles/edit-order.css';
 
 interface Supplier {
@@ -59,6 +60,7 @@ export default function EditOrderPage() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
   const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
   const [productsList, setProductsList] = useState<Product[]>([]);
   
@@ -286,15 +288,21 @@ export default function EditOrderPage() {
     return true;
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!validateForm()) {
       return;
     }
 
+    // Show confirmation modal instead of directly saving
+    setShowSaveModal(true);
+  };
+
+  const confirmSave = async () => {
     try {
       setSaving(true);
+      setShowSaveModal(false);
 
       const orderData = {
         customerName: customerName.trim() || undefined,
@@ -556,6 +564,26 @@ export default function EditOrderPage() {
           </button>
         </div>
       </form>
+
+      {/* Save Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showSaveModal}
+        onClose={() => setShowSaveModal(false)}
+        onConfirm={confirmSave}
+        title="Confirm Order Update"
+        message={
+          <div>
+            <p>Are you sure you want to update this order?</p>
+            <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+              All changes will be saved and recorded in the order's audit log. This action will update the order status and history.
+            </p>
+          </div>
+        }
+        confirmText="Save Changes"
+        cancelText="Cancel"
+        type="info"
+        loading={saving}
+      />
     </div>
   );
 }

@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Edit2, Trash2, Shield, User as UserIcon, Loader2, Search, X, Upload, Image as ImageIcon } from 'lucide-react';
+import { Plus, Edit2, Trash2, Shield, User as UserIcon, Loader2, Search, X, Upload, Image as ImageIcon, Copy } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
+import { useContextMenu } from '../hooks/useContextMenu';
+import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
 import '../styles/users.css';
 
 interface User {
@@ -28,6 +30,7 @@ export default function UsersPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showUpdateConfirmModal, setShowUpdateConfirmModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<User | null>(null);
   const [formData, setFormData] = useState<UserFormData>({
@@ -41,6 +44,7 @@ export default function UsersPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const editAvatarInputRef = useRef<HTMLInputElement>(null);
+  const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu();
 
   useEffect(() => {
     fetchUsers();
@@ -163,7 +167,8 @@ export default function UsersPage() {
     }
   };
 
-  const handleEditSubmit = async () => {
+  const handleEditSubmit = () => {
+    // Validate first
     if (!formData.username.trim()) {
       toast.error('Username is required');
       return;
@@ -173,6 +178,13 @@ export default function UsersPage() {
       toast.error('Password must be at least 6 characters');
       return;
     }
+
+    // Show confirmation modal instead of directly updating
+    setShowUpdateConfirmModal(true);
+  };
+
+  const confirmUserUpdate = async () => {
+    setShowUpdateConfirmModal(false);
 
     try {
       setSubmitting(true);
@@ -239,6 +251,66 @@ export default function UsersPage() {
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString();
+  };
+
+  const handleRowRightClick = (e: React.MouseEvent, user: User) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedUser(user);
+    showContextMenu(e, user);
+  };
+
+  const handleCopyUsername = () => {
+    if (!selectedUser) return;
+    navigator.clipboard.writeText(selectedUser.username);
+    toast.success('Username copied to clipboard');
+  };
+
+  const handleCopyUserId = () => {
+    if (!selectedUser) return;
+    navigator.clipboard.writeText(selectedUser.id);
+    toast.success('User ID copied to clipboard');
+  };
+
+  const getContextMenuItems = (user: User): ContextMenuItem[] => {
+    return [
+      {
+        label: 'Edit User',
+        icon: <Edit2 size={16} />,
+        action: () => {
+          setSelectedUser(user);
+          setFormData({
+            username: user.username,
+            password: '',
+            role: user.role,
+            avatar: null,
+            avatarPreview: user.avatar ? `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}${user.avatar}` : null,
+          });
+          setShowEditModal(true);
+        },
+      },
+      { divider: true },
+      {
+        label: 'Copy Username',
+        icon: <Copy size={16} />,
+        action: handleCopyUsername,
+      },
+      {
+        label: 'Copy User ID',
+        icon: <Copy size={16} />,
+        action: handleCopyUserId,
+      },
+      { divider: true },
+      {
+        label: 'Delete User',
+        icon: <Trash2 size={16} />,
+        action: () => {
+          setSelectedUser(user);
+          setShowDeleteModal(true);
+        },
+        danger: true,
+      },
+    ];
   };
 
   if (loading) {
@@ -310,7 +382,11 @@ export default function UsersPage() {
             </thead>
             <tbody>
               {filteredUsers.map((user) => (
-                <tr key={user.id} className="user-row">
+                <tr 
+                  key={user.id} 
+                  className="user-row"
+                  onContextMenu={(e) => handleRowRightClick(e, user)}
+                >
                   <td>
                     <div className="user-info">
                       {user.avatar ? (
@@ -559,14 +635,46 @@ export default function UsersPage() {
         onConfirm={handleDeleteConfirm}
         title="Delete User"
         message={
-          <p>
-            Are you sure you want to delete user <strong>{selectedUser?.username}</strong>? This action cannot be undone.
-          </p>
+          <div>
+            <p>
+              Are you sure you want to delete user <strong>{selectedUser?.username}</strong>? This action cannot be undone.
+            </p>
+            <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+              This action will be permanently recorded in the system logs and cannot be reversed.
+            </p>
+          </div>
         }
         confirmText="Delete User"
         cancelText="Cancel"
         type="danger"
         loading={deleteLoading}
+      />
+
+      {/* Update Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showUpdateConfirmModal}
+        onClose={() => setShowUpdateConfirmModal(false)}
+        onConfirm={confirmUserUpdate}
+        title="Confirm User Update"
+        message={
+          <div>
+            <p>Are you sure you want to update user <strong>{selectedUser?.username}</strong>?</p>
+            <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+              All changes will be saved and this action will be recorded in the system logs.
+            </p>
+          </div>
+        }
+        confirmText="Update User"
+        cancelText="Cancel"
+        type="info"
+        loading={submitting}
+      />
+
+      {/* Context Menu */}
+      <ContextMenu
+        items={selectedUser ? getContextMenuItems(selectedUser) : []}
+        position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
+        onClose={hideContextMenu}
       />
     </div>
   );

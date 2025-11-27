@@ -1,8 +1,12 @@
 import { Request, Response } from 'express';
+import path from 'path';
 import { loginSchema, LoginInput } from '../validators/auth.validator';
 import { login, getUserById } from '../services/auth.service';
+import { updateUser, UpdateUserInput } from '../services/user.service';
+import { updateProfileSchema, UpdateProfileInput } from '../validators/user.validator';
 import { createSuccessResponse } from '../utils/response.util';
 import { createErrorResponse } from '../utils/error.util';
+import { uploadAvatar, getAvatarUrl } from '../middleware/upload.middleware';
 
 /**
  * POST /api/v1/auth/login
@@ -42,6 +46,73 @@ export async function meController(req: Request, res: Response): Promise<void> {
 
     res.status(200).json(
       createSuccessResponse(user, 'User retrieved successfully')
+    );
+  } catch (error) {
+    // Re-throw to be handled by error middleware
+    throw error;
+  }
+}
+
+/**
+ * PATCH /api/v1/auth/profile
+ * Update current user's profile (username, password, avatar, whatsappMessage)
+ */
+export async function updateProfileController(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json(
+        createErrorResponse('UNAUTHORIZED', 'Authentication required')
+      );
+      return;
+    }
+
+    // Validate input (only allow profile fields, not role)
+    const validatedData: UpdateProfileInput = updateProfileSchema.parse(req.body);
+
+    // Update user profile (restricted to own profile)
+    const updatedUser = await updateUser(req.user.userId, validatedData as UpdateUserInput, req.user.userId);
+
+    res.status(200).json(
+      createSuccessResponse(updatedUser, 'Profile updated successfully')
+    );
+  } catch (error) {
+    // Re-throw to be handled by error middleware
+    throw error;
+  }
+}
+
+/**
+ * POST /api/v1/auth/profile/avatar
+ * Upload current user's avatar
+ */
+export async function uploadProfileAvatarController(req: Request, res: Response): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json(
+        createErrorResponse('UNAUTHORIZED', 'Authentication required')
+      );
+      return;
+    }
+
+    const file = req.file;
+
+    if (!file) {
+      res.status(400).json(
+        createErrorResponse('NO_FILE', 'No file uploaded')
+      );
+      return;
+    }
+
+    // Get just the filename (not full path)
+    const filename = path.basename(file.path);
+    const avatarUrl = getAvatarUrl(filename);
+
+    // Update user with avatar (restricted to own profile)
+    const updateData: UpdateUserInput = { avatar: avatarUrl };
+    const user = await updateUser(req.user.userId, updateData, req.user.userId);
+
+    res.status(200).json(
+      createSuccessResponse(user, 'Avatar uploaded successfully')
     );
   } catch (error) {
     // Re-throw to be handled by error middleware

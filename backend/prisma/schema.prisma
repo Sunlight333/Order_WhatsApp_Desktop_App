@@ -16,13 +16,14 @@ datasource db {
 // NotificationMethod: CALL | WHATSAPP
 
 model User {
-  id        String   @id @default(uuid())
-  username  String   @unique
-  password  String
-  role      String   @default("USER") // SUPER_ADMIN | USER
-  avatar    String?  // Avatar file path or URL
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(uuid())
+  username       String   @unique
+  password       String
+  role           String   @default("USER") // SUPER_ADMIN | USER
+  avatar         String?  // Avatar file path or URL
+  whatsappMessage String? // User's default WhatsApp message template
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
   
   createdOrders Order[]     @relation("OrderCreator")
   auditLogs     AuditLog[]  @relation("AuditLogUser")

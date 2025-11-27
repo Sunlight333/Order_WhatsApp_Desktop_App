@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Package, Loader2, Search, X, Filter } from 'lucide-react';
+import { Plus, Edit2, Trash2, Package, Loader2, Search, X, Filter, Copy } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
+import { useContextMenu } from '../hooks/useContextMenu';
+import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
 import '../styles/products.css';
 
 interface Supplier {
@@ -37,6 +39,7 @@ export default function ProductsPage() {
   const [selectedSupplierFilter, setSelectedSupplierFilter] = useState<string>('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showUpdateConfirmModal, setShowUpdateConfirmModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [formData, setFormData] = useState<ProductFormData>({
@@ -48,6 +51,7 @@ export default function ProductsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu();
 
   useEffect(() => {
     checkUserRole();
@@ -147,11 +151,18 @@ export default function ProductsPage() {
     }
   };
 
-  const handleEditSubmit = async () => {
+  const handleEditSubmit = () => {
     if (!formData.reference.trim()) {
       toast.error('Product reference is required');
       return;
     }
+
+    // Show confirmation modal instead of directly updating
+    setShowUpdateConfirmModal(true);
+  };
+
+  const confirmProductUpdate = async () => {
+    setShowUpdateConfirmModal(false);
 
     try {
       setSubmitting(true);
@@ -197,6 +208,75 @@ export default function ProductsPage() {
       product.supplier.name.toLowerCase().includes(query)
     );
   });
+
+  const handleRowRightClick = (e: React.MouseEvent, product: Product) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedProduct(product);
+    showContextMenu(e, product);
+  };
+
+  const handleCopyReference = () => {
+    if (!selectedProduct) return;
+    navigator.clipboard.writeText(selectedProduct.reference);
+    toast.success('Reference copied to clipboard');
+  };
+
+  const handleCopyDescription = () => {
+    if (!selectedProduct || !selectedProduct.description) return;
+    navigator.clipboard.writeText(selectedProduct.description);
+    toast.success('Description copied to clipboard');
+  };
+
+  const getContextMenuItems = (product: Product): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = [];
+
+    if (isSuperAdmin) {
+      items.push({
+        label: 'Edit Product',
+        icon: <Edit2 size={16} />,
+        action: () => {
+          setSelectedProduct(product);
+          setFormData({
+            supplierId: product.supplierId,
+            reference: product.reference,
+            description: product.description || '',
+            defaultPrice: product.defaultPrice || '',
+          });
+          setShowEditModal(true);
+        },
+      });
+    }
+
+    items.push(
+      {
+        label: 'Copy Reference',
+        icon: <Copy size={16} />,
+        action: handleCopyReference,
+      },
+      {
+        label: 'Copy Description',
+        icon: <Copy size={16} />,
+        action: handleCopyDescription,
+        disabled: !product.description,
+      }
+    );
+
+    if (isSuperAdmin) {
+      items.push({ divider: true });
+      items.push({
+        label: 'Delete Product',
+        icon: <Trash2 size={16} />,
+        action: () => {
+          setSelectedProduct(product);
+          setShowDeleteModal(true);
+        },
+        danger: true,
+      });
+    }
+
+    return items;
+  };
 
   if (loading) {
     return (
@@ -282,16 +362,20 @@ export default function ProductsPage() {
           <table className="products-table">
             <thead>
               <tr>
-                <th>Reference</th>
-                <th>Supplier</th>
-                <th>Description</th>
-                <th>Default Price</th>
-                {isSuperAdmin && <th>Actions</th>}
+                <th>REFERENCE</th>
+                <th>SUPPLIER</th>
+                <th>DESCRIPTION</th>
+                <th>DEFAULT PRICE</th>
+                <th>ACTIONS</th>
               </tr>
             </thead>
             <tbody>
               {filteredProducts.map((product) => (
-                <tr key={product.id} className="product-row">
+                <tr 
+                  key={product.id} 
+                  className="product-row"
+                  onContextMenu={(e) => handleRowRightClick(e, product)}
+                >
                   <td>
                     <div className="product-reference">{product.reference}</div>
                   </td>
@@ -308,8 +392,8 @@ export default function ProductsPage() {
                       {product.defaultPrice ? `$${product.defaultPrice}` : '-'}
                     </div>
                   </td>
-                  {isSuperAdmin && (
-                    <td>
+                  <td>
+                    {isSuperAdmin ? (
                       <div className="action-buttons">
                         <button
                           className="btn-icon btn-edit"
@@ -326,8 +410,10 @@ export default function ProductsPage() {
                           <Trash2 size={16} />
                         </button>
                       </div>
-                    </td>
-                  )}
+                    ) : (
+                      <span style={{ color: 'var(--text-disabled)' }}>-</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -476,17 +562,49 @@ export default function ProductsPage() {
             onConfirm={handleDeleteConfirm}
             title="Delete Product"
             message={
-              <p>
-                Are you sure you want to delete product <strong>{selectedProduct?.reference}</strong>? This action cannot be undone.
-              </p>
+              <div>
+                <p>
+                  Are you sure you want to delete product <strong>{selectedProduct?.reference}</strong>? This action cannot be undone.
+                </p>
+                <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  This action will be permanently recorded in the system logs and cannot be reversed.
+                </p>
+              </div>
             }
             confirmText="Delete Product"
             cancelText="Cancel"
             type="danger"
             loading={deleteLoading}
           />
+
+          {/* Update Confirmation Modal */}
+          <ConfirmModal
+            isOpen={showUpdateConfirmModal}
+            onClose={() => setShowUpdateConfirmModal(false)}
+            onConfirm={confirmProductUpdate}
+            title="Confirm Product Update"
+            message={
+              <div>
+                <p>Are you sure you want to update product <strong>{selectedProduct?.reference}</strong>?</p>
+                <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  All changes will be saved and this action will be recorded in the system logs.
+                </p>
+              </div>
+            }
+            confirmText="Update Product"
+            cancelText="Cancel"
+            type="info"
+            loading={submitting}
+          />
         </>
       )}
+
+      {/* Context Menu */}
+      <ContextMenu
+        items={selectedProduct ? getContextMenuItems(selectedProduct) : []}
+        position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
+        onClose={hideContextMenu}
+      />
     </div>
   );
 }

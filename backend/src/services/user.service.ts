@@ -16,6 +16,7 @@ export interface UpdateUserInput {
   password?: string;
   role?: 'SUPER_ADMIN' | 'USER';
   avatar?: string | null;
+  whatsappMessage?: string | null;
 }
 
 /**
@@ -29,6 +30,7 @@ export async function listUsers() {
         username: true,
         role: true,
         avatar: true,
+        whatsappMessage: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -37,8 +39,8 @@ export async function listUsers() {
 
     return users;
   } catch (error: any) {
-    // If avatar column doesn't exist yet, query without it
-    if (error.code === 'P2022' && error.meta?.column?.includes('avatar')) {
+    // If avatar or whatsappMessage column doesn't exist yet, query without them
+    if (error.code === 'P2022' && (error.meta?.column?.includes('avatar') || error.meta?.column?.includes('whatsappMessage'))) {
       const users = await prisma.user.findMany({
         select: {
           id: true,
@@ -50,7 +52,7 @@ export async function listUsers() {
         orderBy: { createdAt: 'desc' },
       });
 
-      return users.map(user => ({ ...user, avatar: null }));
+      return users.map(user => ({ ...user, avatar: null, whatsappMessage: null }));
     }
     throw error;
   }
@@ -68,6 +70,7 @@ export async function getUserById(userId: string) {
         username: true,
         role: true,
         avatar: true,
+        whatsappMessage: true,
         createdAt: true,
         updatedAt: true,
       },
@@ -79,8 +82,8 @@ export async function getUserById(userId: string) {
 
     return user;
   } catch (error: any) {
-    // If avatar column doesn't exist yet, query without it
-    if (error.code === 'P2022' && error.meta?.column?.includes('avatar')) {
+    // If avatar or whatsappMessage column doesn't exist yet, query without them
+    if (error.code === 'P2022' && (error.meta?.column?.includes('avatar') || error.meta?.column?.includes('whatsappMessage'))) {
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: {
@@ -96,7 +99,7 @@ export async function getUserById(userId: string) {
         throw createError('USER_NOT_FOUND', 'User not found', 404);
       }
 
-      return { ...user, avatar: null };
+      return { ...user, avatar: null, whatsappMessage: null };
     }
     throw error;
   }
@@ -187,6 +190,10 @@ export async function updateUser(userId: string, input: UpdateUserInput, current
     updateData.avatar = input.avatar;
   }
 
+  if (input.whatsappMessage !== undefined) {
+    updateData.whatsappMessage = input.whatsappMessage;
+  }
+
   // Update user
   const updatedUser = await prisma.user.update({
     where: { id: userId },
@@ -196,6 +203,7 @@ export async function updateUser(userId: string, input: UpdateUserInput, current
       username: true,
       role: true,
       avatar: true,
+      whatsappMessage: true,
       createdAt: true,
       updatedAt: true,
     },

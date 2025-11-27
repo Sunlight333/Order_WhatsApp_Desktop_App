@@ -1,6 +1,7 @@
 import { Router } from 'express';
-import { loginController, meController, logoutController } from '../controllers/auth.controller';
+import { loginController, meController, updateProfileController, uploadProfileAvatarController, logoutController } from '../controllers/auth.controller';
 import { authenticate } from '../middleware/auth.middleware';
+import { uploadAvatar } from '../middleware/upload.middleware';
 
 const router = Router();
 
@@ -17,6 +18,20 @@ router.post('/login', loginController);
  * @access  Private
  */
 router.get('/me', authenticate, meController);
+
+/**
+ * @route   PATCH /api/v1/auth/profile
+ * @desc    Update current user's profile (username, password, avatar, whatsappMessage)
+ * @access  Private
+ */
+router.patch('/profile', authenticate, updateProfileController);
+
+/**
+ * @route   POST /api/v1/auth/profile/avatar
+ * @desc    Upload current user's avatar
+ * @access  Private
+ */
+router.post('/profile/avatar', authenticate, uploadAvatar.single('avatar'), uploadProfileAvatarController);
 
 /**
  * @route   POST /api/v1/auth/logout

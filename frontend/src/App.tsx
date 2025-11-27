@@ -55,6 +55,38 @@ function App() {
     checkAuth();
   }, [checkAuth]);
 
+  // Disable default browser context menu globally (except for form inputs)
+  useEffect(() => {
+    const handleContextMenu = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      
+      // Allow default context menu for form inputs, textareas, and code blocks
+      // This allows users to access browser features like paste, select all, etc. in text fields
+      const isEditableElement = 
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable ||
+        target.closest('input') ||
+        target.closest('textarea') ||
+        target.closest('[contenteditable="true"]');
+      
+      // Allow default context menu for links
+      const isLink = target.tagName === 'A' || target.closest('a');
+      
+      // Allow default context menu for images
+      const isImage = target.tagName === 'IMG';
+      
+      if (!isEditableElement && !isLink && !isImage) {
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener('contextmenu', handleContextMenu);
+    return () => {
+      document.removeEventListener('contextmenu', handleContextMenu);
+    };
+  }, []);
+
   return (
     <BrowserRouter>
       <Toaster />

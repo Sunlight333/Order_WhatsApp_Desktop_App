@@ -11,6 +11,7 @@ export interface LoginResult {
     username: string;
     role: 'SUPER_ADMIN' | 'USER';
     avatar?: string | null;
+    whatsappMessage?: string | null;
   };
   token: string;
 }
@@ -39,7 +40,7 @@ export async function login(username: string, password: string): Promise<LoginRe
   const payload: JWTPayload = {
     userId: user.id,
     username: user.username,
-    role: user.role,
+    role: user.role as 'SUPER_ADMIN' | 'USER',
   };
 
   const token = generateToken(payload);
@@ -48,8 +49,9 @@ export async function login(username: string, password: string): Promise<LoginRe
     user: {
       id: user.id,
       username: user.username,
-      role: user.role,
+      role: user.role as 'SUPER_ADMIN' | 'USER',
       avatar: (user as any).avatar || null,
+      whatsappMessage: (user as any).whatsappMessage || null,
     },
     token,
   };
@@ -67,6 +69,7 @@ export async function getUserById(userId: string) {
         username: true,
         role: true,
         avatar: true,
+        whatsappMessage: true,
         createdAt: true,
       },
     });
@@ -77,8 +80,8 @@ export async function getUserById(userId: string) {
 
     return user;
   } catch (error: any) {
-    // If avatar column doesn't exist yet, query without it
-    if (error.code === 'P2022' && error.meta?.column?.includes('avatar')) {
+    // If avatar or whatsappMessage column doesn't exist yet, query without them
+    if (error.code === 'P2022' && (error.meta?.column?.includes('avatar') || error.meta?.column?.includes('whatsappMessage'))) {
       const user = await prisma.user.findUnique({
         where: { id: userId },
         select: {
@@ -93,7 +96,7 @@ export async function getUserById(userId: string) {
         throw createError('USER_NOT_FOUND', 'User not found', 404);
       }
 
-      return { ...user, avatar: null };
+      return { ...user, avatar: null, whatsappMessage: null };
     }
     throw error;
   }

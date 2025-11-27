@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Package, Loader2, Search, X } from 'lucide-react';
+import { Plus, Edit2, Trash2, Package, Loader2, Search, X, Copy } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
+import { useContextMenu } from '../hooks/useContextMenu';
+import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
 import '../styles/suppliers.css';
 
 interface Supplier {
@@ -26,6 +28,7 @@ export default function SuppliersPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
+  const [showUpdateConfirmModal, setShowUpdateConfirmModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
   const [formData, setFormData] = useState<SupplierFormData>({
@@ -35,6 +38,7 @@ export default function SuppliersPage() {
   const [submitting, setSubmitting] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
+  const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu();
 
   useEffect(() => {
     checkUserRole();
@@ -108,11 +112,18 @@ export default function SuppliersPage() {
     }
   };
 
-  const handleEditSubmit = async () => {
+  const handleEditSubmit = () => {
     if (!formData.name.trim()) {
       toast.error('Supplier name is required');
       return;
     }
+
+    // Show confirmation modal instead of directly updating
+    setShowUpdateConfirmModal(true);
+  };
+
+  const confirmSupplierUpdate = async () => {
+    setShowUpdateConfirmModal(false);
 
     try {
       setSubmitting(true);
@@ -159,6 +170,74 @@ export default function SuppliersPage() {
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString();
+  };
+
+  const handleRowRightClick = (e: React.MouseEvent, supplier: Supplier) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedSupplier(supplier);
+    showContextMenu(e, supplier);
+  };
+
+  const handleCopyName = () => {
+    if (!selectedSupplier) return;
+    navigator.clipboard.writeText(selectedSupplier.name);
+    toast.success('Supplier name copied to clipboard');
+  };
+
+  const handleCopyDescription = () => {
+    if (!selectedSupplier || !selectedSupplier.description) return;
+    navigator.clipboard.writeText(selectedSupplier.description);
+    toast.success('Description copied to clipboard');
+  };
+
+  const getContextMenuItems = (supplier: Supplier): ContextMenuItem[] => {
+    const items: ContextMenuItem[] = [];
+
+    if (isSuperAdmin) {
+      items.push({
+        label: 'Edit Supplier',
+        icon: <Edit2 size={16} />,
+        action: () => {
+          setSelectedSupplier(supplier);
+          setFormData({
+            name: supplier.name,
+            description: supplier.description || '',
+          });
+          setShowEditModal(true);
+        },
+      });
+    }
+
+    items.push(
+      {
+        label: 'Copy Name',
+        icon: <Copy size={16} />,
+        action: handleCopyName,
+      },
+      {
+        label: 'Copy Description',
+        icon: <Copy size={16} />,
+        action: handleCopyDescription,
+        disabled: !supplier.description,
+      }
+    );
+
+    if (isSuperAdmin) {
+      items.push({ divider: true });
+      items.push({
+        label: 'Delete Supplier',
+        icon: <Trash2 size={16} />,
+        action: () => {
+          setSelectedSupplier(supplier);
+          setShowDeleteModal(true);
+        },
+        danger: true,
+        disabled: supplier.ordersCount > 0,
+      });
+    }
+
+    return items;
   };
 
   if (loading) {
@@ -235,7 +314,11 @@ export default function SuppliersPage() {
             </thead>
             <tbody>
               {filteredSuppliers.map((supplier) => (
-                <tr key={supplier.id} className="supplier-row">
+                <tr 
+                  key={supplier.id} 
+                  className="supplier-row"
+                  onContextMenu={(e) => handleRowRightClick(e, supplier)}
+                >
                   <td>
                     <div className="supplier-name">{supplier.name}</div>
                   </td>
@@ -381,6 +464,9 @@ export default function SuppliersPage() {
                     This supplier has {selectedSupplier.ordersCount} order(s). You cannot delete it until all orders are removed.
                   </p>
                 )}
+                <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  This action will be permanently recorded in the system logs and cannot be reversed.
+                </p>
               </div>
             }
             confirmText="Delete Supplier"
@@ -388,8 +474,35 @@ export default function SuppliersPage() {
             type="danger"
             loading={deleteLoading}
           />
+
+          {/* Update Confirmation Modal */}
+          <ConfirmModal
+            isOpen={showUpdateConfirmModal}
+            onClose={() => setShowUpdateConfirmModal(false)}
+            onConfirm={confirmSupplierUpdate}
+            title="Confirm Supplier Update"
+            message={
+              <div>
+                <p>Are you sure you want to update supplier <strong>{selectedSupplier?.name}</strong>?</p>
+                <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  All changes will be saved and this action will be recorded in the system logs.
+                </p>
+              </div>
+            }
+            confirmText="Update Supplier"
+            cancelText="Cancel"
+            type="info"
+            loading={submitting}
+          />
         </>
       )}
+
+      {/* Context Menu */}
+      <ContextMenu
+        items={selectedSupplier ? getContextMenuItems(selectedSupplier) : []}
+        position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
+        onClose={hideContextMenu}
+      />
     </div>
   );
 }

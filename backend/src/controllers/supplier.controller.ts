@@ -82,7 +82,12 @@ export async function updateSupplierController(req: Request, res: Response): Pro
     }
 
     const { id } = req.params;
-    const validatedData: UpdateSupplierInput = updateSupplierSchema.parse(req.body);
+    const parsed = updateSupplierSchema.parse(req.body);
+    // Filter out null values to match UpdateSupplierInput type
+    const validatedData: UpdateSupplierInput = {
+      ...(parsed.name !== undefined && { name: parsed.name }),
+      ...(parsed.description !== null && parsed.description !== undefined && { description: parsed.description }),
+    };
     const supplier = await updateSupplier(id, validatedData);
 
     res.status(200).json(createSuccessResponse(supplier, 'Supplier updated successfully'));

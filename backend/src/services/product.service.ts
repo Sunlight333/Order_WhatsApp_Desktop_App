@@ -135,7 +135,7 @@ export async function updateProduct(productId: string, input: UpdateProductInput
     });
 
     const exists = existingProducts.some(
-      (p) => p.id !== productId && p.reference.toLowerCase() === input.reference.trim().toLowerCase()
+      (p) => p.id !== productId && p.reference.toLowerCase() === (input.reference?.trim().toLowerCase() ?? '')
     );
 
     if (exists) {

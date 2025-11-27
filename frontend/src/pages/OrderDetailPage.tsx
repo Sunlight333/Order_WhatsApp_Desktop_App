@@ -17,6 +17,7 @@ import {
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
+import WhatsAppModal from '../components/WhatsAppModal';
 import '../styles/order-detail.css';
 
 interface Supplier {
@@ -74,6 +75,9 @@ export default function OrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
   const [showStatusModal, setShowStatusModal] = useState(false);
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [showPhoneCallModal, setShowPhoneCallModal] = useState(false);
+  const [whatsappMessage, setWhatsappMessage] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<OrderStatus | null>(null);
 
   useEffect(() => {
@@ -142,43 +146,147 @@ export default function OrderDetailPage() {
     if (!order) return;
 
     try {
-      // Get WhatsApp message template
+      // Get WhatsApp message template - prefer user's personal message, fallback to global config
       let message = 'Hola, tu pedido está listo para recoger.';
       
+      // First, try to get current user's WhatsApp message
       try {
-        const configResponse = await api.get<{
+        const userResponse = await api.get<{
           success: true;
-          data: { value: string };
-        }>('/config/whatsapp_default_message');
+          data: {
+            id: string;
+            username: string;
+            role: string;
+            whatsappMessage?: string | null;
+          };
+        }>('/auth/me');
         
-        if (configResponse.data.data?.value) {
-          message = configResponse.data.data.value;
+        if (userResponse.data.data?.whatsappMessage) {
+          message = userResponse.data.data.whatsappMessage;
+        } else {
+          // If user doesn't have a personal message, fallback to global config
+          try {
+            const configResponse = await api.get<{
+              success: true;
+              data: { value: string };
+            }>('/config/whatsapp_default_message');
+            
+            if (configResponse.data.data?.value) {
+              message = configResponse.data.data.value;
+            }
+          } catch (configError) {
+            console.warn('Failed to load global WhatsApp message config, using default');
+          }
         }
-      } catch (configError) {
-        console.warn('Failed to load WhatsApp message config, using default');
+      } catch (userError) {
+        // If /auth/me fails, try global config as fallback
+        console.warn('Failed to load user profile, trying global config');
+        try {
+          const configResponse = await api.get<{
+            success: true;
+            data: { value: string };
+          }>('/config/whatsapp_default_message');
+          
+          if (configResponse.data.data?.value) {
+            message = configResponse.data.data.value;
+          }
+        } catch (configError) {
+          console.warn('Failed to load WhatsApp message config, using default');
+        }
       }
 
-      const phone = order.customerPhone.replace(/\D/g, ''); // Remove non-digits
-      const whatsappUrl = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
+      // Store message for modal display
+      setWhatsappMessage(message);
+      setShowWhatsAppModal(true);
+      
+    } catch (error: any) {
+      toast.error('Failed to load WhatsApp configuration.');
+      console.error('WhatsApp error:', error);
+    }
+  };
 
-      // Open WhatsApp in new tab
-      window.open(whatsappUrl, '_blank');
+  const confirmWhatsAppAction = async (message: string) => {
+    if (!order) return;
 
-      // Automatically update status to NOTIFIED_WHATSAPP after a short delay
-      // This gives user time to see the WhatsApp window open
+    try {
+      setShowWhatsAppModal(false);
+
+      // Normalize phone number - remove all non-digits
+      const phone = order.customerPhone.replace(/\D/g, '');
+
+      // Use WhatsApp API URL format that works with desktop and mobile apps
+      // Format: https://api.whatsapp.com/send/?phone={phone}&text={message}&type=phone_number&app_absent=0
+      const whatsappUrl = `https://api.whatsapp.com/send/?phone=${phone}&text=${encodeURIComponent(message)}&type=phone_number&app_absent=0`;
+
+      // Use Electron's shell.openExternal if available, otherwise fallback to window.open
+      if (window.electron?.openExternal) {
+        try {
+          await window.electron.openExternal(whatsappUrl);
+        } catch (error: any) {
+          console.error('Failed to open WhatsApp via Electron:', error);
+          // Fallback to window.open
+          window.open(whatsappUrl, '_blank');
+        }
+      } else {
+        // Fallback for web version
+        window.open(whatsappUrl, '_blank');
+      }
+
+      // Update status to NOTIFIED_WHATSAPP after opening WhatsApp
       setTimeout(async () => {
         try {
           await updateOrderStatus('NOTIFIED_WHATSAPP');
           toast.success('Order status updated to Notified (WhatsApp)');
         } catch (error: any) {
           console.error('Failed to update status:', error);
-          // Don't show error toast here to avoid interrupting user experience
+          toast.error('Failed to update order status');
         }
       }, 500);
       
     } catch (error: any) {
       toast.error('Failed to open WhatsApp. Please check the phone number.');
       console.error('WhatsApp error:', error);
+    }
+  };
+
+  const handlePhoneCallClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!order) return;
+    setShowPhoneCallModal(true);
+  };
+
+  const confirmPhoneCallAction = async () => {
+    if (!order) return;
+    setShowPhoneCallModal(false);
+    
+    try {
+      const phoneUrl = `tel:${order.customerPhone}`;
+      
+      // Use Electron's shell.openExternal if available, otherwise fallback
+      if (window.electron?.openExternal) {
+        try {
+          await window.electron.openExternal(phoneUrl);
+        } catch (error: any) {
+          console.error('Failed to open phone dialer via Electron:', error);
+          window.location.href = phoneUrl;
+        }
+      } else {
+        window.location.href = phoneUrl;
+      }
+      
+      // Update status to NOTIFIED_CALL after a delay
+      setTimeout(async () => {
+        try {
+          await updateOrderStatus('NOTIFIED_CALL');
+          toast.success('Order status updated to Notified (Call)');
+        } catch (error: any) {
+          console.error('Failed to update status:', error);
+          toast.error('Failed to update order status');
+        }
+      }, 1000);
+    } catch (error: any) {
+      toast.error('Failed to open phone dialer');
+      console.error('Phone call error:', error);
     }
   };
 
@@ -341,10 +449,15 @@ export default function OrderDetailPage() {
             <div className="detail-row">
               <span className="detail-label">Phone</span>
               <div className="detail-value phone-actions">
-                <a href={`tel:${order.customerPhone}`} className="phone-link">
+                <button
+                  onClick={handlePhoneCallClick}
+                  className="phone-link"
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                  title="Call customer"
+                >
                   <Phone size={16} />
                   {order.customerPhone}
-                </a>
+                </button>
                 <button
                   className="btn-icon btn-whatsapp"
                   onClick={handleWhatsAppClick}
@@ -492,12 +605,45 @@ export default function OrderDetailPage() {
                 {getStatusLabel(selectedStatus!)}
               </span>
             </div>
+            <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+              This action will update the order status and be recorded in the audit log.
+            </p>
           </div>
         }
         confirmText="Confirm Update"
         cancelText="Cancel"
         type="info"
         loading={updating}
+      />
+
+      {/* WhatsApp Confirmation Modal */}
+      {order && (
+        <WhatsAppModal
+          isOpen={showWhatsAppModal}
+          onClose={() => setShowWhatsAppModal(false)}
+          onConfirm={confirmWhatsAppAction}
+          phoneNumber={order.customerPhone}
+          initialMessage={whatsappMessage}
+        />
+      )}
+
+      {/* Phone Call Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showPhoneCallModal}
+        onClose={() => setShowPhoneCallModal(false)}
+        onConfirm={confirmPhoneCallAction}
+        title="Call Customer"
+        message={
+          <div>
+            <p>Do you want to call <strong>{order?.customerPhone}</strong>?</p>
+            <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+              This will open your phone dialer. After calling, the order status will automatically update to <strong>"Notified (Call)"</strong>.
+            </p>
+          </div>
+        }
+        confirmText="Call Customer"
+        cancelText="Cancel"
+        type="info"
       />
     </div>
   );

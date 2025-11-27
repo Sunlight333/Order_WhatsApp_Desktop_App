@@ -28,6 +28,11 @@ declare global {
         get: () => Promise<AppConfig>;
         save: (config: Partial<AppConfig>) => Promise<void>;
       };
+      openExternal: (url: string) => Promise<{ success: boolean }>;
+      dialog: {
+        showSaveDialog: (options: Electron.SaveDialogOptions) => Promise<Electron.SaveDialogReturnValue>;
+        showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
+      };
     };
   }
 }

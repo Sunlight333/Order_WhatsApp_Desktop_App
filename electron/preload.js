@@ -8,4 +8,5 @@ contextBridge.exposeInMainWorld('electron', {
     get: () => ipcRenderer.invoke('config:get'),
     save: (config) => ipcRenderer.invoke('config:save', config),
   },
+  openExternal: (url) => ipcRenderer.invoke('open-external', url),
 });

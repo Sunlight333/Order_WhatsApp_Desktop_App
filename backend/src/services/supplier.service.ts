@@ -112,7 +112,7 @@ export async function updateSupplier(supplierId: string, input: UpdateSupplierIn
   if (input.name && input.name.trim().toLowerCase() !== supplier.name.toLowerCase()) {
     const existingSuppliers = await prisma.supplier.findMany();
     const exists = existingSuppliers.some(
-      (s) => s.id !== supplierId && s.name.toLowerCase() === input.name.trim().toLowerCase()
+      (s) => s.id !== supplierId && s.name.toLowerCase() === (input.name?.trim().toLowerCase() ?? '')
     );
 
     if (exists) {

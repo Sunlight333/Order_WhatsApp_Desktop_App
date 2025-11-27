@@ -1,9 +1,13 @@
 import { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Loader2, X, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Filter, Loader2, X, ChevronLeft, ChevronRight, MessageSquare, Phone, Eye, Copy } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { useDebounce } from '../hooks/useDebounce';
+import { useContextMenu } from '../hooks/useContextMenu';
+import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
+import { getWhatsAppMessage, openWhatsApp } from '../utils/whatsapp';
+import WhatsAppModal from '../components/WhatsAppModal';
 
 interface Order {
   id: string;
@@ -30,6 +34,10 @@ export default function OrdersPage() {
     total: 0,
     totalPages: 0,
   });
+  const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu();
+  const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [whatsappMessage, setWhatsappMessage] = useState<string>('');
 
   const debouncedSearch = useDebounce(searchQuery, 500);
 
@@ -119,6 +127,104 @@ export default function OrdersPage() {
   };
 
   const hasActiveFilters = searchQuery.trim() || statusFilter;
+
+  const handleRowRightClick = (e: React.MouseEvent, order: Order) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setSelectedOrder(order);
+    showContextMenu(e, order);
+  };
+
+  const handleWhatsAppAction = async () => {
+    if (!selectedOrder) return;
+    
+    try {
+      const message = await getWhatsAppMessage();
+      setWhatsappMessage(message);
+      setShowWhatsAppModal(true);
+    } catch (error: any) {
+      toast.error('Failed to load WhatsApp message');
+    }
+  };
+
+  const confirmWhatsAppSend = async (message: string) => {
+    if (!selectedOrder) return;
+    setShowWhatsAppModal(false);
+
+    try {
+      await openWhatsApp(selectedOrder.customerPhone, message);
+      
+      // Update status after a delay
+      setTimeout(async () => {
+        try {
+          await api.patch(`/orders/${selectedOrder.id}/status`, {
+            status: 'NOTIFIED_WHATSAPP',
+            notificationMethod: 'WHATSAPP',
+          });
+          toast.success('Order status updated to Notified (WhatsApp)');
+          fetchOrders(); // Refresh orders
+        } catch (error: any) {
+          console.error('Failed to update status:', error);
+        }
+      }, 2000);
+    } catch (error: any) {
+      toast.error('Failed to open WhatsApp');
+    }
+  };
+
+  const handleCallAction = async () => {
+    if (!selectedOrder) return;
+    const telUrl = `tel:${selectedOrder.customerPhone}`;
+    
+    if (window.electron?.openExternal) {
+      await window.electron.openExternal(telUrl);
+    } else {
+      window.location.href = telUrl;
+    }
+  };
+
+  const handleCopyOrderId = () => {
+    if (!selectedOrder) return;
+    navigator.clipboard.writeText(selectedOrder.id);
+    toast.success('Order ID copied to clipboard');
+  };
+
+  const handleCopyPhone = () => {
+    if (!selectedOrder) return;
+    navigator.clipboard.writeText(selectedOrder.customerPhone);
+    toast.success('Phone number copied to clipboard');
+  };
+
+  const getContextMenuItems = (order: Order): ContextMenuItem[] => {
+    return [
+      {
+        label: 'View Details',
+        icon: <Eye size={16} />,
+        action: () => navigate(`/orders/${order.id}`),
+      },
+      {
+        label: 'Send WhatsApp Message',
+        icon: <MessageSquare size={16} />,
+        action: handleWhatsAppAction,
+      },
+      {
+        label: 'Make Phone Call',
+        icon: <Phone size={16} />,
+        action: handleCallAction,
+      },
+      { divider: true },
+      {
+        label: 'Copy Order ID',
+        icon: <Copy size={16} />,
+        action: handleCopyOrderId,
+      },
+      {
+        label: 'Copy Phone Number',
+        icon: <Copy size={16} />,
+        action: handleCopyPhone,
+      },
+    ];
+  };
 
   if (loading) {
     return (
@@ -263,6 +369,7 @@ export default function OrdersPage() {
                 <tr
                   key={order.id}
                   onClick={() => navigate(`/orders/${order.id}`)}
+                  onContextMenu={(e) => handleRowRightClick(e, order)}
                   className="order-row"
                 >
                   <td>
@@ -327,6 +434,22 @@ export default function OrdersPage() {
           )}
         </>
       )}
+
+      {/* Context Menu */}
+      <ContextMenu
+        items={selectedOrder ? getContextMenuItems(selectedOrder) : []}
+        position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
+        onClose={hideContextMenu}
+      />
+
+      {/* WhatsApp Confirmation Modal */}
+      <WhatsAppModal
+        isOpen={showWhatsAppModal}
+        onClose={() => setShowWhatsAppModal(false)}
+        onConfirm={confirmWhatsAppSend}
+        phoneNumber={selectedOrder?.customerPhone || ''}
+        initialMessage={whatsappMessage}
+      />
     </div>
   );
 }

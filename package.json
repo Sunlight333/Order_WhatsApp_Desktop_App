@@ -2,7 +2,7 @@
   "name": "order-whatsapp-desktop-app",
   "version": "1.0.0",
   "description": "Order Management Desktop Application with WhatsApp Integration",
-  "main": "electron-main.js",
+  "main": "electron/dist/main.js",
   "scripts": {
     "dev": "concurrently \"npm run dev:backend\" \"npm run dev:frontend\" \"npm run dev:electron\"",
     "dev:backend": "cd backend && npm run dev",
@@ -41,14 +41,15 @@
     "appId": "com.orderwhatsapp.desktop",
     "productName": "Order WhatsApp Desktop",
     "directories": {
-      "output": "dist-electron"
+      "output": "release"
     },
     "files": [
       "electron/dist/**/*",
       "frontend/dist/**/*",
       "backend/dist/**/*",
       "backend/prisma/**/*",
-      "!backend/prisma/**/*.db-journal"
+      "!backend/prisma/**/*.db-journal",
+      "package.json"
     ],
     "win": {
       "icon": "frontend/public/assets/images/logo.png",
