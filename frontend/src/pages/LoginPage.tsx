@@ -1,12 +1,14 @@
 import { useState, FormEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { LogIn, Loader2, Settings } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../store/authStore';
 import toast from 'react-hot-toast';
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const { login, isLoading } = useAuthStore();
+  const { t } = useTranslation();
   
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -17,19 +19,19 @@ export default function LoginPage() {
     setError(null);
 
     if (!username.trim() || !password.trim()) {
-      setError('Please enter both username and password');
+      setError(t('login.enterBoth'));
       return;
     }
 
     try {
       await login({ username: username.trim(), password });
-      toast.success('Login successful!');
+      toast.success(t('login.loginSuccess'));
       navigate('/orders');
     } catch (err: any) {
       const errorMessage =
         err.response?.data?.error?.message ||
         err.message ||
-        'Login failed. Please check your credentials.';
+        t('login.loginFailed');
       setError(errorMessage);
       toast.error(errorMessage);
     }
@@ -42,8 +44,8 @@ export default function LoginPage() {
           <div className="login-icon">
             <LogIn size={48} />
           </div>
-          <h1>Order Management</h1>
-          <p>Sign in to your account</p>
+          <h1>{t('login.title')}</h1>
+          <p>{t('login.subtitle')}</p>
         </div>
 
         <form onSubmit={handleSubmit} className="login-form">
@@ -54,13 +56,13 @@ export default function LoginPage() {
           )}
 
           <div className="form-group">
-            <label htmlFor="username">Username</label>
+            <label htmlFor="username">{t('login.username')}</label>
             <input
               id="username"
               type="text"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
-              placeholder="Enter your username"
+              placeholder={t('login.username')}
               disabled={isLoading}
               autoComplete="username"
               required
@@ -68,13 +70,13 @@ export default function LoginPage() {
           </div>
 
           <div className="form-group">
-            <label htmlFor="password">Password</label>
+            <label htmlFor="password">{t('login.password')}</label>
             <input
               id="password"
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter your password"
+              placeholder={t('login.password')}
               disabled={isLoading}
               autoComplete="current-password"
               required
@@ -89,12 +91,12 @@ export default function LoginPage() {
             {isLoading ? (
               <>
                 <Loader2 className="spinner" size={20} />
-                Signing in...
+                {t('common.loading')}
               </>
             ) : (
               <>
                 <LogIn size={20} />
-                Sign In
+                {t('login.loginButton')}
               </>
             )}
           </button>

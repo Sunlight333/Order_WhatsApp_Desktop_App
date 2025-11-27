@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuthStore } from './store/authStore';
 import { configService } from './services/config.service';
 import { updateApiBaseUrl } from './lib/api';
+import './i18n/config'; // Initialize i18n
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import OrdersPage from './pages/OrdersPage';
@@ -44,15 +45,18 @@ function App() {
         
         // Update API base URL after config is loaded
         updateApiBaseUrl();
+        
+        // Check authentication AFTER config is loaded
+        // This ensures API calls use the correct server address
+        checkAuth();
       } catch (error) {
         console.error('Failed to initialize config:', error);
+        // Still try to check auth even if config fails
+        checkAuth();
       }
     };
 
     initConfig();
-    
-    // Check authentication on app load
-    checkAuth();
   }, [checkAuth]);
 
   // Disable default browser context menu globally (except for form inputs)

@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { loginSchema, LoginInput } from '../validators/auth.validator';
 import { login, getUserById } from '../services/auth.service';
@@ -12,7 +12,7 @@ import { uploadAvatar, getAvatarUrl } from '../middleware/upload.middleware';
  * POST /api/v1/auth/login
  * Authenticate user and return JWT token
  */
-export async function loginController(req: Request, res: Response): Promise<void> {
+export async function loginController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     // Validate input
     const validatedData: LoginInput = loginSchema.parse(req.body);
@@ -24,8 +24,8 @@ export async function loginController(req: Request, res: Response): Promise<void
       createSuccessResponse(result, 'Login successful')
     );
   } catch (error) {
-    // Re-throw to be handled by error middleware
-    throw error;
+    // Pass error to error middleware - server will continue running
+    next(error);
   }
 }
 
@@ -33,7 +33,7 @@ export async function loginController(req: Request, res: Response): Promise<void
  * GET /api/v1/auth/me
  * Get current authenticated user information
  */
-export async function meController(req: Request, res: Response): Promise<void> {
+export async function meController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
       res.status(401).json(
@@ -48,8 +48,8 @@ export async function meController(req: Request, res: Response): Promise<void> {
       createSuccessResponse(user, 'User retrieved successfully')
     );
   } catch (error) {
-    // Re-throw to be handled by error middleware
-    throw error;
+    // Pass error to error middleware - server will continue running
+    next(error);
   }
 }
 
@@ -57,7 +57,7 @@ export async function meController(req: Request, res: Response): Promise<void> {
  * PATCH /api/v1/auth/profile
  * Update current user's profile (username, password, avatar, whatsappMessage)
  */
-export async function updateProfileController(req: Request, res: Response): Promise<void> {
+export async function updateProfileController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
       res.status(401).json(
@@ -76,8 +76,8 @@ export async function updateProfileController(req: Request, res: Response): Prom
       createSuccessResponse(updatedUser, 'Profile updated successfully')
     );
   } catch (error) {
-    // Re-throw to be handled by error middleware
-    throw error;
+    // Pass error to error middleware - server will continue running
+    next(error);
   }
 }
 
@@ -85,7 +85,7 @@ export async function updateProfileController(req: Request, res: Response): Prom
  * POST /api/v1/auth/profile/avatar
  * Upload current user's avatar
  */
-export async function uploadProfileAvatarController(req: Request, res: Response): Promise<void> {
+export async function uploadProfileAvatarController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
       res.status(401).json(
@@ -115,8 +115,8 @@ export async function uploadProfileAvatarController(req: Request, res: Response)
       createSuccessResponse(user, 'Avatar uploaded successfully')
     );
   } catch (error) {
-    // Re-throw to be handled by error middleware
-    throw error;
+    // Pass error to error middleware - server will continue running
+    next(error);
   }
 }
 

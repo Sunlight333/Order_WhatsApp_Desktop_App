@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef } from 'react';
-import { Save, Database, Server, Monitor, Loader2, CheckCircle, AlertCircle, RefreshCw, Wifi, ArrowLeft, MessageSquare, Download, Upload, HardDrive, User, Image as ImageIcon, X } from 'lucide-react';
+import { Save, Database, Server, Monitor, Loader2, CheckCircle, AlertCircle, RefreshCw, Wifi, ArrowLeft, MessageSquare, Download, Upload, HardDrive, User, Image as ImageIcon, X, Globe } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 import PasswordModal from '../components/PasswordModal';
 import ProgressBar from '../components/ProgressBar';
 import { configService, type AppConfig } from '../services/config.service';
-import api from '../lib/api';
+import api, { updateApiBaseUrl } from '../lib/api';
 import '../styles/settings.css';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
@@ -20,6 +21,7 @@ function getAvatarUrl(avatarPath: string | null | undefined): string | null {
 export default function SettingsPage() {
   const navigate = useNavigate();
   const { isAuthenticated, user, checkAuth } = useAuthStore();
+  const { t, i18n } = useTranslation();
   const [config, setConfig] = useState<AppConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -103,6 +105,11 @@ export default function SettingsPage() {
       setLoading(true);
       const loadedConfig = await configService.loadConfig();
       setConfig(loadedConfig);
+      
+      // Apply language from config if available
+      if (loadedConfig.language && i18n.language !== loadedConfig.language) {
+        i18n.changeLanguage(loadedConfig.language);
+      }
     } catch (error) {
       console.error('Failed to load settings:', error);
       toast.error('Failed to load settings');
@@ -318,6 +325,7 @@ export default function SettingsPage() {
           ),
         },
         theme: config.theme || 'system',
+        language: config.language || 'es',
       };
 
       if (config.mode === 'client') {
@@ -325,6 +333,19 @@ export default function SettingsPage() {
       }
 
       await configService.saveConfig(configToSave);
+      
+      // Reload config to ensure we have the latest values
+      const updatedConfig = await configService.loadConfig();
+      setConfig(updatedConfig);
+      
+      // Update API base URL immediately after config is saved
+      updateApiBaseUrl();
+      console.log('🔗 Config saved, API Base URL updated to:', configService.getApiBaseUrl());
+
+      // Apply language immediately if changed
+      if (config.language && i18n.language !== config.language) {
+        i18n.changeLanguage(config.language);
+      }
 
       // Apply theme immediately if changed
       const root = document.documentElement;
@@ -1081,6 +1102,48 @@ export default function SettingsPage() {
                     }
                   />
                   <span>System</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* Language Configuration */}
+        <section className="settings-section">
+          <div className="section-header">
+            <Globe size={24} />
+            <h2>{t('settings.language')}</h2>
+          </div>
+
+          <div className="settings-content">
+            <div className="form-group">
+              <label>
+                {t('settings.language')} <span className="required">*</span>
+              </label>
+              <div className="radio-group">
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="language"
+                    value="es"
+                    checked={(config.language || 'es') === 'es'}
+                    onChange={() =>
+                      setConfig({ ...config, language: 'es' })
+                    }
+                  />
+                  <span>{t('settings.spanish')}</span>
+                </label>
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="language"
+                    value="en"
+                    checked={config.language === 'en'}
+                    onChange={() =>
+                      setConfig({ ...config, language: 'en' })
+                    }
+                  />
+                  <span>{t('settings.english')}</span>
                 </label>
               </div>
             </div>

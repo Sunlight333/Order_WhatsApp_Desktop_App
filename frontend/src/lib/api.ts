@@ -1,22 +1,26 @@
 import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import { configService } from '../services/config.service';
 
 // Get API base URL from config service or fallback to environment variable
 function getApiBaseUrl(): string {
   try {
-    // Dynamic import to avoid circular dependencies
-    const { configService } = require('../services/config.service');
     const config = configService.getConfig();
     if (config) {
-      return configService.getApiBaseUrl();
+      const url = configService.getApiBaseUrl();
+      console.log('🔗 API Base URL from config:', url, 'Mode:', config.mode, 'Server:', config.serverAddress);
+      return url;
     }
   } catch (error) {
-    // Config service not ready yet
+    console.warn('⚠️  Config service error:', error);
   }
   // Fallback if config service is not ready
-  return import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api/v1';
+  const fallbackUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api/v1';
+  console.log('🔗 API Base URL (fallback):', fallbackUrl);
+  return fallbackUrl;
 }
 
-// Create axios instance
+// Create axios instance with initial base URL
+// This will be updated dynamically by the request interceptor
 export const api: AxiosInstance = axios.create({
   baseURL: getApiBaseUrl(),
   headers: {
@@ -27,26 +31,49 @@ export const api: AxiosInstance = axios.create({
 // Function to update API base URL (called after config loads)
 export function updateApiBaseUrl() {
   try {
-    const { configService } = require('../services/config.service');
-    api.defaults.baseURL = configService.getApiBaseUrl();
+    const newBaseUrl = configService.getApiBaseUrl();
+    const config = configService.getConfig();
+    if (newBaseUrl && api.defaults.baseURL !== newBaseUrl) {
+      api.defaults.baseURL = newBaseUrl;
+      console.log('🔗 Updated API Base URL to:', newBaseUrl, 'Mode:', config?.mode, 'Server:', config?.serverAddress);
+    } else if (config) {
+      console.log('🔗 API Base URL already set:', newBaseUrl, 'Mode:', config.mode, 'Server:', config.serverAddress);
+    }
   } catch (error) {
     // Ignore if config service not available
+    console.warn('⚠️  Could not update API base URL:', error);
   }
 }
 
 // Subscribe to config changes to update base URL
-try {
-  const { configService } = require('../services/config.service');
-  configService.subscribe(() => {
-    updateApiBaseUrl();
-  });
-} catch (error) {
-  // Config service might not be initialized yet
-}
+configService.subscribe(() => {
+  updateApiBaseUrl();
+});
 
-// Request interceptor - Add auth token to requests
+// Request interceptor - Update base URL dynamically and add auth token
 api.interceptors.request.use(
   (config: InternalAxiosRequestConfig) => {
+    // Dynamically update base URL from config service on every request
+    // This ensures client mode uses the correct server address
+    try {
+      const currentBaseUrl = configService.getApiBaseUrl();
+      const appConfig = configService.getConfig();
+      
+      if (currentBaseUrl) {
+        // Always update to ensure we have the latest config
+        config.baseURL = currentBaseUrl;
+        // Also update the instance default for consistency
+        if (api.defaults.baseURL !== currentBaseUrl) {
+          api.defaults.baseURL = currentBaseUrl;
+          console.log('🔗 Request interceptor updated API Base URL to:', currentBaseUrl, 'Mode:', appConfig?.mode, 'Server:', appConfig?.serverAddress);
+        }
+      }
+    } catch (error) {
+      // Config service not available, use existing baseURL
+      console.warn('⚠️  Could not get API base URL from config service:', error);
+    }
+    
+    // Add auth token
     const token = localStorage.getItem('auth_token');
     if (token && config.headers) {
       config.headers.Authorization = `Bearer ${token}`;

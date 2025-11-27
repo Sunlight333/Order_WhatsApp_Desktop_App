@@ -1,10 +1,12 @@
 import api from '../lib/api';
+import i18n from '../i18n/config';
 
 /**
  * Get WhatsApp message template (user's personal message or global default)
  */
 export async function getWhatsAppMessage(): Promise<string> {
-  let message = 'Hola, tu pedido está listo para recoger.';
+  // Use translated default message based on current language
+  let message = i18n.t('whatsapp.defaultMessage');
   
   try {
     const userResponse = await api.get<{

@@ -62,3 +62,5 @@ temp/
 app-data/
 user-data/
 
+*.md
+

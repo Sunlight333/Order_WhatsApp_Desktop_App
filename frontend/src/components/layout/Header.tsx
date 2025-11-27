@@ -1,7 +1,9 @@
 import { LogOut, User } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { useAuthStore } from '../../store/authStore';
 import ThemeToggle from '../ThemeToggle';
+import LanguageToggle from '../LanguageToggle';
 import toast from 'react-hot-toast';
 import { configService } from '../../services/config.service';
 
@@ -15,14 +17,15 @@ function getAvatarUrl(avatarPath: string | null | undefined): string | null {
 export default function Header() {
   const navigate = useNavigate();
   const { user, logout } = useAuthStore();
+  const { t } = useTranslation();
 
   const handleLogout = async () => {
     try {
       await logout();
-      toast.success('Logged out successfully');
+      toast.success(t('header.logoutSuccess'));
       navigate('/login');
     } catch (error) {
-      toast.error('Failed to logout');
+      toast.error(t('header.logoutFailed'));
     }
   };
 
@@ -35,11 +38,12 @@ export default function Header() {
             alt="Logo" 
             className="logo-icon"
           />
-          <h1 className="logo-text">Gestión de Pedidos</h1>
+          <h1 className="logo-text">{t('app.title')}</h1>
         </div>
       </div>
 
       <div className="header-right">
+        <LanguageToggle />
         <ThemeToggle />
         
         <div className="user-menu">
@@ -55,14 +59,14 @@ export default function Header() {
             )}
             <span className="username">{user?.username}</span>
             {user?.role === 'SUPER_ADMIN' && (
-              <span className="user-badge">Admin</span>
+              <span className="user-badge">{t('header.admin')}</span>
             )}
           </div>
           
           <button 
             className="logout-button"
             onClick={handleLogout}
-            title="Logout"
+            title={t('header.logout')}
           >
             <LogOut size={18} />
           </button>

@@ -2,11 +2,18 @@ import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
 
+// Get uploads directory from environment variable (set by Electron) or use default
+// In Electron, this will be the userData directory
+// In development, this will be process.cwd()
+const baseUploadsPath = process.env.UPLOADS_PATH || path.join(process.cwd(), 'uploads');
+const uploadsDir = path.join(baseUploadsPath, 'avatars');
+
 // Create uploads directory if it doesn't exist
-const uploadsDir = path.join(process.cwd(), 'uploads', 'avatars');
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
 }
+
+console.log('📁 Avatar upload directory:', uploadsDir);
 
 // Configure storage
 const storage = multer.diskStorage({

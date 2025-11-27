@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { 
   ArrowLeft, 
   Phone, 
@@ -71,6 +72,7 @@ type OrderStatus = 'PENDING' | 'RECEIVED' | 'NOTIFIED_CALL' | 'NOTIFIED_WHATSAPP
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [order, setOrder] = useState<Order | null>(null);
   const [loading, setLoading] = useState(true);
   const [updating, setUpdating] = useState(false);
@@ -147,7 +149,8 @@ export default function OrderDetailPage() {
 
     try {
       // Get WhatsApp message template - prefer user's personal message, fallback to global config
-      let message = 'Hola, tu pedido está listo para recoger.';
+      // Use translated default message based on current language
+      let message = t('whatsapp.defaultMessage');
       
       // First, try to get current user's WhatsApp message
       try {

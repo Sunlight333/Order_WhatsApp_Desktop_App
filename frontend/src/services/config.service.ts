@@ -19,6 +19,7 @@ interface AppConfig {
     url?: string;
   };
   theme?: 'light' | 'dark' | 'system';
+  language?: 'es' | 'en';
 }
 
 class ConfigService {
@@ -103,6 +104,7 @@ class ConfigService {
         path: './database.db',
       },
       theme: 'system',
+      language: 'es', // Spanish is default
     };
   }
 

@@ -1,4 +1,5 @@
 import { NavLink } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { 
   LayoutDashboard, 
   ShoppingCart, 
@@ -12,7 +13,7 @@ import { useAuthStore } from '../../store/authStore';
 
 interface NavItem {
   path: string;
-  label: string;
+  labelKey: string;
   icon: React.ReactNode;
   adminOnly?: boolean;
 }
@@ -20,41 +21,42 @@ interface NavItem {
 const navItems: NavItem[] = [
   {
     path: '/dashboard',
-    label: 'Dashboard',
+    labelKey: 'sidebar.dashboard',
     icon: <LayoutDashboard size={20} />,
   },
   {
     path: '/orders',
-    label: 'Orders',
+    labelKey: 'sidebar.orders',
     icon: <ShoppingCart size={20} />,
   },
   {
     path: '/suppliers',
-    label: 'Suppliers',
+    labelKey: 'sidebar.suppliers',
     icon: <Package size={20} />,
     adminOnly: true,
   },
   {
     path: '/products',
-    label: 'Products',
+    labelKey: 'sidebar.products',
     icon: <Box size={20} />,
     adminOnly: true,
   },
   {
     path: '/users',
-    label: 'Users',
+    labelKey: 'sidebar.users',
     icon: <Shield size={20} />,
     adminOnly: true,
   },
   {
     path: '/settings',
-    label: 'Settings',
+    labelKey: 'sidebar.settings',
     icon: <Settings size={20} />,
   },
 ];
 
 export default function Sidebar() {
   const { user } = useAuthStore();
+  const { t } = useTranslation();
   const isAdmin = user?.role === 'SUPER_ADMIN';
 
   const filteredNavItems = navItems.filter(
@@ -73,7 +75,7 @@ export default function Sidebar() {
             }
           >
             {item.icon}
-            <span className="nav-label">{item.label}</span>
+            <span className="nav-label">{t(item.labelKey)}</span>
           </NavLink>
         ))}
       </nav>
