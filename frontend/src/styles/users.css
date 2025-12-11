@@ -31,6 +31,27 @@
   letter-spacing: 0.05em;
 }
 
+.users-table th.sortable-header {
+  transition: background-color 0.2s ease, color 0.2s ease;
+  cursor: pointer;
+  user-select: none;
+}
+
+.users-table th.sortable-header:hover {
+  background: var(--bg-hover);
+  color: var(--primary);
+}
+
+.users-table th.sortable-header:active {
+  background: var(--bg-active);
+}
+
+.users-table th.sortable-header > div {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .users-table td {
   padding: var(--spacing-md);
   border-bottom: 1px solid var(--border-light);
@@ -81,17 +102,49 @@
   padding: var(--spacing-xs) var(--spacing-sm);
   border-radius: var(--radius-md);
   font-size: 0.875rem;
-  font-weight: 500;
+  font-weight: 600;
+  border: 1px solid transparent;
+  transition: all 0.2s ease;
 }
 
 .role-badge.admin {
-  background: var(--warning-light);
-  color: var(--warning);
+  background: #10b981;
+  color: #ffffff;
+  border-color: #059669;
 }
 
 .role-badge.user {
-  background: var(--primary-light);
-  color: var(--primary);
+  background: var(--primary);
+  color: #ffffff;
+  border-color: var(--primary-dark);
+}
+
+/* VS Code style role badges for dark theme - better contrast */
+:root[data-theme="dark"] .role-badge.admin {
+  background: #10b981;
+  color: #ffffff;
+  border-color: #34d399;
+  box-shadow: 0 1px 2px rgba(16, 185, 129, 0.2);
+}
+
+:root[data-theme="dark"] .role-badge.user {
+  background: var(--primary);
+  color: #ffffff;
+  border-color: var(--primary-hover);
+  box-shadow: 0 1px 2px rgba(14, 165, 233, 0.2);
+}
+
+/* Light theme role badges */
+:root[data-theme="light"] .role-badge.admin {
+  background: #10b981;
+  color: #ffffff;
+  border-color: #059669;
+}
+
+:root[data-theme="light"] .role-badge.user {
+  background: var(--primary);
+  color: #ffffff;
+  border-color: var(--primary-dark);
 }
 
 .action-buttons {
@@ -181,6 +234,7 @@
   flex-direction: column;
   gap: var(--spacing-sm);
   align-items: flex-start;
+  position: relative;
 }
 
 .avatar-preview {
@@ -188,36 +242,58 @@
   width: 80px;
   height: 80px;
   border-radius: 50%;
-  overflow: hidden;
+  overflow: visible;
   border: 2px solid var(--border-color);
   background: var(--bg-secondary);
+}
+
+.avatar-preview::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  z-index: 0;
+}
+
+.avatar-preview img {
+  position: relative;
+  z-index: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 50%;
+  display: block;
 }
 
 .avatar-preview img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  border-radius: 50%;
 }
 
 .btn-remove-avatar {
   position: absolute;
-  top: 0;
-  right: 0;
+  top: -6px;
+  right: -6px;
   width: 24px;
   height: 24px;
   border-radius: 50%;
   background: var(--error-color);
   color: white;
-  border: none;
+  border: 2px solid var(--bg-primary);
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: all 0.2s ease;
+  z-index: 100;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  pointer-events: auto;
 }
 
 .btn-remove-avatar:hover {
-  background: var(--error-dark);
   transform: scale(1.1);
 }
 

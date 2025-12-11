@@ -1,31 +1,34 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Edit2, Trash2, Package, Loader2, Search, X, Copy, ArrowUp, ArrowDown, ChevronUp } from 'lucide-react';
+import { Plus, Edit2, Trash2, UserCircle, Loader2, Search, X, Copy, Phone, ArrowUp, ArrowDown, ChevronUp } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { useContextMenu } from '../hooks/useContextMenu';
 import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
-import '../styles/suppliers.css';
+import '../styles/customers.css';
 
-interface Supplier {
+interface Customer {
   id: string;
   name: string;
+  phone?: string;
+  countryCode?: string;
   description?: string;
   createdAt: string;
   updatedAt: string;
-  productsCount: number;
   ordersCount: number;
 }
 
-interface SupplierFormData {
+interface CustomerFormData {
   name: string;
+  phone: string;
+  countryCode: string;
   description: string;
 }
 
-export default function SuppliersPage() {
+export default function CustomersPage() {
   const { t } = useTranslation();
-  const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortBy, setSortBy] = useState<string>('name');
@@ -34,11 +37,16 @@ export default function SuppliersPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showUpdateConfirmModal, setShowUpdateConfirmModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
-  const [selectedSupplier, setSelectedSupplier] = useState<Supplier | null>(null);
-  const [formData, setFormData] = useState<SupplierFormData>({
+  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
+  const [formData, setFormData] = useState<CustomerFormData>({
     name: '',
+    phone: '',
+    countryCode: '+34', // Fixed for Spain
     description: '',
   });
+  
+  // Country code is fixed to +34 for Spain
+  const countryCode = '+34';
   const [submitting, setSubmitting] = useState(false);
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
@@ -46,7 +54,7 @@ export default function SuppliersPage() {
 
   useEffect(() => {
     checkUserRole();
-    fetchSuppliers();
+    fetchCustomers();
   }, [sortBy, sortOrder]);
 
   const checkUserRole = async () => {
@@ -60,7 +68,7 @@ export default function SuppliersPage() {
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
 
-  const fetchSuppliers = async () => {
+  const fetchCustomers = async () => {
     try {
       setLoading(true);
       const params: any = {};
@@ -70,10 +78,10 @@ export default function SuppliersPage() {
       if (sortOrder) {
         params.sortOrder = sortOrder;
       }
-      const response = await api.get<{ success: true; data: Supplier[] }>('/suppliers', { params });
-      setSuppliers(response.data.data || []);
+      const response = await api.get<{ success: true; data: Customer[] }>('/customers', { params });
+      setCustomers(response.data.data || []);
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || t('suppliers.loadFailed'));
+      toast.error(error.response?.data?.error?.message || t('customers.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -100,42 +108,48 @@ export default function SuppliersPage() {
   const handleCreate = () => {
     setFormData({
       name: '',
+      phone: '',
+      countryCode: '+34', // Fixed for Spain
       description: '',
     });
     setShowCreateModal(true);
   };
 
-  const handleEdit = (supplier: Supplier) => {
-    setSelectedSupplier(supplier);
+  const handleEdit = (customer: Customer) => {
+    setSelectedCustomer(customer);
     setFormData({
-      name: supplier.name,
-      description: supplier.description || '',
+      name: customer.name,
+      phone: customer.phone || '',
+      countryCode: '+34', // Fixed for Spain
+      description: customer.description || '',
     });
     setShowEditModal(true);
   };
 
-  const handleDelete = (supplier: Supplier) => {
-    setSelectedSupplier(supplier);
+  const handleDelete = (customer: Customer) => {
+    setSelectedCustomer(customer);
     setShowDeleteModal(true);
   };
 
   const handleCreateSubmit = async () => {
     if (!formData.name.trim()) {
-      toast.error(t('suppliers.nameRequired'));
+      toast.error(t('customers.nameRequired'));
       return;
     }
 
     try {
       setSubmitting(true);
-      await api.post('/suppliers', {
+      await api.post('/customers', {
         name: formData.name.trim(),
+        phone: formData.phone.trim() || undefined,
+        countryCode: formData.countryCode || '+34',
         description: formData.description.trim() || undefined,
       });
-      toast.success(t('suppliers.createSuccess'));
+      toast.success(t('customers.createSuccess'));
       setShowCreateModal(false);
-      fetchSuppliers();
+      fetchCustomers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || t('suppliers.createFailed'));
+      toast.error(error.response?.data?.error?.message || t('customers.createFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -143,7 +157,7 @@ export default function SuppliersPage() {
 
   const handleEditSubmit = () => {
     if (!formData.name.trim()) {
-      toast.error(t('suppliers.nameRequired'));
+      toast.error(t('customers.nameRequired'));
       return;
     }
 
@@ -151,49 +165,52 @@ export default function SuppliersPage() {
     setShowUpdateConfirmModal(true);
   };
 
-  const confirmSupplierUpdate = async () => {
+  const confirmCustomerUpdate = async () => {
     setShowUpdateConfirmModal(false);
 
     try {
       setSubmitting(true);
-      await api.put(`/suppliers/${selectedSupplier?.id}`, {
+      await api.put(`/customers/${selectedCustomer?.id}`, {
         name: formData.name.trim(),
+        phone: formData.phone.trim() || null,
+        countryCode: formData.countryCode || '+34',
         description: formData.description.trim() || null,
       });
-      toast.success(t('suppliers.updateSuccess'));
+      toast.success(t('customers.updateSuccess'));
       setShowEditModal(false);
-      setSelectedSupplier(null);
-      fetchSuppliers();
+      setSelectedCustomer(null);
+      fetchCustomers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || t('suppliers.updateFailed'));
+      toast.error(error.response?.data?.error?.message || t('customers.updateFailed'));
     } finally {
       setSubmitting(false);
     }
   };
 
   const handleDeleteConfirm = async () => {
-    if (!selectedSupplier) return;
+    if (!selectedCustomer) return;
 
     try {
       setDeleteLoading(true);
-      await api.delete(`/suppliers/${selectedSupplier.id}`);
-      toast.success(t('suppliers.deleteSuccess'));
+      await api.delete(`/customers/${selectedCustomer.id}`);
+      toast.success(t('customers.deleteSuccess'));
       setShowDeleteModal(false);
-      setSelectedSupplier(null);
-      fetchSuppliers();
+      setSelectedCustomer(null);
+      fetchCustomers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || t('suppliers.deleteFailed'));
+      toast.error(error.response?.data?.error?.message || t('customers.deleteFailed'));
     } finally {
       setDeleteLoading(false);
     }
   };
 
-  const filteredSuppliers = suppliers.filter((supplier) => {
+  const filteredCustomers = customers.filter((customer) => {
     if (!searchQuery.trim()) return true;
     const query = searchQuery.toLowerCase();
     return (
-      supplier.name.toLowerCase().includes(query) ||
-      supplier.description?.toLowerCase().includes(query)
+      customer.name.toLowerCase().includes(query) ||
+      customer.phone?.toLowerCase().includes(query) ||
+      customer.description?.toLowerCase().includes(query)
     );
   });
 
@@ -201,37 +218,51 @@ export default function SuppliersPage() {
     return new Date(dateString).toLocaleDateString();
   };
 
-  const handleRowRightClick = (e: React.MouseEvent, supplier: Supplier) => {
+  const formatPhone = (customer: Customer) => {
+    if (!customer.phone) return '-';
+    const code = customer.countryCode || '+34';
+    return `${code} ${customer.phone}`;
+  };
+
+  const handleRowRightClick = (e: React.MouseEvent, customer: Customer) => {
     e.preventDefault();
     e.stopPropagation();
-    setSelectedSupplier(supplier);
-    showContextMenu(e, supplier);
+    setSelectedCustomer(customer);
+    showContextMenu(e, customer);
   };
 
   const handleCopyName = () => {
-    if (!selectedSupplier) return;
-    navigator.clipboard.writeText(selectedSupplier.name);
+    if (!selectedCustomer) return;
+    navigator.clipboard.writeText(selectedCustomer.name);
+    toast.success(t('common.copied'));
+  };
+
+  const handleCopyPhone = () => {
+    if (!selectedCustomer || !selectedCustomer.phone) return;
+    navigator.clipboard.writeText(formatPhone(selectedCustomer));
     toast.success(t('common.copied'));
   };
 
   const handleCopyDescription = () => {
-    if (!selectedSupplier || !selectedSupplier.description) return;
-    navigator.clipboard.writeText(selectedSupplier.description);
+    if (!selectedCustomer || !selectedCustomer.description) return;
+    navigator.clipboard.writeText(selectedCustomer.description);
     toast.success(t('common.copied'));
   };
 
-  const getContextMenuItems = (supplier: Supplier): ContextMenuItem[] => {
+  const getContextMenuItems = (customer: Customer): ContextMenuItem[] => {
     const items: ContextMenuItem[] = [];
 
     if (isSuperAdmin) {
       items.push({
-        label: t('suppliers.editSupplier'),
+        label: t('customers.editCustomer'),
         icon: <Edit2 size={16} />,
         action: () => {
-          setSelectedSupplier(supplier);
+          setSelectedCustomer(customer);
           setFormData({
-            name: supplier.name,
-            description: supplier.description || '',
+            name: customer.name,
+            phone: customer.phone || '',
+            countryCode: customer.countryCode || '+34',
+            description: customer.description || '',
           });
           setShowEditModal(true);
         },
@@ -240,29 +271,35 @@ export default function SuppliersPage() {
 
     items.push(
       {
-        label: t('suppliers.copyName'),
+        label: t('customers.copyName'),
         icon: <Copy size={16} />,
         action: handleCopyName,
       },
       {
-        label: t('suppliers.copyDescription'),
+        label: t('customers.copyPhone'),
+        icon: <Phone size={16} />,
+        action: handleCopyPhone,
+        disabled: !customer.phone,
+      },
+      {
+        label: t('customers.copyDescription'),
         icon: <Copy size={16} />,
         action: handleCopyDescription,
-        disabled: !supplier.description,
+        disabled: !customer.description,
       }
     );
 
     if (isSuperAdmin) {
       items.push({ divider: true });
       items.push({
-        label: t('suppliers.deleteSupplier'),
+        label: t('customers.deleteCustomer'),
         icon: <Trash2 size={16} />,
         action: () => {
-          setSelectedSupplier(supplier);
+          setSelectedCustomer(customer);
           setShowDeleteModal(true);
         },
         danger: true,
-        disabled: supplier.ordersCount > 0,
+        disabled: customer.ordersCount > 0,
       });
     }
 
@@ -274,7 +311,7 @@ export default function SuppliersPage() {
       <div className="page-container">
         <div className="loading-container">
           <Loader2 className="spinner" size={32} />
-          <p>{t('suppliers.loadingSuppliers')}</p>
+          <p>{t('customers.loadingCustomers')}</p>
         </div>
       </div>
     );
@@ -284,23 +321,23 @@ export default function SuppliersPage() {
     <div className="page-container">
       <div className="page-header">
         <div>
-          <h1>{t('suppliers.title')}</h1>
-          <p className="page-subtitle">{t('suppliers.manageSuppliers')}</p>
+          <h1>{t('customers.title')}</h1>
+          <p className="page-subtitle">{t('customers.manageCustomers')}</p>
         </div>
         {isSuperAdmin && (
           <button className="btn-primary" onClick={handleCreate}>
             <Plus size={20} />
-            {t('suppliers.createSupplier')}
+            {t('customers.createCustomer')}
           </button>
         )}
       </div>
 
-      <div className="suppliers-toolbar">
+      <div className="customers-toolbar">
         <div className="search-container">
           <Search size={20} className="search-icon" />
           <input
             type="text"
-            placeholder={t('suppliers.searchPlaceholder')}
+            placeholder={t('customers.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="search-input"
@@ -317,20 +354,20 @@ export default function SuppliersPage() {
         </div>
       </div>
 
-      {filteredSuppliers.length === 0 ? (
+      {filteredCustomers.length === 0 ? (
         <div className="empty-state">
-          <Package size={48} />
-          <p>{t('suppliers.noSuppliers')}</p>
+          <UserCircle size={48} />
+          <p>{t('customers.noCustomers')}</p>
           {isSuperAdmin && (
             <button className="btn-primary" onClick={handleCreate}>
               <Plus size={20} />
-              {t('suppliers.createFirstSupplier')}
+              {t('customers.createFirstCustomer')}
             </button>
           )}
         </div>
       ) : (
-        <div className="suppliers-list-container">
-          <table className="suppliers-table">
+        <div className="customers-list-container">
+          <table className="customers-table">
             <thead>
               <tr>
                 <th 
@@ -343,24 +380,24 @@ export default function SuppliersPage() {
                     {getSortIcon('name')}
                   </div>
                 </th>
-                <th>{t('common.description')}</th>
                 <th 
                   className="sortable-header"
-                  onClick={() => handleSort('productsCount')}
+                  onClick={() => handleSort('phone')}
                   style={{ cursor: 'pointer', userSelect: 'none' }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    {t('suppliers.products')}
-                    {getSortIcon('productsCount')}
+                    {t('common.phone')}
+                    {getSortIcon('phone')}
                   </div>
                 </th>
+                <th>{t('common.description')}</th>
                 <th 
                   className="sortable-header"
                   onClick={() => handleSort('ordersCount')}
                   style={{ cursor: 'pointer', userSelect: 'none' }}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    {t('suppliers.orders')}
+                    {t('customers.orders')}
                     {getSortIcon('ordersCount')}
                   </div>
                 </th>
@@ -378,42 +415,44 @@ export default function SuppliersPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredSuppliers.map((supplier) => (
+              {filteredCustomers.map((customer) => (
                 <tr 
-                  key={supplier.id} 
-                  className="supplier-row"
-                  onContextMenu={(e) => handleRowRightClick(e, supplier)}
+                  key={customer.id} 
+                  className="customer-row"
+                  onContextMenu={(e) => handleRowRightClick(e, customer)}
                 >
                   <td>
-                    <div className="supplier-name">{supplier.name}</div>
+                    <div className="customer-name">{customer.name}</div>
                   </td>
                   <td>
-                    <div className="supplier-description">
-                      {supplier.description || '-'}
+                    <div className="customer-phone">
+                      {formatPhone(customer)}
                     </div>
                   </td>
                   <td>
-                    <span className="count-badge">{supplier.productsCount}</span>
+                    <div className="customer-description">
+                      {customer.description || '-'}
+                    </div>
                   </td>
                   <td>
-                    <span className="count-badge">{supplier.ordersCount}</span>
+                    <span className="count-badge">{customer.ordersCount}</span>
                   </td>
-                  <td>{formatDate(supplier.createdAt)}</td>
+                  <td>{formatDate(customer.createdAt)}</td>
                   {isSuperAdmin && (
                     <td>
                       <div className="action-buttons">
                         <button
                           className="btn-icon btn-edit"
-                          onClick={() => handleEdit(supplier)}
-                          title={t('suppliers.editSupplier')}
+                          onClick={() => handleEdit(customer)}
+                          title={t('customers.editCustomer')}
                         >
                           <Edit2 size={16} />
                         </button>
                         <button
                           className="btn-icon btn-delete"
-                          onClick={() => handleDelete(supplier)}
-                          title={t('suppliers.deleteSupplier')}
-                          disabled={supplier.ordersCount > 0}
+                          onClick={() => handleDelete(customer)}
+                          title={t('customers.deleteCustomer')}
+                          disabled={customer.ordersCount > 0}
                         >
                           <Trash2 size={16} />
                         </button>
@@ -427,16 +466,16 @@ export default function SuppliersPage() {
         </div>
       )}
 
-      {/* Create Supplier Modal */}
+      {/* Create Customer Modal */}
       {isSuperAdmin && (
         <>
           <ConfirmModal
             isOpen={showCreateModal}
             onClose={() => setShowCreateModal(false)}
             onConfirm={handleCreateSubmit}
-            title={t('suppliers.createSupplier')}
+            title={t('customers.createCustomer')}
             message={
-              <div className="supplier-form">
+              <div className="customer-form">
                 <div className="form-group">
                   <label>
                     {t('common.name')} <span className="required">*</span>
@@ -445,40 +484,64 @@ export default function SuppliersPage() {
                     type="text"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder={t('suppliers.enterSupplierName')}
+                    placeholder={t('customers.enterCustomerName')}
                     className="form-input"
                     required
                   />
+                </div>
+                <div className="form-group">
+                  <label>{t('common.phone')}</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ 
+                      padding: 'var(--spacing-sm) var(--spacing-md)',
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: '0.9375rem',
+                      color: 'var(--text-secondary)',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      +34
+                    </span>
+                    <input
+                      type="tel"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      placeholder={t('createOrder.enterCustomerPhone')}
+                      className="form-input"
+                      style={{ flex: 1 }}
+                    />
+                  </div>
                 </div>
                 <div className="form-group">
                   <label>{t('common.description')}</label>
                   <textarea
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    placeholder={t('suppliers.enterDescription')}
+                    placeholder={t('customers.enterDescription')}
                     className="form-input form-textarea"
                     rows={3}
                   />
                 </div>
               </div>
             }
-            confirmText={t('suppliers.createSupplier')}
+            confirmText={t('customers.createCustomer')}
             cancelText={t('common.cancel')}
             type="info"
             loading={submitting}
           />
 
-          {/* Edit Supplier Modal */}
+          {/* Edit Customer Modal */}
           <ConfirmModal
             isOpen={showEditModal}
             onClose={() => {
               setShowEditModal(false);
-              setSelectedSupplier(null);
+              setSelectedCustomer(null);
             }}
             onConfirm={handleEditSubmit}
-            title={t('suppliers.editSupplier')}
+            title={t('customers.editCustomer')}
             message={
-              <div className="supplier-form">
+              <div className="customer-form">
                 <div className="form-group">
                   <label>
                     {t('common.name')} <span className="required">*</span>
@@ -487,54 +550,78 @@ export default function SuppliersPage() {
                     type="text"
                     value={formData.name}
                     onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                    placeholder={t('suppliers.enterSupplierName')}
+                    placeholder={t('customers.enterCustomerName')}
                     className="form-input"
                     required
                   />
+                </div>
+                <div className="form-group">
+                  <label>{t('common.phone')}</label>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span style={{ 
+                      padding: 'var(--spacing-sm) var(--spacing-md)',
+                      background: 'var(--bg-secondary)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: '0.9375rem',
+                      color: 'var(--text-secondary)',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      +34
+                    </span>
+                    <input
+                      type="tel"
+                      value={formData.phone}
+                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      placeholder={t('createOrder.enterCustomerPhone')}
+                      className="form-input"
+                      style={{ flex: 1 }}
+                    />
+                  </div>
                 </div>
                 <div className="form-group">
                   <label>{t('common.description')}</label>
                   <textarea
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    placeholder={t('suppliers.enterDescription')}
+                    placeholder={t('customers.enterDescription')}
                     className="form-input form-textarea"
                     rows={3}
                   />
                 </div>
               </div>
             }
-            confirmText={t('suppliers.saveChanges')}
+            confirmText={t('customers.saveChanges')}
             cancelText={t('common.cancel')}
             type="info"
             loading={submitting}
           />
 
-          {/* Delete Supplier Modal */}
+          {/* Delete Customer Modal */}
           <ConfirmModal
             isOpen={showDeleteModal}
             onClose={() => {
               setShowDeleteModal(false);
-              setSelectedSupplier(null);
+              setSelectedCustomer(null);
             }}
             onConfirm={handleDeleteConfirm}
-            title={t('suppliers.deleteSupplier')}
+            title={t('customers.deleteCustomer')}
             message={
               <div>
                 <p>
-                  {t('suppliers.deleteConfirm', { name: selectedSupplier?.name })}
+                  {t('customers.deleteConfirm', { name: selectedCustomer?.name })}
                 </p>
-                {selectedSupplier && selectedSupplier.ordersCount > 0 && (
+                {selectedCustomer && selectedCustomer.ordersCount > 0 && (
                   <p className="warning-text">
-                    {t('suppliers.hasOrdersWarning', { count: selectedSupplier.ordersCount })}
+                    {t('customers.hasOrdersWarning', { count: selectedCustomer.ordersCount })}
                   </p>
                 )}
                 <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                  {t('suppliers.deleteWarning')}
+                  {t('customers.deleteWarning')}
                 </p>
               </div>
             }
-            confirmText={t('suppliers.deleteSupplier')}
+            confirmText={t('customers.deleteCustomer')}
             cancelText={t('common.cancel')}
             type="danger"
             loading={deleteLoading}
@@ -544,17 +631,17 @@ export default function SuppliersPage() {
           <ConfirmModal
             isOpen={showUpdateConfirmModal}
             onClose={() => setShowUpdateConfirmModal(false)}
-            onConfirm={confirmSupplierUpdate}
-            title={t('suppliers.confirmUpdate')}
+            onConfirm={confirmCustomerUpdate}
+            title={t('customers.confirmUpdate')}
             message={
               <div>
-                <p>{t('suppliers.confirmUpdateMessage', { name: selectedSupplier?.name })}</p>
+                <p>{t('customers.confirmUpdateMessage', { name: selectedCustomer?.name })}</p>
                 <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                  {t('suppliers.updateWarning')}
+                  {t('customers.updateWarning')}
                 </p>
               </div>
             }
-            confirmText={t('suppliers.updateSupplier')}
+            confirmText={t('customers.updateCustomer')}
             cancelText={t('common.cancel')}
             type="info"
             loading={submitting}
@@ -564,10 +651,11 @@ export default function SuppliersPage() {
 
       {/* Context Menu */}
       <ContextMenu
-        items={selectedSupplier ? getContextMenuItems(selectedSupplier) : []}
+        items={selectedCustomer ? getContextMenuItems(selectedCustomer) : []}
         position={contextMenu ? { x: contextMenu.x, y: contextMenu.y } : null}
         onClose={hideContextMenu}
       />
     </div>
   );
 }
+

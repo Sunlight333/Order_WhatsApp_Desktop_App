@@ -236,7 +236,94 @@ function setupDatabaseFromConfig(config: AppConfig): void {
   }
 }
 
-function loadBackendModules(): boolean {
+/**
+ * Run Prisma migrations automatically
+ * This ensures the database schema is up to date when the app starts
+ */
+async function runDatabaseMigrations(): Promise<void> {
+  try {
+    console.log('🔄 Running database migrations...');
+    
+    const { execSync } = require('child_process');
+    const backendDistPath = getBackendDistPath();
+    
+    // Determine backend source path (for Prisma schema and migrations)
+    let backendPath: string;
+    if (app.isPackaged) {
+      // In production, migrations should be in app.asar.unpacked
+      const resourcesPath = process.resourcesPath || path.dirname(app.getAppPath());
+      backendPath = path.join(resourcesPath, 'app.asar.unpacked', 'backend');
+      
+      // Fallback to regular resources if unpacked doesn't exist
+      if (!fs.existsSync(backendPath)) {
+        backendPath = path.join(resourcesPath, 'backend');
+      }
+    } else {
+      // In development, use the source backend directory
+      backendPath = path.join(__dirname, '../backend');
+    }
+    
+    // Check if migrations directory exists
+    const migrationsPath = path.join(backendPath, 'prisma', 'migrations');
+    if (!fs.existsSync(migrationsPath)) {
+      console.log('ℹ️  No migrations directory found, skipping migrations');
+      return;
+    }
+    
+    console.log(`📦 Running migrations from: ${backendPath}`);
+    console.log(`📦 Database URL: ${process.env.DATABASE_URL?.replace(/:[^:@]+@/, ':****@') || 'not set'}`);
+    
+    try {
+      // Use prisma migrate deploy for production (non-destructive, applies pending migrations)
+      const command = 'npx prisma migrate deploy';
+      console.log(`📦 Executing: ${command}`);
+      
+      execSync(command, {
+        cwd: backendPath,
+        stdio: 'inherit',
+        env: {
+          ...process.env,
+          DATABASE_URL: process.env.DATABASE_URL,
+        },
+      });
+      
+      console.log('✅ Database migrations completed successfully');
+    } catch (error: any) {
+      // If migrate deploy fails, try to continue anyway
+      // The database might already be up to date or migrations might have been applied manually
+      console.error('⚠️  Migration command failed:', error.message);
+      console.log('ℹ️  Continuing anyway - database may already be up to date');
+      
+      // In development, try migrate dev as fallback
+      if (!app.isPackaged) {
+        try {
+          console.log('🔄 Trying migrate dev as fallback...');
+          execSync('npx prisma migrate dev --name auto_migration', {
+            cwd: backendPath,
+            stdio: 'pipe', // Use pipe to avoid cluttering output
+            env: {
+              ...process.env,
+              DATABASE_URL: process.env.DATABASE_URL,
+            },
+          });
+          console.log('✅ Database migrations completed (dev mode)');
+        } catch (devError: any) {
+          console.log('ℹ️  Dev migration also failed, continuing anyway');
+        }
+      }
+    }
+  } catch (error: any) {
+    console.error('❌ Error running database migrations:', error);
+    // Don't throw - let the app continue
+    console.log('ℹ️  Continuing anyway - database may already be up to date');
+  }
+}
+
+// Store the configured port for use when starting the server
+let configuredServerPort: number = 3000;
+let appMode: 'server' | 'client' = 'server';
+
+async function loadBackendModules(): Promise<boolean> {
   const backendDistPath = getBackendDistPath();
   console.log('📦 Loading backend from:', backendDistPath);
   console.log('📦 Current working directory:', process.cwd());
@@ -267,10 +354,24 @@ function loadBackendModules(): boolean {
       }
     }
     
-    // Load config from file and set up database
+    // Load config from file and set up database (only if in server mode)
+    // Note: Config is loaded earlier in app.whenReady() to determine mode
     const config = loadConfigFromFile();
-    console.log('📋 Loaded config:', JSON.stringify(config, null, 2));
     setupDatabaseFromConfig(config);
+    
+    // Run database migrations automatically
+    await runDatabaseMigrations();
+    
+    // Store the configured port for use when starting the server
+    configuredServerPort = config.serverPort || 3000;
+    
+    // Set server port from config BEFORE loading backend modules
+    // This ensures the backend's env.port reads the correct value
+    // Set it before dotenv.config() can override it
+    process.env.PORT = String(configuredServerPort);
+    process.env.SERVER_PORT = String(configuredServerPort);
+    console.log('🔌 Setting server port from config:', configuredServerPort);
+    console.log('🔌 process.env.PORT:', process.env.PORT);
     
     // Set uploads path for backend
     const userDataPath = app.getPath('userData');
@@ -302,6 +403,13 @@ function loadBackendModules(): boolean {
       throw new Error(`Env file not found at: ${envPath}.js`);
     }
     
+    // Clear any cached env module to ensure fresh load with correct PORT
+    const envPathJs = envPath + '.js';
+    if (require.cache[envPathJs]) {
+      delete require.cache[envPathJs];
+      console.log('🔄 Cleared cached env module');
+    }
+    
     console.log('✅ Files found, requiring modules...');
     const serverModule = require(serverPath);
     const envModule = require(envPath);
@@ -316,9 +424,17 @@ function loadBackendModules(): boolean {
     createServer = serverModule.createServer;
     env = envModule.env;
     
+    // Ensure env.port matches configured port (in case dotenv overrode it)
+    if (env.port !== configuredServerPort) {
+      console.log(`⚠️  env.port (${env.port}) doesn't match configured port (${configuredServerPort}), updating...`);
+      env.port = configuredServerPort;
+      process.env.PORT = String(configuredServerPort);
+    }
+    
     console.log('✅ Backend modules loaded successfully');
     console.log('✅ createServer function:', typeof createServer);
     console.log('✅ env.port:', env?.port);
+    console.log('✅ configuredServerPort:', configuredServerPort);
     return true;
   } catch (error: any) {
     console.error('❌ Failed to load backend modules:', error);
@@ -482,23 +598,61 @@ async function showErrorDialogToUser(title: string, message: string, detail?: st
   }
 }
 
-async function startServer() {
+async function startServer(portOverride?: number) {
   try {
-    const port = env.port;
+    // Use override port if provided, otherwise use env.port
+    // If portOverride is provided, update process.env.PORT and reload env module
+    let port: number;
+    if (portOverride !== undefined) {
+      port = portOverride;
+      process.env.PORT = String(port);
+      process.env.SERVER_PORT = String(port);
+      // Reload env module to get updated port
+      const envPath = path.join(getBackendDistPath(), 'config', 'env');
+      const envPathJs = envPath + '.js';
+      if (require.cache[envPathJs]) {
+        delete require.cache[envPathJs];
+      }
+      const envModule = require(envPath);
+      if (envModule && envModule.env) {
+        env.port = envModule.env.port;
+      } else {
+        env.port = port;
+      }
+      console.log(`🔄 Port updated to ${port}, reloaded env module`);
+    } else {
+      port = env.port;
+    }
     console.log(`🚀 Starting server on port ${port}...`);
     
-    // In development mode, check if server is already running
-    // (started separately via npm run dev:backend)
-    if (isDev) {
-      const portAvailable = await isPortAvailable(port);
-      if (!portAvailable) {
+    // Check if port is available before starting server
+    const portAvailable = await isPortAvailable(port);
+    if (!portAvailable) {
+      const errorMessage = `Port ${port} is already in use by another application.`;
+      const errorDetail = `Please either:\n\n1. Stop the other application using port ${port}\n2. Change the server port in Settings\n\nThe application will continue, but the server may not start correctly.`;
+      
+      console.error(`❌ ${errorMessage}`);
+      console.error(`Detail: ${errorDetail}`);
+      
+      // In development mode, just return (server might be started separately)
+      if (isDev) {
         console.log(`ℹ️  Server already running on port ${port} (started separately)`);
         console.log(`ℹ️  Electron will connect to existing server`);
         return; // Don't start another server
       }
+      
+      // In production mode, show alert and still try to start
+      // (might be our own server from previous instance, but user should know)
+      await showErrorDialogToUser(
+        'Port Already In Use',
+        errorMessage,
+        errorDetail
+      );
+      
+      console.warn(`⚠️  Port ${port} is in use, but attempting to start server anyway...`);
     }
     
-    // Start server if port is available or in production mode
+    // Start server
     console.log(`📡 Attempting to start server on port ${port}...`);
     const result = await createServer(port);
     server = result.server;
@@ -522,7 +676,8 @@ async function startServer() {
     setTimeout(async () => {
       try {
         const http = require('http');
-        const testReq = http.get(`http://localhost:${port}/api/v1/health`, (res: any) => {
+        // Use 127.0.0.1 instead of localhost to avoid IPv6 (::1) connection issues
+        const testReq = http.get(`http://127.0.0.1:${port}/api/v1/health`, (res: any) => {
           console.log(`✅ Server health check passed: ${res.statusCode}`);
         });
         testReq.on('error', (err: any) => {
@@ -541,10 +696,25 @@ async function startServer() {
       }
     }, 1000);
   } catch (error: any) {
-    // If error is EADDRINUSE, server is already running (development mode)
+    // If error is EADDRINUSE, server is already running
     if (error?.code === 'EADDRINUSE') {
-      console.log(`ℹ️  Port ${env.port} is already in use`);
-      console.log(`ℹ️  Electron will connect to existing server`);
+      const port = env.port || configuredServerPort || 3000;
+      const errorMessage = `Port ${port} is already in use by another application.`;
+      const errorDetail = `The server could not start because port ${port} is already occupied.\n\nPlease either:\n\n1. Stop the other application using port ${port}\n2. Change the server port in Settings\n\nThe application will continue, but the server will not be available.`;
+      
+      console.error(`❌ ${errorMessage}`);
+      console.error(`Detail: ${errorDetail}`);
+      
+      // Show alert dialog to user
+      await showErrorDialogToUser(
+        'Port Already In Use',
+        errorMessage,
+        errorDetail
+      );
+      
+      if (isDev) {
+        console.log(`ℹ️  Electron will connect to existing server`);
+      }
       return;
     }
     console.error('❌ Failed to start server:', error);
@@ -584,14 +754,30 @@ function registerProtocolHandler() {
     // Handle root or index.html
     if (url === '' || url === '/' || url === '/index.html') {
       url = 'index.html';
-    }
-    
-    // Remove leading slash if present
-    if (url.startsWith('/')) {
-      url = url.substring(1);
+    } else {
+      // Remove leading slash if present
+      if (url.startsWith('/')) {
+        url = url.substring(1);
+      }
+      
+      // Check if it's a file with extension (static asset)
+      const hasExtension = /\.\w+$/.test(url);
+      
+      // If it's not a static file (no extension), serve index.html for client-side routing
+      if (!hasExtension) {
+        url = 'index.html';
+      }
     }
     
     const filePath = path.join(frontendDistPath, url);
+    
+    // Check if file exists, if not, serve index.html (for client-side routing)
+    if (!fs.existsSync(filePath) && url !== 'index.html') {
+      console.log('Protocol handler: File not found, serving index.html for client-side routing:', request.url);
+      const indexPath = path.join(frontendDistPath, 'index.html');
+      callback({ path: indexPath });
+      return;
+    }
     
     console.log('Protocol handler:', request.url, '->', filePath);
     callback({ path: filePath });
@@ -608,74 +794,86 @@ app.whenReady().then(async () => {
     app.setAppUserModelId('com.orderwhatsapp.desktop');
   }
   
-  // Load backend modules and start server BEFORE creating window in production
-  console.log('📦 Loading backend modules...');
-  const backendLoaded = loadBackendModules();
+  // Load config first to determine mode
+  const config = loadConfigFromFile();
+  console.log('📋 Loaded config:', JSON.stringify(config, null, 2));
   
-  if (backendLoaded && env) {
-    try {
-      // Start Express server first (especially important in production)
-      await startServer();
-      console.log('✅ Application initialization complete');
-      
-      // Wait a bit for server to be fully ready
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Verify server is actually responding before creating window
-      const http = require('http');
-      let serverReady = false;
-      
-      // Try to connect to server health endpoint (with more retries)
-      console.log(`🔍 Verifying server is ready on port ${env.port}...`);
-      for (let i = 0; i < 20; i++) {
-        try {
-          await new Promise<void>((resolve, reject) => {
-            const testReq = http.get(`http://localhost:${env.port}/api/v1/health`, (res: any) => {
-              let data = '';
-              res.on('data', (chunk: any) => { data += chunk; });
-              res.on('end', () => {
-                if (res.statusCode === 200) {
-                  serverReady = true;
-                  console.log('✅ Server is responding and ready');
-                  resolve();
-                } else {
-                  reject(new Error(`Server returned status ${res.statusCode}`));
-                }
+  // Store the app mode from config
+  appMode = config.mode || 'server';
+  console.log('🔧 Application mode:', appMode);
+  
+  // Load backend modules only if in server mode
+  if (appMode === 'server') {
+    console.log('📦 Loading backend modules (Server Mode)...');
+    const backendLoaded = await loadBackendModules();
+    
+    if (backendLoaded && env) {
+      try {
+        // Start Express server first (especially important in production)
+        // Use the configured port from the config file
+        // The startServer function will check port availability and show alert if needed
+        await startServer(configuredServerPort);
+        console.log('✅ Application initialization complete');
+        
+        // Wait a bit for server to be fully ready
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Verify server is actually responding before creating window
+        const http = require('http');
+        let serverReady = false;
+        
+        // Try to connect to server health endpoint (with more retries)
+        console.log(`🔍 Verifying server is ready on port ${configuredServerPort}...`);
+        for (let i = 0; i < 20; i++) {
+          try {
+            await new Promise<void>((resolve, reject) => {
+              // Use 127.0.0.1 instead of localhost to avoid IPv6 (::1) connection issues
+              const testReq = http.get(`http://127.0.0.1:${configuredServerPort}/api/v1/health`, (res: any) => {
+                let data = '';
+                res.on('data', (chunk: any) => { data += chunk; });
+                res.on('end', () => {
+                  if (res.statusCode === 200) {
+                    serverReady = true;
+                    console.log('✅ Server is responding and ready');
+                    resolve();
+                  } else {
+                    reject(new Error(`Server returned status ${res.statusCode}`));
+                  }
+                });
+              });
+              testReq.on('error', (err: any) => {
+                reject(err);
+              });
+              testReq.setTimeout(2000, () => {
+                testReq.destroy();
+                reject(new Error('Connection timeout'));
               });
             });
-            testReq.on('error', (err: any) => {
-              reject(err);
-            });
-            testReq.setTimeout(2000, () => {
-              testReq.destroy();
-              reject(new Error('Connection timeout'));
-            });
-          });
-          break; // Success, exit retry loop
-        } catch (err: any) {
-          if (i < 19) {
-            if (i % 5 === 0) { // Log every 5 attempts
-              console.log(`⏳ Waiting for server to be ready... (${i + 1}/20) - ${err.message}`);
+            break; // Success, exit retry loop
+          } catch (err: any) {
+            if (i < 19) {
+              if (i % 5 === 0) { // Log every 5 attempts
+                console.log(`⏳ Waiting for server to be ready... (${i + 1}/20) - ${err.message}`);
+              }
+              await new Promise(resolve => setTimeout(resolve, 500));
+            } else {
+              console.error('❌ Server health check failed after 20 attempts');
+              console.error('Last error:', err.message);
+              // Still create window but log the error
+              console.warn('⚠️  Creating window anyway - server may not be ready');
+              serverReady = false;
             }
-            await new Promise(resolve => setTimeout(resolve, 500));
-          } else {
-            console.error('❌ Server health check failed after 20 attempts');
-            console.error('Last error:', err.message);
-            // Still create window but log the error
-            console.warn('⚠️  Creating window anyway - server may not be ready');
-            serverReady = false;
           }
         }
-      }
-      
-      // Now create window (even if server check failed, so user can see what's wrong)
-      console.log('🪟 Creating application window...');
-      createWindow();
-      
-      if (!serverReady) {
-        // Show error in window
-        setTimeout(() => {
-          if (mainWindow) {
+        
+        // Now create window (even if server check failed, so user can see what's wrong)
+        console.log('🪟 Creating application window...');
+        createWindow();
+        
+        if (!serverReady) {
+          // Show error in window
+          setTimeout(() => {
+            if (mainWindow) {
             mainWindow.webContents.executeJavaScript(`
               if (typeof window !== 'undefined' && window.document) {
                 const errorDiv = document.createElement('div');
@@ -726,6 +924,12 @@ app.whenReady().then(async () => {
     }, 2000);
     showErrorToUser(errorMsg);
   }
+} else {
+  // Client mode - no server needed, just create window
+  console.log('🔌 Client Mode: Skipping server startup, connecting to remote server');
+  console.log('🪟 Creating application window...');
+  createWindow();
+}
   
   // Ensure window is visible after a short delay (allows time for content to load)
   setTimeout(() => {
@@ -792,8 +996,46 @@ ipcMain.handle('config:get', async (): Promise<AppConfig> => {
   }
 });
 
+// Restart server with new port
+async function restartServer(newPort?: number) {
+  try {
+    // Close existing server if running
+    if (server) {
+      console.log('🛑 Stopping existing server...');
+      return new Promise<void>((resolve) => {
+        server.close(() => {
+          console.log('✅ Server stopped');
+          server = null;
+          
+          // Start server with new port if provided
+          if (newPort !== undefined) {
+            console.log(`🔄 Restarting server on port ${newPort}...`);
+            startServer(newPort).then(() => {
+              console.log('✅ Server restarted successfully');
+              resolve();
+            }).catch((error) => {
+              console.error('❌ Failed to restart server:', error);
+              resolve(); // Resolve anyway to not block
+            });
+          } else {
+            resolve();
+          }
+        });
+      });
+    } else {
+      // No server running, just start with new port if provided
+      if (newPort !== undefined) {
+        await startServer(newPort);
+      }
+    }
+  } catch (error: any) {
+    console.error('❌ Error restarting server:', error);
+    throw error;
+  }
+}
+
 // Save app configuration
-ipcMain.handle('config:save', async (_event, config: Partial<AppConfig>): Promise<void> => {
+ipcMain.handle('config:save', async (_event, config: Partial<AppConfig>): Promise<{ needsRestart: boolean; newPort?: number }> => {
   try {
     const configPath = getConfigPath();
     const currentConfig = await (async () => {
@@ -810,6 +1052,14 @@ ipcMain.handle('config:save', async (_event, config: Partial<AppConfig>): Promis
 
     const newConfig: AppConfig = { ...currentConfig, ...config };
     
+    // Check if mode changed
+    const modeChanged = currentConfig.mode !== newConfig.mode;
+    
+    // Check if port changed (only in server mode)
+    const portChanged = newConfig.mode === 'server' && 
+                        currentConfig.serverPort !== newConfig.serverPort;
+    const newPort = portChanged ? (newConfig.serverPort || 3000) : undefined;
+    
     // Ensure directory exists
     const configDir = path.dirname(configPath);
     if (!fs.existsSync(configDir)) {
@@ -819,6 +1069,56 @@ ipcMain.handle('config:save', async (_event, config: Partial<AppConfig>): Promis
     // Write config file
     fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), 'utf-8');
     console.log('Config saved successfully');
+    
+    // Update app mode
+    appMode = newConfig.mode || 'server';
+    
+    // Handle mode changes
+    if (modeChanged) {
+      if (newConfig.mode === 'client') {
+        // Switching to client mode - stop the server
+        console.log('🔄 Mode changed to client, stopping server...');
+        if (server) {
+          try {
+            await new Promise<void>((resolve) => {
+              server?.close(() => {
+                console.log('✅ Server stopped');
+                server = null;
+                resolve();
+              });
+            });
+          } catch (error: any) {
+            console.error('Error stopping server:', error);
+          }
+        }
+        return { needsRestart: false };
+      } else if (newConfig.mode === 'server') {
+        // Switching to server mode - start the server
+        console.log('🔄 Mode changed to server, starting server...');
+        try {
+          const port = newConfig.serverPort || 3000;
+          await startServer(port);
+          return { needsRestart: false, newPort: port };
+        } catch (error: any) {
+          console.error('Failed to start server:', error);
+          return { needsRestart: true, newPort: newConfig.serverPort };
+        }
+      }
+    }
+    
+    // Restart server if port changed and we're in server mode
+    if (portChanged && newConfig.mode === 'server' && newPort !== undefined) {
+      console.log(`🔄 Port changed from ${currentConfig.serverPort} to ${newPort}, restarting server...`);
+      try {
+        await restartServer(newPort);
+        return { needsRestart: false, newPort }; // Server restarted, no app restart needed
+      } catch (error: any) {
+        console.error('Failed to restart server:', error);
+        return { needsRestart: true, newPort }; // Server restart failed, app restart needed
+      }
+    }
+    
+    return { needsRestart: false };
   } catch (error: any) {
     console.error('Error saving config:', error);
     throw new Error(`Failed to save config: ${error.message}`);
@@ -917,6 +1217,30 @@ ipcMain.handle('dialog:showWarningDialog', async (_event, options: { title: stri
   } catch (error: any) {
     console.error('Failed to show warning dialog:', error);
     return { response: 0 };
+  }
+});
+
+// Get local network IP address
+ipcMain.handle('get-local-ip', async (): Promise<string> => {
+  try {
+    const os = require('os');
+    const interfaces = os.networkInterfaces();
+    
+    // Look for the first non-internal IPv4 address
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name] || []) {
+        // Skip internal (loopback) addresses
+        if (iface.family === 'IPv4' && !iface.internal) {
+          return iface.address;
+        }
+      }
+    }
+    
+    // Fallback to localhost
+    return 'localhost';
+  } catch (error: any) {
+    console.error('Failed to get local IP:', error);
+    return 'localhost';
   }
 });
 

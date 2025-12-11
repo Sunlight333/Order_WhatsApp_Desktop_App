@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import path from 'path';
 import { loginSchema, LoginInput } from '../validators/auth.validator';
-import { login, getUserById } from '../services/auth.service';
+import { login, getUserById, verifyAdminPassword } from '../services/auth.service';
 import { updateUser, UpdateUserInput } from '../services/user.service';
 import { updateProfileSchema, UpdateProfileInput } from '../validators/user.validator';
 import { createSuccessResponse } from '../utils/response.util';
@@ -42,11 +42,21 @@ export async function meController(req: Request, res: Response, next: NextFuncti
       return;
     }
 
-    const user = await getUserById(req.user.userId);
-
-    res.status(200).json(
-      createSuccessResponse(user, 'User retrieved successfully')
-    );
+    try {
+      const user = await getUserById(req.user.userId);
+      res.status(200).json(
+        createSuccessResponse(user, 'User retrieved successfully')
+      );
+    } catch (error: any) {
+      // If user not found (e.g., after database restore), return 401 to force re-login
+      if (error.code === 'USER_NOT_FOUND') {
+        res.status(401).json(
+          createErrorResponse('USER_NOT_FOUND', 'User not found. Please log in again.')
+        );
+        return;
+      }
+      throw error;
+    }
   } catch (error) {
     // Pass error to error middleware - server will continue running
     next(error);
@@ -130,5 +140,37 @@ export async function logoutController(req: Request, res: Response): Promise<voi
   res.status(200).json(
     createSuccessResponse(null, 'Logout successful')
   );
+}
+
+/**
+ * POST /api/v1/auth/verify-admin-password
+ * Verify admin password for accessing protected settings
+ */
+export async function verifyAdminPasswordController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json(
+        createErrorResponse('UNAUTHORIZED', 'Authentication required')
+      );
+      return;
+    }
+
+    const { password } = req.body;
+
+    if (!password || typeof password !== 'string' || !password.trim()) {
+      res.status(400).json(
+        createErrorResponse('INVALID_INPUT', 'Password is required')
+      );
+      return;
+    }
+
+    await verifyAdminPassword(password.trim());
+
+    res.status(200).json(
+      createSuccessResponse({ verified: true }, 'Admin password verified successfully')
+    );
+  } catch (error) {
+    next(error);
+  }
 }
 

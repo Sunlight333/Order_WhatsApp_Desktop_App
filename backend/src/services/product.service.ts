@@ -19,16 +19,34 @@ export interface UpdateProductInput {
 /**
  * List products (optionally filtered by supplier)
  */
-export async function listProducts(supplierId?: string) {
+export async function listProducts(supplierId?: string, sortBy?: string, sortOrder: 'asc' | 'desc' = 'asc') {
   const where: any = {};
   
   if (supplierId) {
     where.supplierId = supplierId;
   }
 
+  // Map frontend sort keys to database fields
+  const sortFieldMap: Record<string, string> = {
+    reference: 'reference',
+    supplier: 'supplier', // Will be sorted in memory
+    createdAt: 'createdAt',
+    updatedAt: 'updatedAt',
+  };
+
+  const sortField = sortBy && sortFieldMap[sortBy] ? sortFieldMap[sortBy] : 'reference';
+  
+  // For supplier name sorting, we'll sort in memory
+  const isComputedField = sortField === 'supplier';
+  
+  let orderBy: any = { [sortField]: sortOrder };
+  if (isComputedField) {
+    orderBy = { reference: 'asc' }; // Default sort, will override in memory
+  }
+
   const products = await prisma.product.findMany({
     where,
-    orderBy: { reference: 'asc' },
+    orderBy,
     include: {
       supplier: {
         select: {
@@ -38,6 +56,19 @@ export async function listProducts(supplierId?: string) {
       },
     },
   });
+
+  // Sort by supplier name in memory if needed
+  if (isComputedField) {
+    products.sort((a, b) => {
+      const aValue = a.supplier.name.toLowerCase();
+      const bValue = b.supplier.name.toLowerCase();
+      if (sortOrder === 'asc') {
+        return aValue.localeCompare(bValue);
+      } else {
+        return bValue.localeCompare(aValue);
+      }
+    });
+  }
 
   return products;
 }

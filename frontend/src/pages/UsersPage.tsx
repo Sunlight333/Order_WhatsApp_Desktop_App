@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Plus, Edit2, Trash2, Shield, User as UserIcon, Loader2, Search, X, Upload, Image as ImageIcon, Copy } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Plus, Edit2, Trash2, Shield, User as UserIcon, Loader2, Search, X, Upload, Image as ImageIcon, Copy, ArrowUp, ArrowDown, ChevronUp } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
@@ -33,9 +34,12 @@ interface UserFormData {
 }
 
 export default function UsersPage() {
+  const { t } = useTranslation();
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [sortBy, setSortBy] = useState<string>('createdAt');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showUpdateConfirmModal, setShowUpdateConfirmModal] = useState(false);
@@ -56,22 +60,47 @@ export default function UsersPage() {
 
   useEffect(() => {
     fetchUsers();
-  }, []);
+  }, [sortBy, sortOrder]);
 
   const fetchUsers = async () => {
     try {
       setLoading(true);
-      const response = await api.get<{ success: true; data: User[] }>('/users');
+      const params: any = {};
+      if (sortBy) {
+        params.sortBy = sortBy;
+      }
+      if (sortOrder) {
+        params.sortOrder = sortOrder;
+      }
+      const response = await api.get<{ success: true; data: User[] }>('/users', { params });
       setUsers(response.data.data || []);
     } catch (error: any) {
       if (error.response?.status === 403) {
-        toast.error('You do not have permission to access this page');
+        toast.error(t('users.noPermission'));
       } else {
-        toast.error(error.response?.data?.error?.message || 'Failed to load users');
+        toast.error(error.response?.data?.error?.message || t('users.loadFailed'));
       }
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSort = (field: string) => {
+    if (sortBy === field) {
+      // Toggle sort order if clicking the same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new sort field and default to desc
+      setSortBy(field);
+      setSortOrder('desc');
+    }
+  };
+
+  const getSortIcon = (field: string) => {
+    if (sortBy !== field) {
+      return <ChevronUp size={14} style={{ opacity: 0.3 }} />;
+    }
+    return sortOrder === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
 
   const handleCreate = () => {
@@ -102,12 +131,12 @@ export default function UsersPage() {
     if (file) {
       // Validate file type
       if (!file.type.startsWith('image/')) {
-        toast.error('Please select an image file');
+        toast.error(t('users.selectImageFile'));
         return;
       }
       // Validate file size (5MB)
       if (file.size > 5 * 1024 * 1024) {
-        toast.error('Image size must be less than 5MB');
+        toast.error(t('users.imageSizeLimit'));
         return;
       }
       
@@ -136,7 +165,7 @@ export default function UsersPage() {
 
   const handleCreateSubmit = async () => {
     if (!formData.username.trim() || !formData.password.trim()) {
-      toast.error('Username and password are required');
+      toast.error(t('users.usernamePasswordRequired'));
       return;
     }
 
@@ -165,11 +194,11 @@ export default function UsersPage() {
         });
       }
 
-      toast.success('User created successfully');
+      toast.success(t('users.createSuccess'));
       setShowCreateModal(false);
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to create user');
+      toast.error(error.response?.data?.error?.message || t('users.createFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -178,12 +207,12 @@ export default function UsersPage() {
   const handleEditSubmit = () => {
     // Validate first
     if (!formData.username.trim()) {
-      toast.error('Username is required');
+      toast.error(t('validation.required'));
       return;
     }
 
     if (formData.password.trim() && formData.password.length < 6) {
-      toast.error('Password must be at least 6 characters');
+      toast.error(t('validation.minLength', { min: 6 }));
       return;
     }
 
@@ -220,12 +249,12 @@ export default function UsersPage() {
         });
       }
 
-      toast.success('User updated successfully');
+      toast.success(t('users.updateSuccess'));
       setShowEditModal(false);
       setSelectedUser(null);
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to update user');
+      toast.error(error.response?.data?.error?.message || t('users.updateFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -237,12 +266,12 @@ export default function UsersPage() {
     try {
       setDeleteLoading(true);
       await api.delete(`/users/${selectedUser.id}`);
-      toast.success('User deleted successfully');
+      toast.success(t('users.deleteSuccess'));
       setShowDeleteModal(false);
       setSelectedUser(null);
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to delete user');
+      toast.error(error.response?.data?.error?.message || t('users.deleteFailed'));
     } finally {
       setDeleteLoading(false);
     }
@@ -271,19 +300,19 @@ export default function UsersPage() {
   const handleCopyUsername = () => {
     if (!selectedUser) return;
     navigator.clipboard.writeText(selectedUser.username);
-    toast.success('Username copied to clipboard');
+    toast.success(t('common.copied'));
   };
 
   const handleCopyUserId = () => {
     if (!selectedUser) return;
     navigator.clipboard.writeText(selectedUser.id);
-    toast.success('User ID copied to clipboard');
+    toast.success(t('common.copied'));
   };
 
   const getContextMenuItems = (user: User): ContextMenuItem[] => {
     return [
       {
-        label: 'Edit User',
+        label: t('users.editUser'),
         icon: <Edit2 size={16} />,
         action: () => {
           setSelectedUser(user);
@@ -299,18 +328,18 @@ export default function UsersPage() {
       },
       { divider: true },
       {
-        label: 'Copy Username',
+        label: t('users.copyUsername'),
         icon: <Copy size={16} />,
         action: handleCopyUsername,
       },
       {
-        label: 'Copy User ID',
+        label: t('users.copyUserId'),
         icon: <Copy size={16} />,
         action: handleCopyUserId,
       },
       { divider: true },
       {
-        label: 'Delete User',
+        label: t('users.deleteUser'),
         icon: <Trash2 size={16} />,
         action: () => {
           setSelectedUser(user);
@@ -326,7 +355,7 @@ export default function UsersPage() {
       <div className="page-container">
         <div className="loading-container">
           <Loader2 className="spinner" size={32} />
-          <p>Loading users...</p>
+          <p>{t('users.loadingUsers')}</p>
         </div>
       </div>
     );
@@ -336,12 +365,12 @@ export default function UsersPage() {
     <div className="page-container">
       <div className="page-header">
         <div>
-          <h1>User Management</h1>
-          <p className="page-subtitle">Manage system users and permissions</p>
+          <h1>{t('users.userManagement')}</h1>
+          <p className="page-subtitle">{t('users.manageUsers')}</p>
         </div>
         <button className="btn-primary" onClick={handleCreate}>
           <Plus size={20} />
-          Create User
+          {t('users.createUser')}
         </button>
       </div>
 
@@ -350,7 +379,7 @@ export default function UsersPage() {
           <Search size={20} className="search-icon" />
           <input
             type="text"
-            placeholder="Search users by username or role..."
+            placeholder={t('users.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="search-input"
@@ -359,7 +388,7 @@ export default function UsersPage() {
             <button
               className="clear-search"
               onClick={() => setSearchQuery('')}
-              title="Clear search"
+              title={t('common.clearSearch')}
             >
               <X size={16} />
             </button>
@@ -370,10 +399,10 @@ export default function UsersPage() {
       {filteredUsers.length === 0 ? (
         <div className="empty-state">
           <UserIcon size={48} />
-          <p>No users found</p>
+          <p>{t('users.noUsers')}</p>
           <button className="btn-primary" onClick={handleCreate}>
             <Plus size={20} />
-            Create First User
+            {t('users.createFirstUser')}
           </button>
         </div>
       ) : (
@@ -381,11 +410,47 @@ export default function UsersPage() {
           <table className="users-table">
             <thead>
               <tr>
-                <th>Username</th>
-                <th>Role</th>
-                <th>Created</th>
-                <th>Last Updated</th>
-                <th>Actions</th>
+                <th 
+                  className="sortable-header"
+                  onClick={() => handleSort('username')}
+                  style={{ cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {t('users.username')}
+                    {getSortIcon('username')}
+                  </div>
+                </th>
+                <th 
+                  className="sortable-header"
+                  onClick={() => handleSort('role')}
+                  style={{ cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {t('users.role')}
+                    {getSortIcon('role')}
+                  </div>
+                </th>
+                <th 
+                  className="sortable-header"
+                  onClick={() => handleSort('createdAt')}
+                  style={{ cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {t('orders.createdAt')}
+                    {getSortIcon('createdAt')}
+                  </div>
+                </th>
+                <th 
+                  className="sortable-header"
+                  onClick={() => handleSort('updatedAt')}
+                  style={{ cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {t('orders.updatedAt')}
+                    {getSortIcon('updatedAt')}
+                  </div>
+                </th>
+                <th>{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -413,7 +478,7 @@ export default function UsersPage() {
                   </td>
                   <td>
                     <span className={`role-badge ${user.role === 'SUPER_ADMIN' ? 'admin' : 'user'}`}>
-                      {user.role === 'SUPER_ADMIN' ? 'Super Admin' : 'User'}
+                      {user.role === 'SUPER_ADMIN' ? t('users.superAdmin') : t('users.userRole')}
                     </span>
                   </td>
                   <td>{formatDate(user.createdAt)}</td>
@@ -423,14 +488,14 @@ export default function UsersPage() {
                       <button
                         className="btn-icon btn-edit"
                         onClick={() => handleEdit(user)}
-                        title="Edit user"
+                        title={t('users.editUser')}
                       >
                         <Edit2 size={16} />
                       </button>
                       <button
                         className="btn-icon btn-delete"
                         onClick={() => handleDelete(user)}
-                        title="Delete user"
+                        title={t('users.deleteUser')}
                       >
                         <Trash2 size={16} />
                       </button>
@@ -448,11 +513,11 @@ export default function UsersPage() {
         isOpen={showCreateModal}
         onClose={() => setShowCreateModal(false)}
         onConfirm={handleCreateSubmit}
-        title="Create New User"
+        title={t('users.createUser')}
         message={
           <div className="user-form">
             <div className="form-group">
-              <label>Avatar (Optional)</label>
+              <label>{t('users.avatarOptional')}</label>
               <div className="avatar-upload-container">
                 {formData.avatarPreview ? (
                   <div className="avatar-preview">
@@ -461,7 +526,7 @@ export default function UsersPage() {
                       type="button"
                       className="btn-remove-avatar"
                       onClick={handleRemoveAvatar}
-                      title="Remove avatar"
+                      title={t('users.removeAvatar')}
                     >
                       <X size={16} />
                     </button>
@@ -469,7 +534,7 @@ export default function UsersPage() {
                 ) : (
                   <div className="avatar-placeholder">
                     <ImageIcon size={24} />
-                    <span>No avatar</span>
+                    <span>{t('users.noAvatar')}</span>
                   </div>
                 )}
                 <input
@@ -487,13 +552,13 @@ export default function UsersPage() {
                   onClick={() => avatarInputRef.current?.click()}
                 >
                   <Upload size={16} />
-                  {formData.avatarPreview ? 'Change Avatar' : 'Upload Avatar'}
+                  {formData.avatarPreview ? t('users.changeAvatar') : t('users.uploadAvatar')}
                 </button>
               </div>
             </div>
             <div className="form-group">
               <label>
-                Username <span className="required">*</span>
+                {t('users.username')} <span className="required">*</span>
               </label>
               <input
                 type="text"
@@ -506,34 +571,34 @@ export default function UsersPage() {
             </div>
             <div className="form-group">
               <label>
-                Password <span className="required">*</span>
+                {t('users.password')} <span className="required">*</span>
               </label>
               <input
                 type="password"
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                placeholder="Enter password (min 6 characters)"
+                placeholder={t('users.enterPassword')}
                 className="form-input"
                 required
               />
             </div>
             <div className="form-group">
               <label>
-                Role <span className="required">*</span>
+                {t('users.role')} <span className="required">*</span>
               </label>
               <select
                 value={formData.role}
                 onChange={(e) => setFormData({ ...formData, role: e.target.value as 'SUPER_ADMIN' | 'USER' })}
                 className="form-input"
               >
-                <option value="USER">User</option>
-                <option value="SUPER_ADMIN">Super Admin</option>
+                <option value="USER">{t('users.userRole')}</option>
+                <option value="SUPER_ADMIN">{t('users.superAdmin')}</option>
               </select>
             </div>
           </div>
         }
-        confirmText="Create User"
-        cancelText="Cancel"
+        confirmText={t('users.createUser')}
+        cancelText={t('common.cancel')}
         type="info"
         loading={submitting}
       />
@@ -546,20 +611,20 @@ export default function UsersPage() {
           setSelectedUser(null);
         }}
         onConfirm={handleEditSubmit}
-        title="Edit User"
+        title={t('users.editUser')}
         message={
           <div className="user-form">
             <div className="form-group">
-              <label>Avatar (Optional)</label>
+              <label>{t('users.avatarOptional')}</label>
               <div className="avatar-upload-container">
                 {formData.avatarPreview ? (
                   <div className="avatar-preview">
-                    <img src={formData.avatarPreview} alt="Avatar preview" />
+                    <img src={formData.avatarPreview} alt={t('users.avatarPreview')} />
                     <button
                       type="button"
                       className="btn-remove-avatar"
                       onClick={handleRemoveAvatar}
-                      title="Remove avatar"
+                      title={t('users.removeAvatar')}
                     >
                       <X size={16} />
                     </button>
@@ -567,7 +632,7 @@ export default function UsersPage() {
                 ) : (
                   <div className="avatar-placeholder">
                     <ImageIcon size={24} />
-                    <span>No avatar</span>
+                    <span>{t('users.noAvatar')}</span>
                   </div>
                 )}
                 <input
@@ -585,50 +650,50 @@ export default function UsersPage() {
                   onClick={() => editAvatarInputRef.current?.click()}
                 >
                   <Upload size={16} />
-                  {formData.avatarPreview ? 'Change Avatar' : 'Upload Avatar'}
+                  {formData.avatarPreview ? t('users.changeAvatar') : t('users.uploadAvatar')}
                 </button>
               </div>
             </div>
             <div className="form-group">
               <label>
-                Username <span className="required">*</span>
+                {t('users.username')} <span className="required">*</span>
               </label>
               <input
                 type="text"
                 value={formData.username}
                 onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                placeholder="Enter username"
+                placeholder={t('users.enterUsername')}
                 className="form-input"
                 required
               />
             </div>
             <div className="form-group">
-              <label>Password (leave empty to keep current)</label>
+              <label>{t('users.passwordKeepCurrent')}</label>
               <input
                 type="password"
                 value={formData.password}
                 onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-                placeholder="Enter new password (min 6 characters)"
+                placeholder={t('users.enterNewPassword')}
                 className="form-input"
               />
             </div>
             <div className="form-group">
               <label>
-                Role <span className="required">*</span>
+                {t('users.role')} <span className="required">*</span>
               </label>
               <select
                 value={formData.role}
                 onChange={(e) => setFormData({ ...formData, role: e.target.value as 'SUPER_ADMIN' | 'USER' })}
                 className="form-input"
               >
-                <option value="USER">User</option>
-                <option value="SUPER_ADMIN">Super Admin</option>
+                <option value="USER">{t('users.userRole')}</option>
+                <option value="SUPER_ADMIN">{t('users.superAdmin')}</option>
               </select>
             </div>
           </div>
         }
-        confirmText="Save Changes"
-        cancelText="Cancel"
+        confirmText={t('editOrder.saveChanges')}
+        cancelText={t('common.cancel')}
         type="info"
         loading={submitting}
       />
@@ -641,18 +706,18 @@ export default function UsersPage() {
           setSelectedUser(null);
         }}
         onConfirm={handleDeleteConfirm}
-        title="Delete User"
+        title={t('users.deleteUser')}
         message={
           <div>
             <p>
-              Are you sure you want to delete user <strong>{selectedUser?.username}</strong>? This action cannot be undone.
+              {t('users.deleteConfirm', { username: selectedUser?.username })}
             </p>
             <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              This action will be permanently recorded in the system logs and cannot be reversed.
+              {t('users.deleteWarning')}
             </p>
           </div>
         }
-        confirmText="Delete User"
+        confirmText={t('users.deleteUser')}
         cancelText="Cancel"
         type="danger"
         loading={deleteLoading}
@@ -663,16 +728,16 @@ export default function UsersPage() {
         isOpen={showUpdateConfirmModal}
         onClose={() => setShowUpdateConfirmModal(false)}
         onConfirm={confirmUserUpdate}
-        title="Confirm User Update"
+        title={t('users.updateConfirm')}
         message={
           <div>
-            <p>Are you sure you want to update user <strong>{selectedUser?.username}</strong>?</p>
+            <p>{t('users.updateConfirmMessage', { username: selectedUser?.username })}</p>
             <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              All changes will be saved and this action will be recorded in the system logs.
+              {t('users.updateWarning')}
             </p>
           </div>
         }
-        confirmText="Update User"
+        confirmText={t('users.updateUser')}
         cancelText="Cancel"
         type="info"
         loading={submitting}

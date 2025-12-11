@@ -4,15 +4,20 @@
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   transition: var(--theme-transition);
+}
+
+/* VS Code style main layout for dark theme */
+:root[data-theme="dark"] .main-layout {
+  background: var(--bg-primary);
 }
 
 /* Header Styles */
 .app-header {
   height: 64px;
   background: var(--bg-primary);
-  border-bottom: 1px solid var(--primary-light);
+  border-bottom: 1px solid var(--border-primary);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -22,6 +27,18 @@
   top: 0;
   z-index: 100;
   transition: var(--theme-transition);
+}
+
+/* VS Code style header for dark theme - same as sidebar */
+:root[data-theme="dark"] .app-header {
+  background: var(--bg-secondary);
+  border-bottom-color: var(--border-primary);
+}
+
+/* Ensure header and sidebar have consistent background in dark theme */
+:root[data-theme="dark"] .app-header,
+:root[data-theme="dark"] .sidebar {
+  background: var(--bg-secondary);
 }
 
 .header-left {
@@ -89,8 +106,8 @@
 .user-badge {
   font-size: var(--text-xs);
   padding: 2px 8px;
-  background: var(--primary);
-  color: var(--text-inverse);
+  background: #0ea5e9;
+  color: #0f172a;
   border-radius: var(--radius-sm);
   font-weight: 600;
 }
@@ -159,12 +176,18 @@
 /* Sidebar Styles */
 .sidebar {
   width: 240px;
-  background: var(--bg-primary);
-  border-right: 1px solid var(--primary-light);
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border-primary);
   display: flex;
   flex-direction: column;
   overflow-y: auto;
   transition: var(--theme-transition);
+}
+
+/* VS Code style sidebar for dark theme - consistent with header */
+:root[data-theme="dark"] .sidebar {
+  background: var(--bg-secondary);
+  border-right-color: var(--border-primary);
 }
 
 .sidebar-nav {
@@ -188,6 +211,21 @@
   cursor: pointer;
 }
 
+/* VS Code style nav items for dark theme */
+:root[data-theme="dark"] .nav-item {
+  color: var(--text-secondary);
+}
+
+:root[data-theme="dark"] .nav-item:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .nav-item.active {
+  background: var(--bg-active);
+  color: var(--text-primary);
+}
+
 .nav-item:hover {
   background: var(--bg-secondary);
   color: var(--primary);
@@ -207,8 +245,13 @@
 .main-content {
   flex: 1;
   overflow-y: auto;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   transition: var(--theme-transition);
+}
+
+/* VS Code style main content for dark theme */
+:root[data-theme="dark"] .main-content {
+  background: var(--bg-primary);
 }
 
 .page-container {

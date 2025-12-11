@@ -18,7 +18,9 @@ import { createSuccessResponse } from '../utils/response.util';
 export async function listProductsController(req: Request, res: Response): Promise<void> {
   try {
     const supplierId = req.query.supplierId as string | undefined;
-    const products = await listProducts(supplierId);
+    const sortBy = req.query.sortBy as string | undefined;
+    const sortOrder = (req.query.sortOrder as 'asc' | 'desc') || 'asc';
+    const products = await listProducts(supplierId, sortBy, sortOrder);
     res.status(200).json(createSuccessResponse(products));
   } catch (error) {
     throw error;

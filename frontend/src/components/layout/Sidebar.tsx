@@ -4,6 +4,7 @@ import {
   LayoutDashboard, 
   ShoppingCart, 
   Users, 
+  UserCircle,
   Package, 
   Box, 
   Settings,
@@ -40,6 +41,11 @@ const navItems: NavItem[] = [
     labelKey: 'sidebar.products',
     icon: <Box size={20} />,
     adminOnly: true,
+  },
+  {
+    path: '/customers',
+    labelKey: 'sidebar.customers',
+    icon: <UserCircle size={20} />,
   },
   {
     path: '/users',

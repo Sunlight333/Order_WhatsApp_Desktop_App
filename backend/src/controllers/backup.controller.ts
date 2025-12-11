@@ -62,10 +62,18 @@ export async function restoreBackupController(req: Request, res: Response): Prom
       );
     }
 
-    // Password is optional, but may be required if backup is encrypted
-    const restorePassword = password && typeof password === 'string' && password.trim() 
-      ? password.trim() 
-      : undefined;
+    // Password handling: accept empty string as "no password", but preserve actual password strings
+    // Check if password field exists and is a non-empty string
+    let restorePassword: string | undefined = undefined;
+    if (password !== undefined && password !== null) {
+      if (typeof password === 'string') {
+        const trimmedPassword = password.trim();
+        // Only set password if it's not empty
+        if (trimmedPassword.length > 0) {
+          restorePassword = trimmedPassword;
+        }
+      }
+    }
 
     await restoreDatabase(filePath, restorePassword);
 

@@ -98,7 +98,40 @@ export async function getUserById(userId: string) {
 
       return { ...user, avatar: null, whatsappMessage: null };
     }
-    throw error;
+    throw createError('USER_FETCH_ERROR', `Failed to fetch user: ${error.message}`, 500);
+  }
+}
+
+/**
+ * Verify admin password (for accessing protected settings)
+ * This allows non-admin users to access settings by providing admin password
+ */
+export async function verifyAdminPassword(password: string): Promise<boolean> {
+  try {
+    // Find admin user (SUPER_ADMIN role)
+    const adminUser = await prisma.user.findFirst({
+      where: {
+        role: 'SUPER_ADMIN',
+      },
+    });
+
+    if (!adminUser) {
+      throw createError('ADMIN_NOT_FOUND', 'Admin user not found in the system', 404);
+    }
+
+    // Verify password
+    const isPasswordValid = await bcrypt.compare(password, adminUser.password);
+
+    if (!isPasswordValid) {
+      throw createError('INVALID_ADMIN_PASSWORD', 'Invalid admin password', 401);
+    }
+
+    return true;
+  } catch (error: any) {
+    if (error.code === 'ADMIN_NOT_FOUND' || error.code === 'INVALID_ADMIN_PASSWORD') {
+      throw error;
+    }
+    throw createError('VERIFICATION_FAILED', `Failed to verify admin password: ${error.message}`, 500);
   }
 }
 

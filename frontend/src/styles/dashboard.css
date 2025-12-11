@@ -78,6 +78,17 @@
   transform: translateY(-2px);
 }
 
+/* VS Code style stat cards for dark theme */
+:root[data-theme="dark"] .stat-card {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+}
+
+:root[data-theme="dark"] .stat-card:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-secondary);
+}
+
 .stat-card-icon {
   width: 64px;
   height: 64px;
@@ -240,18 +251,24 @@
 }
 
 .status-pending {
-  background: var(--warning-light);
-  color: var(--warning);
+  background: #f59e0b;
+  color: #111827;
+}
+
+.status-red {
+  background-color: #b91c1c;
+  color: #ffffff;
+  border: 1px solid #fecaca;
 }
 
 .status-received {
-  background: var(--info-light);
-  color: var(--status-received);
+  background: #16a34a;
+  color: #ecfdf3;
 }
 
 .status-notified {
-  background: var(--success-light);
-  color: var(--success);
+  background: #16a34a;
+  color: #ecfdf3;
 }
 
 /* Empty State */
@@ -340,6 +357,226 @@
 
 .quick-action-card:hover .quick-action-arrow {
   transform: translateX(4px);
+}
+
+/* Analytics Section */
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--spacing-xl);
+  margin-top: var(--spacing-lg);
+}
+
+.analytics-card {
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-lg);
+  padding: var(--spacing-xl);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  display: flex;
+  flex-direction: column;
+  transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.analytics-card:hover {
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  transform: translateY(-2px);
+  border-color: var(--primary-light);
+}
+
+.analytics-card-full {
+  grid-column: 1 / -1;
+}
+
+/* Responsive: Stack cards on smaller screens */
+@media (max-width: 1200px) {
+  .analytics-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--spacing-lg);
+  }
+}
+
+@media (max-width: 768px) {
+  .analytics-grid {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-lg);
+  }
+}
+
+.analytics-card-header {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+  padding-bottom: var(--spacing-md);
+  border-bottom: 2px solid var(--border-color);
+}
+
+.analytics-card-header svg {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+
+.analytics-card-header h3 {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+  letter-spacing: -0.02em;
+}
+
+.analytics-table {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.analytics-table table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.analytics-table thead {
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-tertiary) 100%);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.analytics-table th {
+  padding: 14px 16px;
+  text-align: left;
+  font-weight: 700;
+  font-size: var(--text-xs);
+  color: var(--text-primary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 2px solid var(--border-color);
+  white-space: nowrap;
+}
+
+.analytics-table tbody {
+  background: var(--bg-primary);
+}
+
+.analytics-table td {
+  padding: 16px;
+  border-bottom: 1px solid var(--border-color);
+  font-size: var(--text-sm);
+  color: var(--text-primary);
+  transition: background-color 0.2s ease;
+}
+
+.analytics-table tbody tr {
+  transition: all 0.2s ease;
+}
+
+.analytics-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.analytics-table tbody tr:hover {
+  background: var(--bg-hover);
+  transform: scale(1.01);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.analytics-table tbody tr:hover td {
+  color: var(--text-primary);
+}
+
+.analytics-table td strong {
+  color: var(--primary);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.analytics-table td strong:hover {
+  color: var(--primary-dark);
+  text-decoration: underline;
+}
+
+.analytics-table td:first-child {
+  font-weight: 500;
+}
+
+/* Modern table styling with alternating rows (optional, subtle) */
+.analytics-table tbody tr:nth-child(even) {
+  background: var(--bg-secondary);
+}
+
+.analytics-table tbody tr:nth-child(even):hover {
+  background: var(--bg-hover);
+}
+
+.analytics-empty {
+  text-align: center;
+  padding: var(--spacing-3xl);
+  color: var(--text-secondary);
+  font-style: italic;
+  font-size: var(--text-sm);
+}
+
+/* Modern badge styling for numbers */
+.analytics-badge {
+  display: inline-block;
+  padding: 4px 10px;
+  background: var(--primary-light);
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--primary);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+/* Currency styling */
+.analytics-currency {
+  font-family: 'Courier New', Courier, monospace;
+  font-weight: 700;
+  color: var(--success);
+  letter-spacing: 0.02em;
+}
+
+/* Reference/Customer name link styling */
+.analytics-link {
+  color: var(--primary);
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-decoration: none;
+}
+
+.analytics-link:hover {
+  color: var(--primary-dark);
+  text-decoration: underline;
+}
+
+.analytics-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-lg);
+}
+
+.stat-item {
+  background: var(--bg-secondary);
+  padding: var(--spacing-md);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-light);
+}
+
+.stat-label {
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-xs);
+}
+
+.stat-value {
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  color: var(--primary);
 }
 
 /* Responsive Design */

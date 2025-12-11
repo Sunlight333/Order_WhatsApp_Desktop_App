@@ -51,6 +51,12 @@ export default function SettingsPage() {
   const [avatarRemoved, setAvatarRemoved] = useState(false);
   const [updatingProfile, setUpdatingProfile] = useState(false);
   const profileAvatarInputRef = useRef<HTMLInputElement>(null);
+  const [settingsPassword, setSettingsPassword] = useState<string>('');
+  const [showSettingsPasswordModal, setShowSettingsPasswordModal] = useState(false);
+  const [settingsPasswordVerified, setSettingsPasswordVerified] = useState(() => {
+    // Check if password was verified in this session
+    return sessionStorage.getItem('settings_password_verified') === 'true';
+  });
 
   useEffect(() => {
     loadSettings();
@@ -86,12 +92,19 @@ export default function SettingsPage() {
 
   const detectLocalIp = async () => {
     try {
-      // Try to get local IP - in Electron we can use a better method
-      // For now, use a simple approach
+      // In Electron, use the IPC handler to get local network IP
+      if (window.electron?.getLocalIp) {
+        const ip = await window.electron.getLocalIp();
+        setLocalIp(ip);
+        return;
+      }
+      
+      // Fallback: Try to get public IP (not ideal, but works)
       const response = await fetch('https://api.ipify.org?format=json').catch(() => null);
       if (response) {
-      const data = await response.json();
-      setLocalIp(data.ip || 'localhost');
+        const data = await response.json();
+        // Use localhost instead of public IP for server mode
+        setLocalIp('localhost');
       } else {
         setLocalIp('localhost');
       }
@@ -112,7 +125,7 @@ export default function SettingsPage() {
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
-      toast.error('Failed to load settings');
+      toast.error(t('settings.loadFailed'));
     } finally {
       setLoading(false);
     }
@@ -328,11 +341,22 @@ export default function SettingsPage() {
         language: config.language || 'es',
       };
 
-      if (config.mode === 'client') {
+      // Set serverAddress based on mode
+      if (config.mode === 'server') {
+        // In server mode, use the configured serverAddress (should be localhost, 127.0.0.1, or network IP)
+        // If not set, default to localhost
+        if (config.serverAddress && (config.serverAddress === 'localhost' || config.serverAddress === '127.0.0.1' || 
+            config.serverAddress.match(/^(\d{1,3}\.){3}\d{1,3}$/))) {
+          configToSave.serverAddress = config.serverAddress;
+        } else {
+          // Default to localhost for server mode
+          configToSave.serverAddress = 'localhost';
+        }
+      } else if (config.mode === 'client') {
         configToSave.serverAddress = config.serverAddress || '';
       }
 
-      await configService.saveConfig(configToSave);
+      const saveResult = await configService.saveConfig(configToSave);
       
       // Reload config to ensure we have the latest values
       const updatedConfig = await configService.loadConfig();
@@ -364,13 +388,29 @@ export default function SettingsPage() {
 
       setShowSaveModal(false);
 
-      // Show combined success message with restart notice
-      toast.success(
-        'Settings saved successfully! Please restart the application for some changes to take effect.',
-        {
-          duration: 6000,
-        }
-      );
+      // Show success message based on whether server was restarted
+      if (saveResult?.needsRestart) {
+        toast.success(
+          `Settings saved! Server port changed to ${saveResult.newPort}. Please restart the application for the change to take effect.`,
+          {
+            duration: 8000,
+          }
+        );
+      } else if (saveResult?.newPort) {
+        toast.success(
+          `Settings saved! Server restarted on port ${saveResult.newPort}.`,
+          {
+            duration: 5000,
+          }
+        );
+      } else {
+        toast.success(
+          'Settings saved successfully!',
+          {
+            duration: 3000,
+          }
+        );
+      }
     } catch (error: any) {
       toast.error(error.message || 'Failed to save settings');
     } finally {
@@ -429,6 +469,36 @@ export default function SettingsPage() {
     if (profileAvatarInputRef.current) {
       profileAvatarInputRef.current.value = '';
     }
+  };
+
+  const handleVerifySettingsPassword = async () => {
+    if (!settingsPassword.trim()) {
+      toast.error(t('settings.passwordRequired') || 'Password is required');
+      return;
+    }
+
+    try {
+      // Verify admin password using the dedicated endpoint
+      await api.post('/auth/verify-admin-password', {
+        password: settingsPassword,
+      });
+
+      setSettingsPasswordVerified(true);
+      // Store verification in sessionStorage so it persists for the session
+      sessionStorage.setItem('settings_password_verified', 'true');
+      setShowSettingsPasswordModal(false);
+      setSettingsPassword('');
+      toast.success(t('settings.passwordVerified') || 'Admin password verified successfully');
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.error?.message || t('settings.invalidPassword') || 'Invalid admin password';
+      toast.error(errorMessage);
+      setSettingsPassword('');
+    }
+  };
+
+  const handleSettingsPasswordConfirm = async (password: string) => {
+    setSettingsPassword(password);
+    await handleVerifySettingsPassword();
   };
 
   const handleUpdateProfile = async () => {
@@ -518,8 +588,8 @@ export default function SettingsPage() {
         title: 'Save Database Backup',
         defaultPath: defaultFileName,
         filters: [
-          { name: 'Backup Files', extensions: ['omw'] },
-          { name: 'All Files', extensions: ['*'] },
+          { name: t('settings.backupFiles'), extensions: ['omw'] },
+          { name: t('settings.allFiles'), extensions: ['*'] },
         ],
       });
 
@@ -636,9 +706,9 @@ export default function SettingsPage() {
       const result = await window.electron.dialog.showOpenDialog({
         title: 'Select Database Backup File',
         filters: [
-          { name: 'Backup Files', extensions: ['omw', 'encrypted.omw'] },
-          { name: 'Legacy Files', extensions: ['db', 'encrypted.db', 'sql', 'encrypted.sql'] },
-          { name: 'All Files', extensions: ['*'] },
+          { name: t('settings.backupFiles'), extensions: ['omw', 'encrypted.omw'] },
+          { name: t('settings.legacyFiles'), extensions: ['db', 'encrypted.db', 'sql', 'encrypted.sql'] },
+          { name: t('settings.allFiles'), extensions: ['*'] },
         ],
         properties: ['openFile'],
       });
@@ -675,7 +745,8 @@ export default function SettingsPage() {
     }
   };
 
-  const handleConfirmRestorePassword = () => {
+  const handleConfirmRestorePassword = (password: string) => {
+    setRestorePassword(password);
     setShowRestorePasswordModal(false);
     // Show restore confirmation modal after password is entered
     setShowRestoreConfirm(true);
@@ -725,7 +796,7 @@ export default function SettingsPage() {
       <div className="page-container">
         <div className="loading-container">
           <Loader2 className="spinner" size={32} />
-          <p>Loading settings...</p>
+          <p>{t('common.loading')}</p>
         </div>
       </div>
     );
@@ -741,17 +812,17 @@ export default function SettingsPage() {
             style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
           >
             <ArrowLeft size={18} />
-            Back to Login
+            {t('settings.backToLogin')}
           </button>
         </div>
       )}
       <div className="page-header">
         <div>
-          <h1>Application Settings</h1>
-          <p className="page-subtitle">Configure server, database, and appearance settings</p>
+          <h1>{t('settings.applicationSettings')}</h1>
+          <p className="page-subtitle">{t('settings.configureSettings')}</p>
           {!isAuthenticated && (
             <p className="page-subtitle" style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.5rem' }}>
-              Configure the app settings before logging in. These settings are saved locally.
+              {t('settings.configureBeforeLogin')}
             </p>
           )}
         </div>
@@ -761,22 +832,44 @@ export default function SettingsPage() {
           disabled={saving}
         >
           <Save size={20} />
-          Save Settings
+          {t('settings.saveSettings')}
         </button>
       </div>
 
+      {/* Password Protection for Non-Admin Users */}
+      {isAuthenticated && user?.role !== 'SUPER_ADMIN' && !settingsPasswordVerified && (
+        <div className="info-box" style={{ marginBottom: '2rem', padding: '1.5rem', background: 'var(--warning-light)', border: '1px solid var(--warning)' }}>
+          <AlertCircle size={20} />
+          <div style={{ flex: 1 }}>
+            <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{t('settings.advancedSettingsProtected') || 'Advanced Settings Protected'}</p>
+            <p style={{ fontSize: '0.875rem', marginBottom: '1rem' }}>
+              {t('settings.advancedSettingsProtectedDesc') || 'To access database configuration, server port settings, and other advanced settings, you must verify the admin password.'}
+            </p>
+            <button
+              className="btn-primary"
+              onClick={() => setShowSettingsPasswordModal(true)}
+            >
+              {t('settings.enterPassword') || 'Enter Admin Password'}
+            </button>
+          </div>
+        </div>
+      )}
+
       <div className="settings-grid">
-        {/* Server/Client Mode Configuration */}
+        {/* Server/Client Mode Configuration
+            - Visible before login for initial setup
+            - After login, only SUPER_ADMIN or users who verified password */}
+        {(!isAuthenticated || user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
         <section className="settings-section">
           <div className="section-header">
             <Server size={24} />
-            <h2>Application Mode</h2>
+            <h2>{t('settings.applicationMode')}</h2>
           </div>
 
           <div className="settings-content">
             <div className="form-group">
               <label>
-                Mode <span className="required">*</span>
+                {t('settings.mode')} <span className="required">*</span>
               </label>
               <div className="radio-group">
                 <label className="radio-label">
@@ -785,12 +878,34 @@ export default function SettingsPage() {
                     name="appMode"
                     value="server"
                     checked={config.mode === 'server'}
-                    onChange={() =>
-                      setConfig({ ...config, mode: 'server' })
-                    }
+                    onChange={async () => {
+                      // When switching to server mode, automatically set serverAddress to localhost, 127.0.0.1, or PC IP
+                      let serverAddress = 'localhost';
+                      
+                      // Try to get the local network IP address
+                      if (window.electron?.getLocalIp) {
+                        try {
+                          const ip = await window.electron.getLocalIp();
+                          // If we got a valid network IP (not localhost or 127.0.0.1), use it for serverAddress
+                          // This allows the server to be accessed via network IP
+                          if (ip && ip !== 'localhost' && !ip.startsWith('127.')) {
+                            // Use the network IP for serverAddress when in server mode
+                            serverAddress = ip;
+                          } else {
+                            // Fallback to localhost
+                            serverAddress = 'localhost';
+                          }
+                        } catch (error) {
+                          // Fallback to localhost
+                          serverAddress = 'localhost';
+                        }
+                      }
+                      
+                      setConfig({ ...config, mode: 'server', serverAddress });
+                    }}
                   />
-                  <span>Server Mode</span>
-                  <small>Run as server with database</small>
+                  <span>{t('settings.serverMode')}</span>
+                  <small>{t('settings.serverModeDesc')}</small>
                 </label>
                 <label className="radio-label">
                   <input
@@ -802,15 +917,15 @@ export default function SettingsPage() {
                       setConfig({ ...config, mode: 'client' })
                     }
                   />
-                  <span>Client Mode</span>
-                  <small>Connect to remote server</small>
+                  <span>{t('settings.clientMode')}</span>
+                  <small>{t('settings.clientModeDesc')}</small>
                 </label>
               </div>
             </div>
 
             {config.mode === 'server' && (
               <div className="form-group">
-                <label>Server Port</label>
+                <label>{t('settings.serverPort')}</label>
                 <input
                   type="number"
                   value={config.serverPort || 3000}
@@ -824,11 +939,11 @@ export default function SettingsPage() {
                   max={65535}
                   className="form-input"
                 />
-                <small className="form-hint">Default: 3000</small>
-                {localIp && (
+                  <small className="form-hint">{t('settings.defaultPort')}</small>
+                {localIp && localIp !== 'localhost' && localIp !== '127.0.0.1' && (
                   <div className="info-box" style={{ marginTop: '0.5rem' }}>
                     <Wifi size={16} />
-                    <span>Share this address with clients: {localIp}:{config.serverPort || 3000}</span>
+                    <span>{t('settings.shareAddress', { address: `${localIp}:${config.serverPort || 3000}` })}</span>
                   </div>
                 )}
               </div>
@@ -838,7 +953,7 @@ export default function SettingsPage() {
               <>
                 <div className="form-group">
                   <label>
-                    Server IP Address <span className="required">*</span>
+                    {t('settings.serverIpAddress')} <span className="required">*</span>
                   </label>
                   <input
                     type="text"
@@ -853,12 +968,12 @@ export default function SettingsPage() {
                     className="form-input"
                   />
                   <small className="form-hint">
-                    IP address of the server machine
+                    {t('settings.ipAddressHint')}
                   </small>
                 </div>
                 
                 <div className="form-group">
-                  <label>Server Port</label>
+                  <label>{t('settings.serverPort')}</label>
                   <input
                     type="number"
                     value={config.serverPort || 3000}
@@ -872,7 +987,7 @@ export default function SettingsPage() {
                     max={65535}
                     className="form-input"
                   />
-                  <small className="form-hint">Port of the server (default: 3000)</small>
+                  <small className="form-hint">{t('settings.portHint')}</small>
                 </div>
 
                 <div className="form-actions-inline">
@@ -884,12 +999,12 @@ export default function SettingsPage() {
                     {testingConnection ? (
                       <>
                         <Loader2 className="spinner" size={16} />
-                        Testing...
+                        {t('settings.testing')}
                       </>
                     ) : (
                       <>
                         <RefreshCw size={16} />
-                        Test Connection
+                        {t('settings.testConnection')}
                       </>
                     )}
                   </button>
@@ -913,18 +1028,22 @@ export default function SettingsPage() {
             )}
           </div>
         </section>
+        )}
 
-        {/* Database Configuration */}
+        {/* Database Configuration
+            - Visible before login for initial setup
+            - After login, only SUPER_ADMIN or users who verified password */}
+        {(!isAuthenticated || user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
         <section className="settings-section">
           <div className="section-header">
             <Database size={24} />
-            <h2>Database Configuration</h2>
+            <h2>{t('settings.databaseConfiguration')}</h2>
           </div>
 
           <div className="settings-content">
             <div className="form-group">
               <label>
-                Database Provider <span className="required">*</span>
+                {t('settings.databaseProvider')} <span className="required">*</span>
               </label>
               <div className="radio-group">
                 <label className="radio-label">
@@ -935,7 +1054,7 @@ export default function SettingsPage() {
                     checked={config.database.type === 'sqlite'}
                     onChange={() => handleDatabaseProviderChange('sqlite')}
                   />
-                  <span>SQLite (Default)</span>
+                  <span>{t('settings.sqliteDefault')}</span>
                 </label>
                 <label className="radio-label">
                   <input
@@ -962,7 +1081,7 @@ export default function SettingsPage() {
 
             <div className="form-group">
               <label>
-                {config.database.type === 'sqlite' ? 'Database Path' : 'Database URL'} <span className="required">*</span>
+                {config.database.type === 'sqlite' ? t('settings.databasePath') : t('settings.databaseUrl')} <span className="required">*</span>
               </label>
               <input
                 type="text"
@@ -1046,25 +1165,25 @@ export default function SettingsPage() {
                 </div>
               )}
               <small className="form-hint" style={{ width: '100%', marginTop: '0.25rem' }}>
-                <strong>Initialize Database:</strong> Creates all required tables and seeds initial data (admin user). 
-                Use this if your database is new or missing tables. Safe to run multiple times.
+                <strong>{t('settings.initializeDatabase')}:</strong> {t('settings.initializeDatabaseDesc')}
               </small>
             </div>
             )}
           </div>
         </section>
+        )}
 
         {/* Theme Configuration */}
         <section className="settings-section">
           <div className="section-header">
             <Monitor size={24} />
-            <h2>Appearance</h2>
+            <h2>{t('settings.appearance')}</h2>
           </div>
 
           <div className="settings-content">
             <div className="form-group">
               <label>
-                Theme <span className="required">*</span>
+                {t('settings.theme')} <span className="required">*</span>
               </label>
               <div className="radio-group">
                 <label className="radio-label">
@@ -1077,7 +1196,7 @@ export default function SettingsPage() {
                       setConfig({ ...config, theme: 'light' })
                     }
                   />
-                  <span>Light</span>
+                  <span>{t('settings.light')}</span>
                 </label>
                 <label className="radio-label">
                   <input
@@ -1089,7 +1208,7 @@ export default function SettingsPage() {
                       setConfig({ ...config, theme: 'dark' })
                     }
                   />
-                  <span>Dark</span>
+                  <span>{t('settings.dark')}</span>
                 </label>
                 <label className="radio-label">
                   <input
@@ -1101,7 +1220,7 @@ export default function SettingsPage() {
                       setConfig({ ...config, theme: 'system' })
                     }
                   />
-                  <span>System</span>
+                  <span>{t('settings.system')}</span>
                 </label>
               </div>
             </div>
@@ -1155,20 +1274,20 @@ export default function SettingsPage() {
           <section className="settings-section">
             <div className="section-header">
               <User size={24} />
-              <h2>Profile</h2>
+              <h2>{t('settings.profile')}</h2>
             </div>
 
             <div className="settings-content">
               {/* Avatar Upload */}
               <div className="form-group">
-                <label>Profile Avatar</label>
+                <label>{t('settings.profileAvatar')}</label>
                 <div className="avatar-upload-container" style={{ marginTop: '0.5rem' }}>
                   <div className="avatar-preview-wrapper">
                     {profileAvatarPreview ? (
                       <div style={{ position: 'relative', display: 'inline-block' }}>
                         <img
                           src={profileAvatarPreview}
-                          alt="Avatar preview"
+                          alt={t('users.avatarPreview')}
                           style={{
                             width: '100px',
                             height: '100px',
@@ -1196,7 +1315,7 @@ export default function SettingsPage() {
                               alignItems: 'center',
                               justifyContent: 'center',
                             }}
-                            title="Remove avatar"
+                            title={t('users.removeAvatar')}
                           >
                             <X size={14} />
                           </button>
@@ -1239,45 +1358,55 @@ export default function SettingsPage() {
                     }}
                   >
                     <ImageIcon size={16} />
-                    {profileAvatarPreview ? 'Change Avatar' : 'Upload Avatar'}
+                    {profileAvatarPreview ? t('users.changeAvatar') : t('users.uploadAvatar')}
                   </label>
                 </div>
                 <small className="form-hint">
-                  Upload a profile picture. Maximum file size: 5MB. Supported formats: JPEG, PNG, GIF, WebP.
+                  {t('settings.avatarUploadHint')}
                 </small>
               </div>
 
-              {/* Username */}
+              {/* Username - Only editable for SUPER_ADMIN */}
               <div className="form-group">
                 <label>
-                  Username
+                  {t('users.username')} {user?.role === 'SUPER_ADMIN' && <span className="required">*</span>}
                 </label>
                 <input
                   type="text"
                   value={profileUsername}
-                  onChange={(e) => setProfileUsername(e.target.value)}
-                  placeholder="Enter username"
+                  onChange={(e) => {
+                    // Only allow editing if user is SUPER_ADMIN
+                    if (user?.role === 'SUPER_ADMIN') {
+                      setProfileUsername(e.target.value);
+                    }
+                  }}
+                  placeholder={t('users.enterUsername')}
                   className="form-input"
+                  disabled={user?.role !== 'SUPER_ADMIN'}
+                  readOnly={user?.role !== 'SUPER_ADMIN'}
                 />
                 <small className="form-hint">
-                  Your username is used to identify you in the system.
+                  {user?.role !== 'SUPER_ADMIN' 
+                    ? t('settings.usernameNotEditable')
+                    : t('settings.usernameHint')
+                  }
                 </small>
               </div>
 
               {/* Password */}
               <div className="form-group">
                 <label>
-                  New Password (leave empty to keep current password)
+                  {t('settings.newPassword')}
                 </label>
                 <input
                   type="password"
                   value={profilePassword}
                   onChange={(e) => setProfilePassword(e.target.value)}
-                  placeholder="Enter new password"
+                  placeholder={t('users.enterNewPassword')}
                   className="form-input"
                 />
                 <small className="form-hint">
-                  Leave empty if you don't want to change your password.
+                  {t('settings.passwordHint')}
                 </small>
               </div>
 
@@ -1285,13 +1414,13 @@ export default function SettingsPage() {
               {profilePassword && (
                 <div className="form-group">
                   <label>
-                    Confirm New Password
+                    {t('settings.confirmNewPassword')}
                   </label>
                   <input
                     type="password"
                     value={profileConfirmPassword}
                     onChange={(e) => setProfileConfirmPassword(e.target.value)}
-                    placeholder="Confirm new password"
+                    placeholder={t('settings.confirmNewPasswordPlaceholder')}
                     className="form-input"
                   />
                 </div>
@@ -1306,12 +1435,12 @@ export default function SettingsPage() {
                   {updatingProfile ? (
                     <>
                       <Loader2 className="spinner" size={16} />
-                      Updating...
+                      {t('common.loading')}
                     </>
                   ) : (
                     <>
                       <Save size={16} />
-                      Update Profile
+                      {t('settings.updateProfile')}
                     </>
                   )}
                 </button>
@@ -1325,13 +1454,13 @@ export default function SettingsPage() {
           <section className="settings-section">
             <div className="section-header">
               <MessageSquare size={24} />
-              <h2>WhatsApp Message</h2>
+              <h2>{t('settings.whatsappMessage')}</h2>
             </div>
 
             <div className="settings-content">
               <div className="form-group">
                 <label>
-                  Default WhatsApp Message Template
+                  {t('settings.whatsappMessageTemplate')}
                 </label>
                 <textarea
                   value={whatsappMessage}
@@ -1342,7 +1471,7 @@ export default function SettingsPage() {
                   style={{ resize: 'vertical' }}
                 />
                 <small className="form-hint">
-                  This is your personal default WhatsApp message. It will be used when sending WhatsApp notifications to customers. If left empty, the global default message will be used.
+                  {t('settings.whatsappMessageHint')}
                 </small>
               </div>
 
@@ -1355,12 +1484,12 @@ export default function SettingsPage() {
                   {savingProfile ? (
                     <>
                       <Loader2 className="spinner" size={16} />
-                      Saving...
+                      {t('common.loading')}
                     </>
                   ) : (
                     <>
                       <Save size={16} />
-                      Save WhatsApp Message
+                      {t('settings.saveWhatsAppMessage')}
                     </>
                   )}
                 </button>
@@ -1369,19 +1498,19 @@ export default function SettingsPage() {
           </section>
         )}
 
-        {/* Database Backup & Restore - Only visible when authenticated as Super Admin */}
-        {isAuthenticated && user?.role === 'SUPER_ADMIN' && (
+        {/* Database Backup & Restore - Only visible when authenticated as Super Admin or with password */}
+        {isAuthenticated && (user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
           <section className="settings-section">
             <div className="section-header">
               <HardDrive size={24} />
-              <h2>Database Backup & Restore</h2>
+              <h2>{t('settings.databaseBackupRestore')}</h2>
             </div>
 
             <div className="settings-content">
               <div className="form-group">
-                <label>Backup Database</label>
+                <label>{t('settings.backupDatabase')}</label>
                 <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '1rem' }}>
-                  Create a backup of your database. You can choose the location and filename when saving.
+                  {t('settings.backupDatabaseHint')}
                 </p>
                 <button
                   className="btn-secondary"
@@ -1392,12 +1521,12 @@ export default function SettingsPage() {
                   {backingUp ? (
                     <>
                       <Loader2 className="spinner" size={16} />
-                      Creating Backup...
+                      {t('settings.creatingBackup')}
                     </>
                   ) : (
                     <>
                       <Download size={16} />
-                      Create Backup
+                      {t('settings.createBackup')}
                     </>
                   )}
                 </button>
@@ -1405,7 +1534,7 @@ export default function SettingsPage() {
                   <div style={{ marginTop: '0.5rem' }}>
                     <ProgressBar
                       progress={backupProgress}
-                      label="Backup Progress"
+                      label={t('settings.backupProgress')}
                       showPercentage={true}
                       animated={true}
                       color="primary"
@@ -1417,9 +1546,9 @@ export default function SettingsPage() {
               </div>
 
               <div className="form-group" style={{ marginTop: '1.5rem' }}>
-                <label>Restore Database</label>
+                <label>{t('settings.restoreDatabase')}</label>
                 <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '1rem' }}>
-                  Restore your database from a backup file. This will replace your current database. Make sure to create a backup before restoring. If the backup is encrypted, you will be prompted for the password.
+                  {t('settings.restoreDatabaseHint')}
                 </p>
                 <button
                   className="btn-secondary"
@@ -1430,23 +1559,23 @@ export default function SettingsPage() {
                   {restoring ? (
                     <>
                       <Loader2 className="spinner" size={16} />
-                      Restoring...
+                      {t('settings.restoring')}
                     </>
                   ) : (
                     <>
                       <Upload size={16} />
-                      Restore from Backup
+                      {t('settings.restoreFromBackup')}
                     </>
                   )}
                 </button>
                 {restoreFilePath && (
                   <p className="form-hint" style={{ marginTop: '0.5rem', color: 'var(--primary-color)' }}>
-                    Selected: {restoreFilePath.split(/[/\\]/).pop()}
+                    {t('settings.selected')}: {restoreFilePath.split(/[/\\]/).pop()}
                   </p>
                 )}
                 {restorePassword && (
                   <p className="form-hint" style={{ marginTop: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.8125rem' }}>
-                    Password entered for encrypted backup
+                    {t('settings.passwordEntered')}
                   </p>
                 )}
               </div>
@@ -1460,7 +1589,7 @@ export default function SettingsPage() {
         isOpen={showSaveModal}
         onClose={() => setShowSaveModal(false)}
         onConfirm={handleSave}
-        title="Save Settings"
+        title={t('settings.saveSettings')}
         message={
           <div>
             <p>Are you sure you want to save these settings?</p>
@@ -1479,8 +1608,8 @@ export default function SettingsPage() {
             </p>
           </div>
         }
-        confirmText="Save Settings"
-        cancelText="Cancel"
+        confirmText={t('settings.saveSettings')}
+        cancelText={t('common.cancel')}
         type="info"
         loading={saving}
       />
@@ -1494,30 +1623,43 @@ export default function SettingsPage() {
           setRestorePassword('');
         }}
         onConfirm={handleRestoreDatabase}
-        title="Confirm Database Restore"
+        title={t('settings.database.restore.confirmTitle')}
         message={
           <div>
             <p>
-              Are you sure you want to restore the database from the selected backup file?
+              {t('settings.database.restore.confirmMessage')}
             </p>
             {restorePassword && (
               <p style={{ marginTop: '0.75rem', color: 'var(--primary-color)', fontSize: '0.875rem' }}>
-                <strong>Encrypted backup:</strong> The password has been entered and will be used to decrypt the backup.
+                <strong>{t('settings.database.restore.encryptedBackup')}:</strong> {t('settings.database.restore.passwordEntered')}
               </p>
             )}
             <p className="warning-text" style={{ marginTop: '1rem' }}>
-              <strong>Warning:</strong> This action will replace your current database with the backup. 
-              All data entered since the backup was created will be lost. Make sure you have a current backup before proceeding.
+              <strong>{t('common.warning')}:</strong> {t('settings.database.restore.warningMessage')}
             </p>
             <p className="warning-text" style={{ marginTop: '0.5rem' }}>
-              The application will need to be restarted after the restore is complete.
+              {t('settings.database.restore.restartRequired')}
             </p>
           </div>
         }
-        confirmText="Restore Database"
-        cancelText="Cancel"
+        confirmText={t('settings.restoreDatabase')}
+        cancelText={t('common.cancel')}
         type="danger"
         loading={restoring}
+      />
+
+      {/* Settings Password Modal for Non-Admin Users */}
+      <PasswordModal
+        isOpen={showSettingsPasswordModal}
+        onClose={() => {
+          setShowSettingsPasswordModal(false);
+          setSettingsPassword('');
+        }}
+        onConfirm={handleSettingsPasswordConfirm}
+        title={t('settings.enterPasswordToAccess')}
+        message={t('settings.enterPasswordToAccessDesc')}
+        placeholder={t('settings.enterPassword')}
+        required={true}
       />
 
       {/* Backup Password Modal */}
@@ -1525,9 +1667,9 @@ export default function SettingsPage() {
         isOpen={showBackupPasswordModal}
         onClose={() => setShowBackupPasswordModal(false)}
         onConfirm={handleConfirmBackupPassword}
-        title="Encrypt Backup (Optional)"
-        message="Enter a password to encrypt the backup file. Leave empty to create an unencrypted backup."
-        placeholder="Enter encryption password (optional)"
+        title={t('settings.database.backup.encryptTitle')}
+        message={t('settings.database.backup.encryptMessage')}
+        placeholder={t('settings.database.backup.encryptPlaceholder')}
         required={false}
         loading={backingUp}
       />
@@ -1541,9 +1683,9 @@ export default function SettingsPage() {
           setRestorePassword('');
         }}
         onConfirm={handleConfirmRestorePassword}
-        title="Enter Backup Password"
-        message="This backup file is encrypted. Please enter the password to decrypt and restore it."
-        placeholder="Enter backup password"
+        title={t('settings.database.restore.enterPasswordTitle')}
+        message={t('settings.database.restore.encryptedBackupMessage')}
+        placeholder={t('settings.database.restore.enterPasswordPlaceholder')}
         required={true}
         loading={restoring}
       />

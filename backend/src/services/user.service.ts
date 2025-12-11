@@ -22,7 +22,18 @@ export interface UpdateUserInput {
 /**
  * List all users
  */
-export async function listUsers() {
+export async function listUsers(sortBy?: string, sortOrder: 'asc' | 'desc' = 'desc') {
+  // Map frontend sort keys to database fields
+  const sortFieldMap: Record<string, string> = {
+    username: 'username',
+    role: 'role',
+    createdAt: 'createdAt',
+    updatedAt: 'updatedAt',
+  };
+
+  const sortField = sortBy && sortFieldMap[sortBy] ? sortFieldMap[sortBy] : 'createdAt';
+  const orderBy: any = { [sortField]: sortOrder };
+
   try {
     const users = await prisma.user.findMany({
       select: {
@@ -34,7 +45,7 @@ export async function listUsers() {
         createdAt: true,
         updatedAt: true,
       },
-      orderBy: { createdAt: 'desc' },
+      orderBy,
     });
 
     return users;
@@ -49,7 +60,7 @@ export async function listUsers() {
           createdAt: true,
           updatedAt: true,
         },
-        orderBy: { createdAt: 'desc' },
+        orderBy,
       });
 
       return users.map(user => ({ ...user, avatar: null, whatsappMessage: null }));

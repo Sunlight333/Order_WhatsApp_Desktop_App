@@ -32,6 +32,7 @@ interface Product {
   productRef: string;
   quantity: string;
   price: string;
+  receivedQuantity?: string | null;
   supplier: Supplier;
 }
 
@@ -49,8 +50,11 @@ interface AuditLog {
 
 interface Order {
   id: string;
+  orderNumber?: number; // Auto-incremental order number (1, 2, 3...)
   customerName?: string;
-  customerPhone: string;
+  customerId?: string;
+  customerPhone?: string;
+  countryCode?: string;
   status: string;
   notificationMethod?: string;
   observations?: string;
@@ -61,13 +65,19 @@ interface Order {
     id: string;
     username: string;
   };
+  customer?: {
+    id: string;
+    name: string;
+    phone?: string;
+    countryCode?: string;
+  } | null;
   suppliers: Supplier[];
   products: Product[];
   totalAmount: string;
   auditLogs?: AuditLog[];
 }
 
-type OrderStatus = 'PENDING' | 'RECEIVED' | 'NOTIFIED_CALL' | 'NOTIFIED_WHATSAPP';
+type OrderStatus = 'PENDING' | 'RECEIVED' | 'NOTIFIED_CALL' | 'NOTIFIED_WHATSAPP' | 'CANCELLED' | 'INCOMPLETO';
 
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -81,6 +91,7 @@ export default function OrderDetailPage() {
   const [showPhoneCallModal, setShowPhoneCallModal] = useState(false);
   const [whatsappMessage, setWhatsappMessage] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<OrderStatus | null>(null);
+  const [updatingProducts, setUpdatingProducts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     if (id) {
@@ -120,10 +131,13 @@ export default function OrderDetailPage() {
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'RECEIVED':
-        return 'status-yellow';
+        return 'status-green';
       case 'NOTIFIED_CALL':
       case 'NOTIFIED_WHATSAPP':
         return 'status-green';
+      case 'CANCELLED':
+      case 'INCOMPLETO':
+        return 'status-red';
       default:
         return 'status-pending';
     }
@@ -132,13 +146,17 @@ export default function OrderDetailPage() {
   const getStatusLabel = (status: string) => {
     switch (status) {
       case 'PENDING':
-        return 'Pending';
+        return t('orders.statusPending');
       case 'RECEIVED':
-        return 'Merchandise Received';
+        return t('orderDetail.merchandiseReceived');
       case 'NOTIFIED_CALL':
-        return 'Customer Notified (Call)';
+        return t('orderDetail.customerNotifiedCall');
       case 'NOTIFIED_WHATSAPP':
-        return 'Customer Notified (WhatsApp)';
+        return t('orderDetail.customerNotifiedWhatsApp');
+      case 'CANCELLED':
+        return t('orders.statusCancelled');
+      case 'INCOMPLETO':
+        return t('orders.statusIncompleto');
       default:
         return status;
     }
@@ -203,7 +221,7 @@ export default function OrderDetailPage() {
       setShowWhatsAppModal(true);
       
     } catch (error: any) {
-      toast.error('Failed to load WhatsApp configuration.');
+      toast.error(t('orderDetail.whatsappConfigFailed'));
       console.error('WhatsApp error:', error);
     }
   };
@@ -214,12 +232,33 @@ export default function OrderDetailPage() {
     try {
       setShowWhatsAppModal(false);
 
-      // Normalize phone number - remove all non-digits
-      const phone = order.customerPhone.replace(/\D/g, '');
+      // Get phone number and country code
+      const phoneNumber = order.customerPhone || order.customer?.phone || '';
+      if (!phoneNumber) {
+        toast.error(t('orders.noPhoneNumber'));
+        return;
+      }
+      
+      // Get country code (default to +34 if not provided)
+      const countryCode = order.countryCode || order.customer?.countryCode || '+34';
+      
+      // Check if phone number already includes country code (starts with +)
+      let fullPhone: string;
+      if (phoneNumber.startsWith('+')) {
+        // Phone already includes country code, use it directly
+        fullPhone = phoneNumber.replace(/\D/g, '');
+      } else {
+        // Combine country code and phone number
+        // Remove + and any non-digits from country code
+        const cleanCountryCode = countryCode.replace(/^\+/, '').replace(/\D/g, '');
+        // Remove all non-digits from phone number
+        const cleanPhone = phoneNumber.replace(/\D/g, '');
+        fullPhone = cleanCountryCode + cleanPhone;
+      }
 
       // Use WhatsApp API URL format that works with desktop and mobile apps
       // Format: https://api.whatsapp.com/send/?phone={phone}&text={message}&type=phone_number&app_absent=0
-      const whatsappUrl = `https://api.whatsapp.com/send/?phone=${phone}&text=${encodeURIComponent(message)}&type=phone_number&app_absent=0`;
+      const whatsappUrl = `https://api.whatsapp.com/send/?phone=${fullPhone}&text=${encodeURIComponent(message)}&type=phone_number&app_absent=0`;
 
       // Use Electron's shell.openExternal if available, otherwise fallback to window.open
       if (window.electron?.openExternal) {
@@ -239,7 +278,7 @@ export default function OrderDetailPage() {
       setTimeout(async () => {
         try {
           await updateOrderStatus('NOTIFIED_WHATSAPP');
-          toast.success('Order status updated to Notified (WhatsApp)');
+          toast.success(t('orderDetail.statusUpdatedWhatsApp'));
         } catch (error: any) {
           console.error('Failed to update status:', error);
           toast.error('Failed to update order status');
@@ -247,7 +286,7 @@ export default function OrderDetailPage() {
       }, 500);
       
     } catch (error: any) {
-      toast.error('Failed to open WhatsApp. Please check the phone number.');
+      toast.error(t('orderDetail.whatsappFailed'));
       console.error('WhatsApp error:', error);
     }
   };
@@ -263,7 +302,22 @@ export default function OrderDetailPage() {
     setShowPhoneCallModal(false);
     
     try {
-      const phoneUrl = `tel:${order.customerPhone}`;
+      const phoneNumber = order.customerPhone || order.customer?.phone;
+      if (!phoneNumber) {
+        toast.error(t('orders.noPhoneNumber'));
+        return;
+      }
+      
+      // Get country code (default to +34 if not provided)
+      const countryCode = order.countryCode || order.customer?.countryCode || '+34';
+      
+      // Build full phone number for tel: URL
+      // If phone already starts with +, use it directly; otherwise combine with country code
+      const fullPhone = phoneNumber.startsWith('+') 
+        ? phoneNumber 
+        : `${countryCode}${phoneNumber}`;
+      
+      const phoneUrl = `tel:${fullPhone}`;
       
       // Use Electron's shell.openExternal if available, otherwise fallback
       if (window.electron?.openExternal) {
@@ -281,14 +335,14 @@ export default function OrderDetailPage() {
       setTimeout(async () => {
         try {
           await updateOrderStatus('NOTIFIED_CALL');
-          toast.success('Order status updated to Notified (Call)');
+          toast.success(t('orderDetail.statusUpdatedCall'));
         } catch (error: any) {
           console.error('Failed to update status:', error);
           toast.error('Failed to update order status');
         }
       }, 1000);
     } catch (error: any) {
-      toast.error('Failed to open phone dialer');
+      toast.error(t('orderDetail.phoneCallFailed'));
       console.error('Phone call error:', error);
     }
   };
@@ -309,7 +363,7 @@ export default function OrderDetailPage() {
       });
 
       setOrder(response.data.data);
-      toast.success('Order status updated successfully');
+      toast.success(t('orderDetail.statusUpdated'));
       setShowStatusModal(false);
       
       // Refresh order to get updated audit logs
@@ -324,6 +378,62 @@ export default function OrderDetailPage() {
   const handleStatusUpdate = (status: OrderStatus) => {
     setSelectedStatus(status);
     setShowStatusModal(true);
+  };
+
+  const handleUpdateReceivedQuantity = async (productId: string, receivedQuantity: string | null) => {
+    if (!order || !id) return;
+
+    // Find the product to get the ordered quantity
+    const product = order.products.find((p) => p.id === productId);
+    if (!product) return;
+
+    // Client-side validation: Check if received quantity exceeds ordered quantity
+    if (receivedQuantity !== null && receivedQuantity !== '') {
+      const received = parseFloat(receivedQuantity);
+      const ordered = parseFloat(product.quantity) || 0;
+
+      if (isNaN(received)) {
+        toast.error(t('orderDetail.invalidQuantity') || 'Invalid quantity entered');
+        return;
+      }
+
+      if (received < 0) {
+        toast.error(t('orderDetail.negativeQuantity') || 'Received quantity cannot be negative');
+        return;
+      }
+
+      if (received > ordered) {
+        toast.error(
+          t('orderDetail.quantityExceeded') || 
+          `Received quantity (${received}) cannot exceed ordered quantity (${ordered})`
+        );
+        return;
+      }
+    }
+
+    setUpdatingProducts((prev) => new Set(prev).add(productId));
+
+    try {
+      await api.patch(`/orders/${id}/products/${productId}/received`, {
+        receivedQuantity: receivedQuantity || null,
+      });
+
+      // Refresh order data
+      if (id) {
+        await fetchOrder(id);
+      }
+      toast.success(t('orderDetail.receivedQuantityUpdated'));
+    } catch (error: any) {
+      console.error('Failed to update received quantity:', error);
+      const errorMessage = error.response?.data?.error?.message || t('orderDetail.updateFailed');
+      toast.error(errorMessage);
+    } finally {
+      setUpdatingProducts((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(productId);
+        return newSet;
+      });
+    }
   };
 
   const confirmStatusUpdate = () => {
@@ -349,12 +459,38 @@ export default function OrderDetailPage() {
     }
   };
 
+  const getActionLabel = (action: string) => {
+    switch (action) {
+      case 'CREATE':
+        return t('orderDetail.actionCreate');
+      case 'UPDATE':
+        return t('orderDetail.actionUpdate');
+      case 'STATUS_CHANGE':
+        return t('orderDetail.actionStatusChange');
+      default:
+        return action;
+    }
+  };
+
+  const getFieldLabel = (fieldName: string) => {
+    // Translate common field names
+    const fieldTranslations: Record<string, string> = {
+      'status': t('common.status'),
+      'customerName': t('orders.customerName'),
+      'customerPhone': t('orders.customerPhone'),
+      'observations': t('orders.observations'),
+      'totalAmount': t('orderDetail.totalAmount'),
+      'receivedQuantity': t('orderDetail.receivedQuantity'),
+    };
+    return fieldTranslations[fieldName] || fieldName;
+  };
+
   if (loading) {
     return (
       <div className="page-container">
         <div className="loading-container">
           <Loader2 className="spinner" size={32} />
-          <p>Loading order details...</p>
+          <p>{t('orderDetail.loadingOrder')}</p>
         </div>
       </div>
     );
@@ -365,9 +501,9 @@ export default function OrderDetailPage() {
       <div className="page-container">
         <div className="empty-state">
           <AlertCircle size={48} />
-          <p>Order not found</p>
+          <p>{t('orderDetail.orderNotFound')}</p>
           <button className="btn-primary" onClick={() => navigate('/orders')}>
-            Back to Orders
+            {t('orderDetail.backToOrders')}
           </button>
         </div>
       </div>
@@ -380,13 +516,13 @@ export default function OrderDetailPage() {
         <button
           className="btn-icon"
           onClick={() => navigate('/orders')}
-          title="Back to orders"
+          title={t('orderDetail.backToOrders')}
         >
           <ArrowLeft size={20} />
         </button>
         <div>
-          <h1>Order Details</h1>
-          <p className="page-subtitle">Order ID: {order.id}</p>
+          <h1>{t('orderDetail.title')}</h1>
+          <p className="page-subtitle">{t('orderDetail.orderNumber')}: {order.orderNumber || '-'}</p>
         </div>
         <div className="header-actions">
           <button
@@ -394,18 +530,18 @@ export default function OrderDetailPage() {
             onClick={() => navigate(`/orders/${id}/edit`)}
           >
             <Edit2 size={18} />
-            Edit Order
+            {t('orderDetail.editOrder')}
           </button>
         </div>
       </div>
 
       <div className="order-detail-grid">
-        {/* Order Information */}
+        {/* {t('orderDetail.orderInfo')} */}
         <section className="detail-card">
-          <h2>Order Information</h2>
+          <h2>{t('orderDetail.orderInfo')}</h2>
           <div className="detail-content">
             <div className="detail-row">
-              <span className="detail-label">Status</span>
+              <span className="detail-label">{t('common.status')}</span>
               <div className="detail-value">
                 <span className={`status-badge ${getStatusColor(order.status)}`}>
                   {getStatusIcon(order.status)}
@@ -414,65 +550,77 @@ export default function OrderDetailPage() {
               </div>
             </div>
             <div className="detail-row">
-              <span className="detail-label">Created</span>
+              <span className="detail-label">{t('orders.createdAt')}</span>
               <span className="detail-value">{formatDate(order.createdAt)}</span>
             </div>
             <div className="detail-row">
-              <span className="detail-label">Created By</span>
+              <span className="detail-label">{t('orderDetail.createdBy')}</span>
               <span className="detail-value">
                 <User size={16} />
                 {order.createdBy.username}
               </span>
             </div>
             <div className="detail-row">
-              <span className="detail-label">Last Updated</span>
+              <span className="detail-label">{t('orders.updatedAt')}</span>
               <span className="detail-value">{formatDate(order.updatedAt)}</span>
             </div>
             {order.notifiedAt && (
               <div className="detail-row">
-                <span className="detail-label">Notified At</span>
+                <span className="detail-label">{t('orders.notifiedAt')}</span>
                 <span className="detail-value">{formatDate(order.notifiedAt)}</span>
               </div>
             )}
             <div className="detail-row">
-              <span className="detail-label">Total Amount</span>
-              <span className="detail-value total-amount">${order.totalAmount}</span>
+              <span className="detail-label">{t('orderDetail.totalAmount')}</span>
+              <span className="detail-value total-amount">€{order.totalAmount}</span>
             </div>
           </div>
         </section>
 
-        {/* Customer Information */}
+        {/* {t('orderDetail.customerInfo')} */}
         <section className="detail-card">
-          <h2>Customer Information</h2>
+          <h2>{t('orderDetail.customerInfo')}</h2>
           <div className="detail-content">
             <div className="detail-row">
-              <span className="detail-label">Name</span>
-              <span className="detail-value">{order.customerName || '-'}</span>
+              <span className="detail-label">{t('orders.customerName')}</span>
+              <span className="detail-value">{order.customerName || order.customer?.name || '-'}</span>
             </div>
             <div className="detail-row">
-              <span className="detail-label">Phone</span>
+              <span className="detail-label">{t('orders.customerPhone')}</span>
               <div className="detail-value phone-actions">
-                <button
-                  onClick={handlePhoneCallClick}
-                  className="phone-link"
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                  title="Call customer"
-                >
-                  <Phone size={16} />
-                  {order.customerPhone}
-                </button>
+                {(() => {
+                  const phone = order.customerPhone || order.customer?.phone;
+                  if (!phone) {
+                    return <span>-</span>;
+                  }
+                  const countryCode = order.countryCode || order.customer?.countryCode || '+34';
+                  const fullPhone = `${countryCode} ${phone}`;
+                  return (
+                    <button
+                      onClick={handlePhoneCallClick}
+                      className="phone-link"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                      title={t('orderDetail.callCustomer')}
+                    >
+                      <Phone size={16} />
+                      {fullPhone}
+                    </button>
+                  );
+                })()}
                 <button
                   className="btn-icon btn-whatsapp"
                   onClick={handleWhatsAppClick}
-                  title="Send WhatsApp message"
+                  title={t('orderDetail.sendWhatsApp')}
                 >
-                  <MessageSquare size={18} />
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .96 4.534.96 10.09c0 1.79.463 3.47 1.27 4.94L0 24l9.218-2.38a11.807 11.807 0 005.832 1.53h.005c5.554 0 10.09-4.535 10.09-10.09 0-2.76-1.12-5.26-2.933-7.075"/>
+                  </svg>
                 </button>
               </div>
             </div>
             {order.observations && (
               <div className="detail-row">
-                <span className="detail-label">Observations</span>
+                <span className="detail-label">{t('orders.observations')}</span>
                 <span className="detail-value observations">{order.observations}</span>
               </div>
             )}
@@ -481,76 +629,143 @@ export default function OrderDetailPage() {
 
         {/* Status Actions */}
         <section className="detail-card">
-          <h2>Update Status</h2>
+          <h2>{t('orderDetail.updateStatus')}</h2>
           <div className="status-actions">
-            {order.status === 'PENDING' && (
-              <button
-                className="status-action-btn yellow"
-                onClick={() => handleStatusUpdate('RECEIVED')}
-                disabled={updating}
-              >
-                <Package size={20} />
-                Mark as Received
-              </button>
-            )}
-            {(order.status === 'PENDING' || order.status === 'RECEIVED') && (
-              <>
-                <button
-                  className="status-action-btn green"
-                  onClick={() => handleStatusUpdate('NOTIFIED_CALL')}
-                  disabled={updating}
-                >
-                  <PhoneCall size={20} />
-                  Notified by Call
-                </button>
-                <button
-                  className="status-action-btn green"
-                  onClick={handleWhatsAppClick}
-                  disabled={updating}
-                >
-                  <MessageSquare size={20} />
-                  Notify via WhatsApp
-                </button>
-              </>
-            )}
+            {/* Show all status options, allowing users to change to any status */}
+            <button
+              className={`status-action-btn ${order.status === 'PENDING' ? 'active' : ''}`}
+              onClick={() => handleStatusUpdate('PENDING')}
+              disabled={updating || order.status === 'PENDING'}
+              title={order.status === 'PENDING' ? t('orderDetail.currentStatus') : t('orderDetail.setToPending')}
+            >
+              <Clock size={20} />
+              {t('orders.statusPending')}
+            </button>
+            
+            <button
+              className={`status-action-btn green ${order.status === 'RECEIVED' ? 'active' : ''}`}
+              onClick={() => handleStatusUpdate('RECEIVED')}
+              disabled={updating || order.status === 'RECEIVED'}
+              title={order.status === 'RECEIVED' ? t('orderDetail.currentStatus') : t('orderDetail.markAsReceived')}
+            >
+              <Package size={20} />
+              {t('orderDetail.markAsReceived')}
+            </button>
+            
+            <button
+              className={`status-action-btn green ${order.status === 'NOTIFIED_CALL' ? 'active' : ''}`}
+              onClick={() => handleStatusUpdate('NOTIFIED_CALL')}
+              disabled={updating || order.status === 'NOTIFIED_CALL'}
+              title={order.status === 'NOTIFIED_CALL' ? t('orderDetail.currentStatus') : t('orderDetail.notifiedByCall')}
+            >
+              <PhoneCall size={20} />
+              {t('orderDetail.notifiedByCall')}
+            </button>
+            
+            <button
+              className={`status-action-btn green ${order.status === 'NOTIFIED_WHATSAPP' ? 'active' : ''}`}
+              onClick={handleWhatsAppClick}
+              disabled={updating || order.status === 'NOTIFIED_WHATSAPP'}
+              title={order.status === 'NOTIFIED_WHATSAPP' ? t('orderDetail.currentStatus') : t('orderDetail.sendWhatsApp')}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '0.5rem' }}>
+                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .96 4.534.96 10.09c0 1.79.463 3.47 1.27 4.94L0 24l9.218-2.38a11.807 11.807 0 005.832 1.53h.005c5.554 0 10.09-4.535 10.09-10.09 0-2.76-1.12-5.26-2.933-7.075"/>
+              </svg>
+              {t('orderDetail.sendWhatsApp')}
+            </button>
+            
+            <button
+              className={`status-action-btn red ${order.status === 'CANCELLED' ? 'active' : ''}`}
+              disabled={updating || order.status === 'CANCELLED'}
+              title={order.status === 'CANCELLED' ? t('orderDetail.currentStatus') : t('orderDetail.cancelOrder')}
+              onClick={() => handleStatusUpdate('CANCELLED')}
+            >
+              {t('orderDetail.cancelOrder')}
+            </button>
           </div>
         </section>
 
         {/* Products */}
         <section className="detail-card full-width">
-          <h2>Products ({order.products.length})</h2>
+          <h2>{t('orderDetail.products')} ({order.products.length})</h2>
           <div className="products-table">
             <table>
               <thead>
                 <tr>
-                  <th>Supplier</th>
-                  <th>Product Reference</th>
-                  <th>Quantity</th>
-                  <th>Price</th>
-                  <th>Subtotal</th>
+                  <th>{t('orderDetail.supplier')}</th>
+                  <th>{t('orderDetail.productRef')}</th>
+                  <th>{t('orderDetail.quantity')}</th>
+                  <th>{t('orderDetail.receivedQuantity')}</th>
+                  <th>{t('orderDetail.price')}</th>
+                  <th>{t('orderDetail.subtotal')}</th>
                 </tr>
               </thead>
               <tbody>
                 {order.products.map((product) => {
                   const quantity = parseFloat(product.quantity) || 0;
+                  const received = product.receivedQuantity ? parseFloat(product.receivedQuantity) : 0;
                   const price = parseFloat(product.price) || 0;
                   const subtotal = quantity * price;
+                  const isReceived = received > 0;
+                  const isFullyReceived = received >= quantity;
+                  const isUpdating = updatingProducts.has(product.id);
                   
                   return (
-                    <tr key={product.id}>
+                    <tr 
+                      key={product.id}
+                      className={isReceived ? (isFullyReceived ? 'product-received' : 'product-partial') : ''}
+                    >
                       <td>{product.supplier.name}</td>
                       <td>{product.productRef}</td>
                       <td>{product.quantity}</td>
-                      <td>${product.price}</td>
-                      <td>${subtotal.toFixed(2)}</td>
+                      <td>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            max={quantity}
+                            step="0.01"
+                            value={received || ''}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              // Update immediately for better UX
+                              handleUpdateReceivedQuantity(product.id, value || null);
+                            }}
+                            onBlur={(e) => {
+                              // Validate on blur as well
+                              const value = e.target.value;
+                              if (value && parseFloat(value) > quantity) {
+                                toast.error(
+                                  t('orderDetail.quantityExceeded') || 
+                                  `Received quantity cannot exceed ordered quantity (${quantity})`
+                                );
+                              }
+                            }}
+                            placeholder="0"
+                            disabled={isUpdating}
+                            style={{
+                              width: '80px',
+                              padding: '0.25rem 0.5rem',
+                              border: isReceived ? '2px solid var(--success)' : '1px solid var(--border-color)',
+                              borderRadius: '4px',
+                              backgroundColor: isReceived ? 'var(--success-light)' : 'var(--input-bg)',
+                            }}
+                          />
+                          {isReceived && (
+                            <CheckCircle size={16} style={{ color: 'var(--success)' }} />
+                          )}
+                        </div>
+                      </td>
+                      <td>€{product.price}</td>
+                      <td>€{subtotal.toFixed(2)}</td>
                     </tr>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={4} className="text-right">Total:</td>
-                  <td className="total-amount">${order.totalAmount}</td>
+                  <td colSpan={5} className="text-right">{t('orderDetail.total')}:</td>
+                  <td className="total-amount">€{order.totalAmount}</td>
                 </tr>
               </tfoot>
             </table>
@@ -560,7 +775,7 @@ export default function OrderDetailPage() {
         {/* Audit History */}
         {order.auditLogs && order.auditLogs.length > 0 && (
           <section className="detail-card full-width">
-            <h2>Order History</h2>
+            <h2>{t('orderDetail.orderHistory')}</h2>
             <div className="audit-timeline">
               {order.auditLogs.map((log) => (
                 <div key={log.id} className="audit-entry">
@@ -569,13 +784,13 @@ export default function OrderDetailPage() {
                   </div>
                   <div className="audit-content">
                     <div className="audit-header">
-                      <span className="audit-action">{log.action}</span>
-                      <span className="audit-user">by {log.user.username}</span>
+                      <span className="audit-action">{getActionLabel(log.action)}</span>
+                      <span className="audit-user">{t('orderDetail.by')} {log.user.username}</span>
                       <span className="audit-time">{formatDate(log.timestamp)}</span>
                     </div>
                     {log.fieldChanged && (
                       <div className="audit-details">
-                        <span className="field-name">{log.fieldChanged}:</span>
+                        <span className="field-name">{getFieldLabel(log.fieldChanged)}:</span>
                         {log.oldValue && (
                           <span className="old-value">{log.oldValue}</span>
                         )}
@@ -598,10 +813,10 @@ export default function OrderDetailPage() {
         isOpen={showStatusModal}
         onClose={() => setShowStatusModal(false)}
         onConfirm={confirmStatusUpdate}
-        title="Confirm Status Update"
+        title={t('orderDetail.confirmStatusUpdate')}
         message={
           <div>
-            <p>Are you sure you want to update the order status to:</p>
+            <p>{t('orderDetail.confirmStatusUpdateMessage')}</p>
             <div className="status-preview">
               <span className={`status-badge ${getStatusColor(selectedStatus!)}`}>
                 {getStatusIcon(selectedStatus!)}
@@ -609,12 +824,12 @@ export default function OrderDetailPage() {
               </span>
             </div>
             <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              This action will update the order status and be recorded in the audit log.
+              {t('orderDetail.statusUpdateDescription')}
             </p>
           </div>
         }
-        confirmText="Confirm Update"
-        cancelText="Cancel"
+        confirmText={t('common.confirm')}
+        cancelText={t('common.cancel')}
         type="info"
         loading={updating}
       />
@@ -625,7 +840,11 @@ export default function OrderDetailPage() {
           isOpen={showWhatsAppModal}
           onClose={() => setShowWhatsAppModal(false)}
           onConfirm={confirmWhatsAppAction}
-          phoneNumber={order.customerPhone}
+          phoneNumber={(() => {
+            const phone = order.customerPhone || order.customer?.phone || '';
+            const countryCode = order.countryCode || order.customer?.countryCode || '+34';
+            return phone ? `${countryCode}${phone}` : '';
+          })()}
           initialMessage={whatsappMessage}
         />
       )}
@@ -635,17 +854,24 @@ export default function OrderDetailPage() {
         isOpen={showPhoneCallModal}
         onClose={() => setShowPhoneCallModal(false)}
         onConfirm={confirmPhoneCallAction}
-        title="Call Customer"
+        title={t('orderDetail.confirmCall')}
         message={
           <div>
-            <p>Do you want to call <strong>{order?.customerPhone}</strong>?</p>
+            <p>
+              {(() => {
+                const phone = order?.customerPhone || order?.customer?.phone;
+                const countryCode = order?.countryCode || order?.customer?.countryCode || '+34';
+                const fullPhone = phone ? `${countryCode} ${phone}` : '-';
+                return t('orderDetail.callConfirm', { phone: fullPhone });
+              })()}
+            </p>
             <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              This will open your phone dialer. After calling, the order status will automatically update to <strong>"Notified (Call)"</strong>.
+              {t('orderDetail.callDescription')}
             </p>
           </div>
         }
-        confirmText="Call Customer"
-        cancelText="Cancel"
+        confirmText={t('orderDetail.callCustomer')}
+        cancelText={t('common.cancel')}
         type="info"
       />
     </div>

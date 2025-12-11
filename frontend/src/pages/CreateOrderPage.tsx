@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Plus, X, Save, Loader2, ArrowLeft } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
@@ -14,6 +15,13 @@ interface Product {
   id: string;
   supplierId: string;
   reference: string;
+}
+
+interface Customer {
+  id: string;
+  name: string;
+  phone?: string;
+  countryCode?: string;
 }
 
 interface SupplierData {
@@ -31,14 +39,20 @@ interface ProductData {
 
 export default function CreateOrderPage() {
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
   const [productsList, setProductsList] = useState<Product[]>([]);
+  const [customersList, setCustomersList] = useState<Customer[]>([]);
   
   // Form state
   const [customerName, setCustomerName] = useState('');
+  const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerPhone, setCustomerPhone] = useState('');
   const [observations, setObservations] = useState('');
+  
+  // Country code is fixed to +34 for Spain
+  const countryCode = '+34';
   const [suppliers, setSuppliers] = useState<SupplierData[]>([
     {
       id: Date.now().toString(),
@@ -54,11 +68,24 @@ export default function CreateOrderPage() {
     },
   ]);
 
-  // Fetch suppliers and products for hints
+  // Fetch suppliers, products, and customers for hints
   useEffect(() => {
     fetchSuppliers();
     fetchProducts();
+    fetchCustomers();
   }, []);
+
+  // Fetch customers when customer name changes (for autocomplete)
+  useEffect(() => {
+    if (customerName.trim()) {
+      const timeoutId = setTimeout(() => {
+        searchCustomers(customerName);
+      }, 300); // Debounce search
+      return () => clearTimeout(timeoutId);
+    } else {
+      fetchCustomers(); // Fetch all customers when empty
+    }
+  }, [customerName]);
 
   const fetchSuppliers = async () => {
     try {
@@ -78,6 +105,42 @@ export default function CreateOrderPage() {
     } catch (error) {
       console.error('Failed to fetch products:', error);
       // Don't show error toast - hints are optional
+    }
+  };
+
+  const fetchCustomers = async () => {
+    try {
+      const response = await api.get<{ success: true; data: Customer[] }>('/customers/search');
+      setCustomersList(response.data.data || []);
+    } catch (error) {
+      console.error('Failed to fetch customers:', error);
+      // Don't show error toast - hints are optional
+    }
+  };
+
+  const searchCustomers = async (query: string) => {
+    try {
+      const response = await api.get<{ success: true; data: Customer[] }>('/customers/search', {
+        params: { q: query, limit: 20 },
+      });
+      setCustomersList(response.data.data || []);
+    } catch (error) {
+      console.error('Failed to search customers:', error);
+    }
+  };
+
+  const handleCustomerNameChange = (value: string) => {
+    setCustomerName(value);
+    setCustomerId(null); // Reset customer ID when name changes
+    
+    // Find matching customer and pre-fill phone
+    const matchingCustomer = customersList.find(
+      (c) => c.name.toLowerCase() === value.toLowerCase()
+    );
+    
+    if (matchingCustomer) {
+      setCustomerId(matchingCustomer.id);
+      setCustomerPhone(matchingCustomer.phone || '');
     }
   };
 
@@ -101,7 +164,7 @@ export default function CreateOrderPage() {
 
   const removeSupplier = (supplierId: string) => {
     if (suppliers.length === 1) {
-      toast.error('At least one supplier is required');
+      toast.error(t('createOrder.atLeastOneSupplier'));
       return;
     }
     setSuppliers(suppliers.filter((s) => s.id !== supplierId));
@@ -145,7 +208,7 @@ export default function CreateOrderPage() {
       suppliers.map((s) => {
         if (s.id === supplierId) {
           if (s.products.length === 1) {
-            toast.error('At least one product is required per supplier');
+            toast.error(t('createOrder.atLeastOneProduct'));
             return s;
           }
           return {
@@ -201,28 +264,25 @@ export default function CreateOrderPage() {
   };
 
   const validateForm = (): boolean => {
-    if (!customerPhone.trim()) {
-      toast.error('Customer phone is required');
-      return false;
-    }
+    // Phone is now optional, no validation needed
 
     for (const supplier of suppliers) {
       if (!supplier.name.trim()) {
-        toast.error('All suppliers must have a name');
+        toast.error(t('createOrder.supplierRequired'));
         return false;
       }
 
       for (const product of supplier.products) {
         if (!product.productRef.trim()) {
-          toast.error('All products must have a reference');
+          toast.error(t('createOrder.productRefRequired'));
           return false;
         }
         if (!product.quantity.trim()) {
-          toast.error('All products must have a quantity');
+          toast.error(t('createOrder.quantityRequired'));
           return false;
         }
         if (!product.price.trim()) {
-          toast.error('All products must have a price');
+          toast.error(t('createOrder.priceRequired'));
           return false;
         }
       }
@@ -242,8 +302,11 @@ export default function CreateOrderPage() {
       setLoading(true);
 
       const orderData = {
+        // orderNumber is auto-generated by backend
         customerName: customerName.trim() || undefined,
-        customerPhone: customerPhone.trim(),
+        customerId: customerId || undefined,
+        customerPhone: customerPhone.trim() || undefined,
+        countryCode: countryCode || '+34',
         observations: observations.trim() || undefined,
         suppliers: suppliers.map((s) => ({
           name: s.name.trim(),
@@ -257,10 +320,10 @@ export default function CreateOrderPage() {
 
       await api.post('/orders', orderData);
       
-      toast.success('Order created successfully!');
+      toast.success(t('createOrder.createSuccess'));
       navigate('/orders');
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to create order');
+      toast.error(error.response?.data?.error?.message || t('createOrder.createFailed'));
     } finally {
       setLoading(false);
     }
@@ -272,54 +335,73 @@ export default function CreateOrderPage() {
         <button
           className="btn-icon"
           onClick={() => navigate('/orders')}
-          title="Back to orders"
+          title={t('orderDetail.backToOrders')}
         >
           <ArrowLeft size={20} />
         </button>
         <div>
-          <h1>Create New Order</h1>
-          <p className="page-subtitle">Register a new order with customer and product details</p>
+          <h1>{t('createOrder.title')}</h1>
+          <p className="page-subtitle">{t('createOrder.registerOrder')}</p>
         </div>
       </div>
 
       <form onSubmit={handleSubmit} className="create-order-form">
         {/* Customer Information */}
         <section className="form-section">
-          <h2>Customer Information</h2>
+          <h2>{t('createOrder.customerInfo')}</h2>
           <div className="form-grid">
             <div className="form-group">
-              <label htmlFor="customerName">Customer Name (Optional)</label>
+              <label htmlFor="customerName">{t('createOrder.customerNameOptional')}</label>
               <input
                 id="customerName"
                 type="text"
+                list="customer-hints"
                 value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-                placeholder="Enter customer name"
+                onChange={(e) => handleCustomerNameChange(e.target.value)}
+                placeholder={t('createOrder.enterCustomerName')}
                 className="form-input"
               />
+              <datalist id="customer-hints">
+                {customersList.map((customer) => (
+                  <option key={customer.id} value={customer.name} />
+                ))}
+              </datalist>
             </div>
             <div className="form-group">
               <label htmlFor="customerPhone">
-                Customer Phone <span className="required">*</span>
+                {t('createOrder.customerPhone')} <span className="optional">({t('common.optional')})</span>
               </label>
-              <input
-                id="customerPhone"
-                type="tel"
-                value={customerPhone}
-                onChange={(e) => setCustomerPhone(e.target.value)}
-                placeholder="+1234567890"
-                className="form-input"
-                required
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ 
+                  padding: 'var(--spacing-sm) var(--spacing-md)',
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '0.9375rem',
+                  color: 'var(--text-secondary)',
+                  whiteSpace: 'nowrap'
+                }}>
+                  +34
+                </span>
+                <input
+                  id="customerPhone"
+                  type="tel"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  placeholder={t('createOrder.enterCustomerPhone')}
+                  className="form-input"
+                  style={{ flex: 1 }}
+                />
+              </div>
             </div>
           </div>
           <div className="form-group">
-            <label htmlFor="observations">Observations (Optional)</label>
+            <label htmlFor="observations">{t('createOrder.observationsOptional')}</label>
             <textarea
               id="observations"
               value={observations}
               onChange={(e) => setObservations(e.target.value)}
-              placeholder="Additional notes or observations..."
+              placeholder={t('createOrder.additionalNotes')}
               className="form-input form-textarea"
               rows={3}
             />
@@ -329,14 +411,14 @@ export default function CreateOrderPage() {
         {/* Suppliers and Products */}
         <section className="form-section">
           <div className="section-header">
-            <h2>Suppliers & Products</h2>
+            <h2>{t('createOrder.suppliersAndProducts')}</h2>
             <button
               type="button"
               className="btn-secondary btn-sm"
               onClick={addSupplier}
             >
               <Plus size={16} />
-              Add Supplier
+              {t('createOrder.addSupplier')}
             </button>
           </div>
 
@@ -344,13 +426,13 @@ export default function CreateOrderPage() {
             <div key={supplier.id} className="supplier-card">
               <div className="supplier-header">
                 <div className="supplier-title">
-                  <span className="supplier-number">Supplier {supplierIndex + 1}</span>
+                  <span className="supplier-number">{t('createOrder.supplier')} {supplierIndex + 1}</span>
                   {suppliers.length > 1 && (
                     <button
                       type="button"
                       className="btn-icon btn-danger"
                       onClick={() => removeSupplier(supplier.id)}
-                      title="Remove supplier"
+                      title={t('createOrder.removeSupplier')}
                     >
                       <X size={18} />
                     </button>
@@ -358,14 +440,14 @@ export default function CreateOrderPage() {
                 </div>
                 <div className="form-group">
                   <label>
-                    Supplier Name <span className="required">*</span>
+                    {t('createOrder.supplierName')} <span className="required">*</span>
                   </label>
                   <input
                     type="text"
                     list={`supplier-hints-${supplier.id}`}
                     value={supplier.name}
                     onChange={(e) => updateSupplierName(supplier.id, e.target.value)}
-                    placeholder="Type supplier name (new suppliers will be created automatically)"
+                    placeholder={t('createOrder.enterSupplierName')}
                     className="form-input"
                     required
                   />
@@ -379,14 +461,14 @@ export default function CreateOrderPage() {
 
               <div className="products-container">
                 <div className="products-header">
-                  <h3>Products</h3>
+                  <h3>{t('createOrder.products')}</h3>
                   <button
                     type="button"
                     className="btn-secondary btn-sm"
                     onClick={() => addProduct(supplier.id)}
                   >
                     <Plus size={16} />
-                    Add Product
+                    {t('createOrder.addProduct')}
                   </button>
                 </div>
 
@@ -394,28 +476,22 @@ export default function CreateOrderPage() {
                   <div key={product.id} className="product-row">
                     <div className="form-group">
                       <label>
-                        Product Reference <span className="required">*</span>
+                        {t('createOrder.productReference')} <span className="required">*</span>
                       </label>
                       <input
                         type="text"
-                        list={`product-hints-${supplier.id}-${product.id}`}
                         value={product.productRef}
                         onChange={(e) =>
                           updateProduct(supplier.id, product.id, 'productRef', e.target.value)
                         }
-                        placeholder="Type product reference"
+                        placeholder={t('createOrder.enterProductRef')}
                         className="form-input"
                         required
                       />
-                      <datalist id={`product-hints-${supplier.id}-${product.id}`}>
-                        {getProductHints(supplier.name, product.productRef).map((p) => (
-                          <option key={p.id} value={p.reference} />
-                        ))}
-                      </datalist>
                     </div>
                     <div className="form-group">
                       <label>
-                        Quantity <span className="required">*</span>
+                        {t('orderDetail.quantity')} <span className="required">*</span>
                       </label>
                       <input
                         type="text"
@@ -423,14 +499,14 @@ export default function CreateOrderPage() {
                         onChange={(e) =>
                           updateProduct(supplier.id, product.id, 'quantity', e.target.value)
                         }
-                        placeholder="e.g., 2"
+                        placeholder={t('createOrder.enterQuantity')}
                         className="form-input"
                         required
                       />
                     </div>
                     <div className="form-group">
                       <label>
-                        Price <span className="required">*</span>
+                        {t('orderDetail.price')} <span className="required">*</span>
                       </label>
                       <input
                         type="text"
@@ -438,7 +514,7 @@ export default function CreateOrderPage() {
                         onChange={(e) =>
                           updateProduct(supplier.id, product.id, 'price', e.target.value)
                         }
-                        placeholder="e.g., 29.99"
+                        placeholder={t('createOrder.enterPrice')}
                         className="form-input"
                         required
                       />
@@ -448,7 +524,7 @@ export default function CreateOrderPage() {
                         type="button"
                         className="btn-icon btn-danger"
                         onClick={() => removeProduct(supplier.id, product.id)}
-                        title="Remove product"
+                        title={t('createOrder.removeProduct')}
                       >
                         <X size={18} />
                       </button>
@@ -468,7 +544,7 @@ export default function CreateOrderPage() {
             onClick={() => navigate('/orders')}
             disabled={loading}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="submit"
@@ -478,12 +554,12 @@ export default function CreateOrderPage() {
             {loading ? (
               <>
                 <Loader2 className="spinner" size={18} />
-                Creating...
+                {t('common.loading')}
               </>
             ) : (
               <>
                 <Save size={18} />
-                Create Order
+                {t('orders.createOrder')}
               </>
             )}
           </button>

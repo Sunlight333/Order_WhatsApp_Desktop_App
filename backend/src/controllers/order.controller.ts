@@ -14,12 +14,20 @@ export async function listOrdersController(req: Request, res: Response): Promise
     const limit = parseInt(req.query.limit as string) || 50;
     const search = req.query.search as string;
     const status = req.query.status as string;
+    const dateFrom = req.query.dateFrom as string;
+    const dateTo = req.query.dateTo as string;
+    const sortBy = req.query.sortBy as string;
+    const sortOrder = (req.query.sortOrder as 'asc' | 'desc') || 'desc';
 
     const result = await listOrders({
       page,
       limit,
       search,
       status,
+      dateFrom,
+      dateTo,
+      sortBy,
+      sortOrder,
     });
 
     res.status(200).json(createSuccessResponse(result));
@@ -93,7 +101,7 @@ export async function updateOrderStatusController(req: Request, res: Response): 
     
     // Validate input
     const statusSchema = z.object({
-      status: z.enum(['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP']),
+      status: z.enum(['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED']),
       notificationMethod: z.enum(['CALL', 'WHATSAPP']).optional(),
     });
 

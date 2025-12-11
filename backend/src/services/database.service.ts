@@ -64,11 +64,25 @@ async function createDatabaseSchema(prismaClient: PrismaClient, dbType: string =
       UNIQUE("supplierId", "reference")
     );
 
+    -- Create customers table
+    CREATE TABLE IF NOT EXISTS "customers" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "phone" TEXT,
+      "countryCode" TEXT DEFAULT '+34',
+      "description" TEXT,
+      "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+
     -- Create orders table
     CREATE TABLE IF NOT EXISTS "orders" (
       "id" TEXT NOT NULL PRIMARY KEY,
+      "orderNumber" INTEGER,
       "customerName" TEXT,
-      "customerPhone" TEXT NOT NULL,
+      "customerId" TEXT,
+      "customerPhone" TEXT,
+      "countryCode" TEXT DEFAULT '+34',
       "status" TEXT NOT NULL DEFAULT 'PENDING',
       "notificationMethod" TEXT,
       "observations" TEXT,
@@ -76,13 +90,16 @@ async function createDatabaseSchema(prismaClient: PrismaClient, dbType: string =
       "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "notifiedAt" ${datetimeType},
-      FOREIGN KEY ("createdById") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE
+      FOREIGN KEY ("createdById") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+      FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE SET NULL ON UPDATE CASCADE
     );
 
     -- Create indexes on orders
     CREATE INDEX IF NOT EXISTS "orders_customerPhone_idx" ON "orders"("customerPhone");
+    CREATE INDEX IF NOT EXISTS "orders_customerId_idx" ON "orders"("customerId");
     CREATE INDEX IF NOT EXISTS "orders_status_idx" ON "orders"("status");
     CREATE INDEX IF NOT EXISTS "orders_createdAt_idx" ON "orders"("createdAt");
+    CREATE INDEX IF NOT EXISTS "orders_orderNumber_idx" ON "orders"("orderNumber");
 
     -- Create orderSuppliers table
     CREATE TABLE IF NOT EXISTS "orderSuppliers" (
@@ -103,6 +120,7 @@ async function createDatabaseSchema(prismaClient: PrismaClient, dbType: string =
       "productRef" TEXT NOT NULL,
       "quantity" TEXT NOT NULL,
       "price" TEXT NOT NULL,
+      "receivedQuantity" TEXT,
       "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE CASCADE ON UPDATE CASCADE,
@@ -193,6 +211,7 @@ const REQUIRED_TABLES = [
   'orders',
   'suppliers',
   'products',
+  'customers',
   'orderSuppliers',
   'orderProducts',
   'auditLogs',
@@ -216,6 +235,49 @@ async function isSchemaComplete(prismaClient: PrismaClient, dbType: string): Pro
         console.log(`📋 Schema incomplete. Missing tables: ${missingTables.join(', ')}`);
         return false;
       }
+
+      // For existing databases, ensure new columns exist on critical tables
+      // This allows older installations to be upgraded in-place without losing data.
+      try {
+        // Ensure new columns on orders table
+        const orderColumns = await prismaClient.$queryRaw<Array<{ name: string }>>`
+          PRAGMA table_info("orders");
+        `;
+        const orderColumnNames = orderColumns.map(c => c.name);
+
+        if (!orderColumnNames.includes('orderNumber')) {
+          console.log('🛠️ Adding missing column orders.orderNumber');
+          await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "orderNumber" INTEGER;`);
+        }
+        if (!orderColumnNames.includes('customerId')) {
+          console.log('🛠️ Adding missing column orders.customerId');
+          await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "customerId" TEXT;`);
+        }
+        if (!orderColumnNames.includes('customerPhone')) {
+          console.log('🛠️ Adding missing column orders.customerPhone');
+          await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "customerPhone" TEXT;`);
+        }
+        if (!orderColumnNames.includes('countryCode')) {
+          console.log('🛠️ Adding missing column orders.countryCode');
+          await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "countryCode" TEXT DEFAULT '+34';`);
+        }
+
+        // Ensure new columns on orderProducts table
+        const orderProductColumns = await prismaClient.$queryRaw<Array<{ name: string }>>`
+          PRAGMA table_info("orderProducts");
+        `;
+        const orderProductColumnNames = orderProductColumns.map(c => c.name);
+
+        if (!orderProductColumnNames.includes('receivedQuantity')) {
+          console.log('🛠️ Adding missing column orderProducts.receivedQuantity');
+          await prismaClient.$executeRawUnsafe(`ALTER TABLE "orderProducts" ADD COLUMN "receivedQuantity" TEXT;`);
+        }
+      } catch (columnError: any) {
+        console.warn('⚠️  Error while ensuring new columns exist:', columnError.message);
+        // If column upgrade fails, treat schema as incomplete so initialization can retry
+        return false;
+      }
+
       return true;
     } else {
       // For MySQL/PostgreSQL, check each required table

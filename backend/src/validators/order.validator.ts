@@ -1,8 +1,11 @@
 import { z } from 'zod';
 
 export const createOrderSchema = z.object({
+  // orderNumber is auto-generated, not user-editable
   customerName: z.string().max(100).optional(),
-  customerPhone: z.string().min(1, 'Customer phone is required').max(20),
+  customerId: z.string().uuid().optional(), // Reference to existing customer
+  customerPhone: z.string().max(20).optional(), // Optional now
+  countryCode: z.string().max(10).optional().default('+34'), // Country code for phone
   observations: z.string().optional(),
   suppliers: z
     .array(

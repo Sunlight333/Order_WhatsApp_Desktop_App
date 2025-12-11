@@ -142,6 +142,24 @@
   border-bottom: 2px solid var(--primary-light);
 }
 
+/* VS Code style table for dark theme */
+:root[data-theme="dark"] .orders-table {
+  border: 1px solid var(--border-primary);
+}
+
+:root[data-theme="dark"] .orders-table thead {
+  background: var(--bg-secondary);
+  border-bottom-color: var(--border-primary);
+}
+
+:root[data-theme="dark"] .orders-table tbody tr {
+  border-bottom-color: var(--border-primary);
+}
+
+:root[data-theme="dark"] .orders-table tbody tr:hover {
+  background: var(--bg-hover);
+}
+
 .orders-table th {
   padding: 16px;
   text-align: left;
@@ -150,6 +168,27 @@
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.5px;
+}
+
+.orders-table th.sortable-header {
+  transition: background-color 0.2s ease, color 0.2s ease;
+  cursor: pointer;
+  user-select: none;
+}
+
+.orders-table th.sortable-header:hover {
+  background: var(--bg-hover);
+  color: var(--primary);
+}
+
+.orders-table th.sortable-header:active {
+  background: var(--bg-active);
+}
+
+.orders-table th.sortable-header > div {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .orders-table tbody tr {
@@ -188,19 +227,25 @@
   letter-spacing: 0.5px;
 }
 
+.status-red {
+  background-color: #b91c1c;
+  color: #ffffff;
+  border: 1px solid #fecaca;
+}
+
 .status-pending {
-  background: rgba(148, 163, 184, 0.2);
-  color: #64748b;
+  background: #f59e0b;
+  color: #111827;
 }
 
 .status-yellow {
-  background: var(--status-received);
-  color: #92400e;
+  background: #eab308;
+  color: #111827;
 }
 
 .status-green {
-  background: var(--status-notified-whatsapp);
-  color: #065f46;
+  background: #16a34a;
+  color: #ecfdf3;
 }
 
 /* Phone Link */
@@ -276,22 +321,36 @@
 .filter-panel {
   background: var(--bg-primary);
   border-radius: var(--radius-lg);
-  border: 1px solid var(--primary-light);
-  padding: 16px;
+  border: 1px solid var(--border-color);
+  padding: 20px;
   margin-bottom: 24px;
-  box-shadow: var(--shadow-sm);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--spacing-lg);
+  align-items: start;
 }
 
 .filter-group {
   display: flex;
   flex-direction: column;
   gap: var(--spacing-sm);
+  position: relative;
+}
+
+.filter-group:not(:last-child) {
+  margin-bottom: var(--spacing-md);
 }
 
 .filter-group label {
   font-size: var(--text-sm);
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-primary);
+  margin-bottom: 6px;
+  letter-spacing: 0.01em;
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .filter-select {
@@ -309,6 +368,78 @@
   outline: none;
   border-color: var(--primary);
   box-shadow: 0 0 0 3px var(--primary-light);
+}
+
+.filter-input {
+  padding: 10px 14px;
+  border: 2px solid var(--border-color);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  width: 100%;
+  min-height: 42px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.filter-input:hover {
+  border-color: var(--primary);
+  box-shadow: 0 2px 4px rgba(8, 145, 178, 0.1);
+}
+
+.filter-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--primary-light), 0 2px 4px rgba(8, 145, 178, 0.15);
+  background: var(--bg-primary);
+}
+
+.filter-input:active {
+  border-color: var(--primary-dark);
+}
+
+/* Modern date input styling */
+.filter-input[type="date"] {
+  position: relative;
+  padding-right: 40px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%230891b2' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2' ry='2'%3E%3C/rect%3E%3Cline x1='16' y1='2' x2='16' y2='6'%3E%3C/line%3E%3Cline x1='8' y1='2' x2='8' y2='6'%3E%3C/line%3E%3Cline x1='3' y1='10' x2='21' y2='10'%3E%3C/line%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 12px center;
+  background-size: 18px 18px;
+  cursor: pointer;
+}
+
+.filter-input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+  position: absolute;
+  right: 0;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+}
+
+.filter-input[type="date"]::-webkit-inner-spin-button,
+.filter-input[type="date"]::-webkit-clear-button {
+  display: none;
+}
+
+/* Dark theme adjustments for date inputs */
+:root[data-theme="dark"] .filter-input[type="date"] {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24' fill='none' stroke='%2306b6d4' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2' ry='2'%3E%3C/rect%3E%3Cline x1='16' y1='2' x2='16' y2='6'%3E%3C/line%3E%3Cline x1='8' y1='2' x2='8' y2='6'%3E%3C/line%3E%3Cline x1='3' y1='10' x2='21' y2='10'%3E%3C/line%3E%3C/svg%3E");
+}
+
+.filter-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
+.filter-input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: var(--bg-secondary);
 }
 
 .active-filters {

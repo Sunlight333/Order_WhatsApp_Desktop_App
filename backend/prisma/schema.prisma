@@ -12,7 +12,7 @@ datasource db {
 
 // SQLite doesn't support enums, so we use String with constraints
 // UserRole: SUPER_ADMIN | USER
-// OrderStatus: PENDING | RECEIVED | NOTIFIED_CALL | NOTIFIED_WHATSAPP
+// OrderStatus: PENDING | RECEIVED | NOTIFIED_CALL | NOTIFIED_WHATSAPP | CANCELLED
 // NotificationMethod: CALL | WHATSAPP
 
 model User {
@@ -60,11 +60,29 @@ model Product {
   @@map("products")
 }
 
+model Customer {
+  id          String   @id @default(uuid())
+  name        String   // Not unique to allow duplicate names
+  phone       String?
+  countryCode String?  @default("+34")
+  description String?  // Notes about the customer
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  orders Order[] @relation("CustomerOrders")
+  
+  @@index([name])
+  @@map("customers")
+}
+
 model Order {
   id                String   @id @default(uuid())
-  customerName      String?
-  customerPhone     String
-  status            String   @default("PENDING") // PENDING | RECEIVED | NOTIFIED_CALL | NOTIFIED_WHATSAPP
+  orderNumber       Int?     @unique // Auto-incremental order number (1, 2, 3...)
+  customerName      String?  // Keep for backward compatibility
+  customerId        String?  // Reference to Customer
+  customerPhone     String?  // Optional, can be stored in Customer model
+  countryCode       String?  @default("+34") // Country code for phone
+  status            String   @default("PENDING") // PENDING | RECEIVED | NOTIFIED_CALL | NOTIFIED_WHATSAPP | CANCELLED | INCOMPLETO
   notificationMethod String? // CALL | WHATSAPP
   observations      String?
   createdById       String
@@ -73,13 +91,16 @@ model Order {
   notifiedAt        DateTime?
   
   createdBy    User           @relation("OrderCreator", fields: [createdById], references: [id])
+  customer     Customer?      @relation("CustomerOrders", fields: [customerId], references: [id], onDelete: SetNull)
   suppliers    OrderSupplier[] @relation("OrderSuppliers")
   products     OrderProduct[]  @relation("OrderProducts")
   auditLogs    AuditLog[]      @relation("OrderAuditLogs")
   
   @@index([customerPhone])
+  @@index([customerId])
   @@index([status])
   @@index([createdAt])
+  @@index([orderNumber])
   @@map("orders")
 }
 
@@ -97,14 +118,15 @@ model OrderSupplier {
 }
 
 model OrderProduct {
-  id         String   @id @default(uuid())
-  orderId    String
-  supplierId String
-  productRef String
-  quantity   String   // Text to allow flexibility (user requirement)
-  price      String   // Text to allow flexibility (user requirement)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id             String   @id @default(uuid())
+  orderId        String
+  supplierId     String
+  productRef     String
+  quantity       String   // Text to allow flexibility (user requirement)
+  price          String   // Text to allow flexibility (user requirement)
+  receivedQuantity String? // Quantity received (null = not received, empty = 0, value = received amount)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
   
   order    Order    @relation("OrderProducts", fields: [orderId], references: [id], onDelete: Cascade)
   supplier Supplier @relation("OrderProductSupplier", fields: [supplierId], references: [id], onDelete: Cascade)

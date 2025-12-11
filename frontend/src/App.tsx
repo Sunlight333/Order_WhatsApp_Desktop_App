@@ -4,6 +4,7 @@ import { useAuthStore } from './store/authStore';
 import { configService } from './services/config.service';
 import { updateApiBaseUrl } from './lib/api';
 import './i18n/config'; // Initialize i18n
+import i18n from './i18n/config';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import OrdersPage from './pages/OrdersPage';
@@ -13,6 +14,7 @@ import EditOrderPage from './pages/EditOrderPage';
 import UsersPage from './pages/UsersPage';
 import SuppliersPage from './pages/SuppliersPage';
 import ProductsPage from './pages/ProductsPage';
+import CustomersPage from './pages/CustomersPage';
 import SettingsPage from './pages/SettingsPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import MainLayout from './components/layout/MainLayout';
@@ -41,6 +43,11 @@ function App() {
             // Sync localStorage with config
             localStorage.setItem('theme', config.theme);
           }
+        }
+        
+        // Apply language from config if available
+        if (config.language && i18n.language !== config.language) {
+          i18n.changeLanguage(config.language);
         }
         
         // Update API base URL after config is loaded
@@ -186,6 +193,16 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <UsersPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/customers"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <CustomersPage />
               </MainLayout>
             </ProtectedRoute>
           }

@@ -4,17 +4,14 @@ import LanguageDetector from 'i18next-browser-languagedetector';
 import enTranslations from './locales/en.json';
 import esTranslations from './locales/es.json';
 
-// Get language from localStorage or config, default to Spanish
-const getStoredLanguage = async (): Promise<string> => {
+// Get language from localStorage, default to Spanish
+// This must be synchronous for i18next init
+const getStoredLanguage = (): string => {
   try {
-    // First check localStorage (fastest)
     const stored = localStorage.getItem('app_language');
     if (stored && (stored === 'en' || stored === 'es')) {
       return stored;
     }
-    
-    // Then check config service (may be async, but we'll try sync first)
-    // For initial load, we'll use localStorage, config will be loaded later
   } catch (error) {
     // Ignore localStorage errors
   }
@@ -33,7 +30,7 @@ i18n
         translation: esTranslations,
       },
     },
-    lng: getStoredLanguage(), // Spanish is default (will be 'es' initially)
+    lng: getStoredLanguage(), // Spanish is default
     fallbackLng: 'es', // Fallback to Spanish if translation missing
     interpolation: {
       escapeValue: false, // React already escapes values

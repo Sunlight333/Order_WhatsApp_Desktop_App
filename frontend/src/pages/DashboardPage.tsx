@@ -1,8 +1,10 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, ShoppingCart, Clock, CheckCircle, TrendingUp, ArrowRight } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Package, ShoppingCart, Clock, CheckCircle, TrendingUp, ArrowRight, BarChart3, Users, Star } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
+import { useAuthStore } from '../store/authStore';
 import '../styles/dashboard.css';
 
 interface DashboardStats {
@@ -19,8 +21,26 @@ interface DashboardStats {
   }>;
 }
 
+interface TopProduct {
+  reference: string;
+  totalQuantity: number;
+  orderCount: number;
+  supplierName: string;
+}
+
+interface TopCustomer {
+  customerId: string;
+  customerName: string;
+  orderCount: number;
+  totalAmount: number;
+}
+
+
 export default function DashboardPage() {
   const navigate = useNavigate();
+  const { t, i18n } = useTranslation();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'SUPER_ADMIN';
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState<DashboardStats>({
     totalOrders: 0,
@@ -29,10 +49,16 @@ export default function DashboardPage() {
     notifiedOrders: 0,
     recentOrders: [],
   });
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
+  const [topCustomers, setTopCustomers] = useState<TopCustomer[]>([]);
 
   useEffect(() => {
     fetchDashboardData();
-  }, []);
+    if (isAdmin) {
+      fetchAnalytics();
+    }
+  }, [isAdmin]);
 
   const fetchDashboardData = async () => {
     try {
@@ -63,7 +89,7 @@ export default function DashboardPage() {
       });
     } catch (error: any) {
       console.error('Failed to fetch dashboard data:', error);
-      toast.error('Failed to load dashboard statistics');
+      toast.error(t('dashboard.failedToLoadStats'));
     } finally {
       setLoading(false);
     }
@@ -75,16 +101,60 @@ export default function DashboardPage() {
         return 'status-badge status-pending';
       case 'RECEIVED':
         return 'status-badge status-received';
-      case 'NOTIFIED':
+      case 'NOTIFIED_CALL':
+      case 'NOTIFIED_WHATSAPP':
         return 'status-badge status-notified';
+      case 'CANCELLED':
+      case 'INCOMPLETO':
+        return 'status-badge status-red';
       default:
         return 'status-badge';
     }
   };
 
+  const getStatusLabel = (status: string) => {
+    switch (status) {
+      case 'PENDING':
+        return t('orders.statusPending');
+      case 'RECEIVED':
+        return t('orders.statusReceived');
+      case 'NOTIFIED_CALL':
+        return t('orders.statusNotifiedCall');
+      case 'NOTIFIED_WHATSAPP':
+        return t('orders.statusNotifiedWhatsApp');
+      case 'CANCELLED':
+        return t('orders.statusCancelled');
+      case 'INCOMPLETO':
+        return t('orders.statusIncompleto');
+      default:
+        return status;
+    }
+  };
+
+  const fetchAnalytics = async () => {
+    if (!isAdmin) return;
+    
+    try {
+      setAnalyticsLoading(true);
+      const [productsRes, customersRes] = await Promise.all([
+        api.get('/analytics/top-products', { params: { limit: 10 } }),
+        api.get('/analytics/top-customers', { params: { limit: 10 } }),
+      ]);
+
+      setTopProducts(productsRes.data.data || []);
+      setTopCustomers(customersRes.data.data || []);
+    } catch (error: any) {
+      console.error('Failed to fetch analytics:', error);
+      // Don't show error toast for analytics, it's not critical
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
+
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    return new Intl.DateTimeFormat('en-US', {
+    const locale = i18n.language === 'es' ? 'es-ES' : 'en-US';
+    return new Intl.DateTimeFormat(locale, {
       month: 'short',
       day: 'numeric',
       year: 'numeric',
@@ -93,12 +163,22 @@ export default function DashboardPage() {
     }).format(date);
   };
 
+  const formatMonth = (monthString: string) => {
+    const [year, month] = monthString.split('-');
+    const date = new Date(parseInt(year), parseInt(month) - 1);
+    const locale = i18n.language === 'es' ? 'es-ES' : 'en-US';
+    return new Intl.DateTimeFormat(locale, {
+      month: 'long',
+      year: 'numeric',
+    }).format(date);
+  };
+
   if (loading) {
     return (
       <div className="dashboard-page">
         <div className="dashboard-loading">
           <div className="loading-spinner"></div>
-          <p>Loading dashboard...</p>
+          <p>{t('dashboard.loadingDashboard')}</p>
         </div>
       </div>
     );
@@ -107,28 +187,19 @@ export default function DashboardPage() {
   return (
     <div className="dashboard-page">
       <div className="dashboard-header">
-        <h1>Dashboard</h1>
-        <p className="dashboard-subtitle">Welcome to Order Management System</p>
+        <h1>{t('dashboard.title')}</h1>
+        <p className="dashboard-subtitle">{t('dashboard.welcome')}</p>
       </div>
 
       {/* Statistics Cards */}
       <div className="dashboard-stats-grid">
-        <div className="stat-card stat-card-primary">
-          <div className="stat-card-icon">
-            <Package size={32} />
-          </div>
-          <div className="stat-card-content">
-            <div className="stat-card-label">Total Orders</div>
-            <div className="stat-card-value">{stats.totalOrders}</div>
-          </div>
-        </div>
-
+        {/* Total Orders card removed per requirements - not necessary to see number of orders */}
         <div className="stat-card stat-card-warning">
           <div className="stat-card-icon">
             <Clock size={32} />
           </div>
           <div className="stat-card-content">
-            <div className="stat-card-label">Pending</div>
+            <div className="stat-card-label">{t('dashboard.pending')}</div>
             <div className="stat-card-value">{stats.pendingOrders}</div>
           </div>
         </div>
@@ -138,7 +209,7 @@ export default function DashboardPage() {
             <ShoppingCart size={32} />
           </div>
           <div className="stat-card-content">
-            <div className="stat-card-label">Received</div>
+            <div className="stat-card-label">{t('dashboard.received')}</div>
             <div className="stat-card-value">{stats.receivedOrders}</div>
           </div>
         </div>
@@ -148,7 +219,7 @@ export default function DashboardPage() {
             <CheckCircle size={32} />
           </div>
           <div className="stat-card-content">
-            <div className="stat-card-label">Notified</div>
+            <div className="stat-card-label">{t('dashboard.notified')}</div>
             <div className="stat-card-value">{stats.notifiedOrders}</div>
           </div>
         </div>
@@ -157,24 +228,24 @@ export default function DashboardPage() {
       {/* Recent Orders */}
       <div className="dashboard-section">
         <div className="dashboard-section-header">
-          <h2>Recent Orders</h2>
+          <h2>{t('dashboard.recentOrders')}</h2>
           <button
             className="btn-link"
             onClick={() => navigate('/orders')}
           >
-            View All <ArrowRight size={16} />
+            {t('dashboard.viewAll')} <ArrowRight size={16} />
           </button>
         </div>
 
         {stats.recentOrders.length === 0 ? (
           <div className="dashboard-empty-state">
             <Package size={48} />
-            <p>No orders yet</p>
+            <p>{t('dashboard.noOrders')}</p>
             <button
               className="btn-primary"
               onClick={() => navigate('/orders/create')}
             >
-              Create Your First Order
+              {t('dashboard.createFirstOrder')}
             </button>
           </div>
         ) : (
@@ -193,7 +264,7 @@ export default function DashboardPage() {
                     </span>
                   </div>
                   <span className={getStatusBadgeClass(order.status)}>
-                    {order.status}
+                    {getStatusLabel(order.status)}
                   </span>
                 </div>
                 <div className="recent-order-date">
@@ -207,7 +278,7 @@ export default function DashboardPage() {
 
       {/* Quick Actions */}
       <div className="dashboard-section">
-        <h2>Quick Actions</h2>
+        <h2>{t('dashboard.quickActions')}</h2>
         <div className="quick-actions-grid">
           <button
             className="quick-action-card"
@@ -217,8 +288,8 @@ export default function DashboardPage() {
               <TrendingUp size={24} />
             </div>
             <div className="quick-action-content">
-              <div className="quick-action-title">Create New Order</div>
-              <div className="quick-action-description">Add a new order to the system</div>
+              <div className="quick-action-title">{t('dashboard.createNewOrder')}</div>
+              <div className="quick-action-description">{t('dashboard.createNewOrderDesc')}</div>
             </div>
             <ArrowRight size={20} className="quick-action-arrow" />
           </button>
@@ -231,13 +302,142 @@ export default function DashboardPage() {
               <Package size={24} />
             </div>
             <div className="quick-action-content">
-              <div className="quick-action-title">View All Orders</div>
-              <div className="quick-action-description">Browse and manage all orders</div>
+              <div className="quick-action-title">{t('dashboard.viewAllOrders')}</div>
+              <div className="quick-action-description">{t('dashboard.viewAllOrdersDesc')}</div>
             </div>
             <ArrowRight size={20} className="quick-action-arrow" />
           </button>
         </div>
       </div>
+
+      {/* Analytics Section - Only for Admin */}
+      {isAdmin && (
+        <div className="dashboard-section">
+          <div className="dashboard-section-header">
+            <h2>
+              <BarChart3 size={24} style={{ marginRight: '0.5rem', display: 'inline-block' }} />
+              {t('dashboard.analytics')}
+            </h2>
+          </div>
+
+          {analyticsLoading ? (
+            <div className="dashboard-loading">
+              <div className="loading-spinner"></div>
+              <p>{t('dashboard.loadingAnalytics')}</p>
+            </div>
+          ) : (
+            <div className="analytics-grid">
+              {/* Top Products */}
+              <div className="analytics-card">
+                <div className="analytics-card-header">
+                  <Star size={20} />
+                  <h3>{t('dashboard.topProducts')}</h3>
+                </div>
+                <div className="analytics-table">
+                  {topProducts.length === 0 ? (
+                    <p className="analytics-empty">{t('dashboard.noData')}</p>
+                  ) : (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>{t('products.reference')}</th>
+                          <th>{t('products.supplier')}</th>
+                          <th>{t('dashboard.totalQuantity')}</th>
+                          <th>{t('dashboard.orderCount')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {topProducts.map((product, index) => {
+                          const safeTotalQuantity = Number(product.totalQuantity ?? 0);
+                          return (
+                            <tr key={`${product.reference}-${index}`}>
+                              <td>
+                                <strong style={{ color: 'var(--primary)', cursor: 'pointer' }}>
+                                  {product.reference}
+                                </strong>
+                              </td>
+                              <td>{product.supplierName}</td>
+                              <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>
+                                {safeTotalQuantity.toFixed(2)}
+                              </td>
+                              <td style={{ textAlign: 'center' }}>
+                                <span style={{ 
+                                  display: 'inline-block',
+                                  padding: '4px 10px',
+                                  background: 'var(--primary-light)',
+                                  borderRadius: '12px',
+                                  fontSize: '0.75rem',
+                                  fontWeight: 600,
+                                  color: 'var(--primary)'
+                                }}>
+                                  {product.orderCount}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+
+              {/* Top Customers */}
+              <div className="analytics-card">
+                <div className="analytics-card-header">
+                  <Users size={20} />
+                  <h3>{t('dashboard.topCustomers')}</h3>
+                </div>
+                <div className="analytics-table">
+                  {topCustomers.length === 0 ? (
+                    <p className="analytics-empty">{t('dashboard.noData')}</p>
+                  ) : (
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>{t('orders.customerName')}</th>
+                          <th>{t('dashboard.orderCount')}</th>
+                          <th>{t('dashboard.totalAmount')}</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {topCustomers.map((customer) => {
+                          const safeTotalAmount = Number(customer.totalAmount ?? 0);
+                          return (
+                            <tr key={customer.customerId}>
+                              <td>
+                                <strong style={{ color: 'var(--primary)', cursor: 'pointer' }}>
+                                  {customer.customerName}
+                                </strong>
+                              </td>
+                              <td style={{ textAlign: 'center' }}>
+                                <span style={{ 
+                                  display: 'inline-block',
+                                  padding: '4px 10px',
+                                  background: 'var(--primary-light)',
+                                  borderRadius: '12px',
+                                  fontSize: '0.75rem',
+                                  fontWeight: 600,
+                                  color: 'var(--primary)'
+                                }}>
+                                  {customer.orderCount}
+                                </span>
+                              </td>
+                              <td style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--success)' }}>
+                                €{safeTotalAmount.toFixed(2)}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

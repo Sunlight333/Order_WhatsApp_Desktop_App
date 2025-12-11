@@ -22,6 +22,15 @@ body {
   transition: var(--theme-transition);
 }
 
+/* VS Code style adjustments for dark theme */
+:root[data-theme="dark"] body {
+  background-color: var(--bg-primary);
+}
+
+:root[data-theme="dark"] #root {
+  background-color: var(--bg-primary);
+}
+
 #root {
   min-height: 100vh;
 }
@@ -75,12 +84,12 @@ button {
   --accent-seafoam: #2dd4bf;
   --accent-sand: #fef3c7;
 
-  /* Background Colors */
+  /* Background Colors - Increased intensity for better differentiation */
   --bg-primary: #ffffff;
-  --bg-secondary: #f0f9ff;
-  --bg-tertiary: #e0f2fe;
-  --bg-hover: #bae6fd;
-  --bg-active: #7dd3fc;
+  --bg-secondary: #e5f3ff;
+  --bg-tertiary: #cce7ff;
+  --bg-hover: #99d3ff;
+  --bg-active: #66bfff;
   --bg-overlay: rgba(8, 145, 178, 0.5);
 
   /* Text Colors */
@@ -90,9 +99,9 @@ button {
   --text-disabled: #67e8f9;
   --text-inverse: #ffffff;
 
-  /* Border Colors */
-  --border-primary: #cffafe;
-  --border-secondary: #a5f3fc;
+  /* Border Colors - More visible borders */
+  --border-primary: #b3e5fc;
+  --border-secondary: #81d4fa;
   --border-focus: #0891b2;
 
   /* Status Colors */
@@ -114,11 +123,11 @@ button {
   --info: #0891b2;
   --info-light: #cffafe;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.05);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+  /* Shadows - More pronounced for better depth */
+  --shadow-sm: 0 1px 3px 0 rgba(0, 0, 0, 0.12);
+  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.15);
+  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.18);
+  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.2);
 
   /* Border Radius */
   --radius-sm: 0.25rem;
@@ -173,13 +182,35 @@ button {
   cursor: not-allowed;
 }
 
-/* Dark Theme - Seaside Night */
+/* VS Code style buttons for dark theme */
+:root[data-theme="dark"] .btn-primary {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+:root[data-theme="dark"] .btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
+}
+
+:root[data-theme="dark"] .btn-secondary {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+  color: var(--text-primary);
+}
+
+:root[data-theme="dark"] .btn-secondary:hover {
+  background: var(--bg-hover);
+  border-color: var(--border-secondary);
+}
+
+/* Dark Theme - VS Code Style (Modern & Professional) */
 :root[data-theme="dark"] {
   /* Primary Colors */
-  --primary: #06b6d4;
-  --primary-hover: #22d3ee;
-  --primary-light: #0e7490;
-  --primary-dark: #155e75;
+  --primary: #0ea5e9;
+  --primary-hover: #38bdf8;
+  --primary-light: #0284c7;
+  --primary-dark: #0369a1;
 
   /* Secondary Color */
   --secondary: #38bdf8;
@@ -190,60 +221,60 @@ button {
   --accent-seafoam: #5eead4;
   --accent-sand: #fcd34d;
 
-  /* Background Colors */
-  --bg-primary: #0c4a6e;
-  --bg-secondary: #075985;
-  --bg-tertiary: #0369a1;
-  --bg-hover: #0284c7;
-  --bg-active: #0ea5e9;
-  --bg-overlay: rgba(6, 182, 212, 0.7);
+  /* Background Colors - VS Code Style */
+  --bg-primary: #1e1e1e;        /* VS Code editor background */
+  --bg-secondary: #252526;     /* VS Code sidebar background */
+  --bg-tertiary: #2d2d30;       /* VS Code panel background */
+  --bg-hover: #2a2d2e;          /* Hover state */
+  --bg-active: #37373d;         /* Active/selected state */
+  --bg-overlay: rgba(14, 165, 233, 0.15);
 
-  /* Text Colors */
-  --text-primary: #f0f9ff;
-  --text-secondary: #e0f2fe;
-  --text-tertiary: #bae6fd;
-  --text-disabled: #7dd3fc;
-  --text-inverse: #0c4a6e;
+  /* Text Colors - VS Code Style */
+  --text-primary: #cccccc;       /* VS Code default text */
+  --text-secondary: #858585;    /* VS Code secondary text */
+  --text-tertiary: #6a6a6a;      /* VS Code tertiary text */
+  --text-disabled: #4a4a4a;
+  --text-inverse: #ffffff;
 
-  /* Border Colors */
-  --border-primary: #0369a1;
-  --border-secondary: #0284c7;
-  --border-focus: #06b6d4;
+  /* Border Colors - VS Code Style */
+  --border-primary: #3e3e42;     /* VS Code divider */
+  --border-secondary: #464647;   /* VS Code border */
+  --border-focus: #0ea5e9;       /* Focus border */
 
-  /* Status Colors */
+  /* Status Colors - VS Code Style */
   --status-pending: #fbbf24;
   --status-received: #fcd34d;
   --status-notified-call: #34d399;
   --status-notified-whatsapp: #10b981;
 
-  /* Semantic Colors */
-  --success: #34d399;
-  --success-light: #065f46;
-  --success-hover: #10b981;
-  --warning: #fbbf24;
-  --warning-light: #78350f;
-  --warning-hover: #f59e0b;
-  --error: #f87171;
-  --error-light: #7f1d1d;
-  --error-hover: #ef4444;
-  --info: #06b6d4;
-  --info-light: #155e75;
+  /* Semantic Colors - VS Code Style */
+  --success: #4ec9b0;            /* VS Code success green */
+  --success-light: #1e3a2e;
+  --success-hover: #6bcfb8;
+  --warning: #dcdcaa;            /* VS Code warning yellow */
+  --warning-light: #3a3a1e;
+  --warning-hover: #f1f1c0;
+  --error: #f48771;              /* VS Code error red */
+  --error-light: #3a1e1e;
+  --error-hover: #ff6b6b;
+  --info: #4fc1ff;                /* VS Code info blue */
+  --info-light: #1e2a3a;
 
-  /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.3);
-  --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
-  --shadow-lg: 0 10px 15px -3px rgba(0, 0, 0, 0.5);
-  --shadow-xl: 0 20px 25px -5px rgba(0, 0, 0, 0.6);
+  /* Shadows - VS Code Style */
+  --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.5);
+  --shadow-xl: 0 12px 24px rgba(0, 0, 0, 0.6);
   
   /* Component mappings */
   --primary-color: var(--primary);
-  --primary-color-alpha: rgba(6, 182, 212, 0.1);
+  --primary-color-alpha: rgba(14, 165, 233, 0.15);
   --success-color: var(--success);
   --warning-color: var(--warning);
   --error-color: var(--error);
   --info-color: var(--info);
-  --card-bg: var(--bg-primary);
-  --input-bg: var(--bg-secondary);
+  --card-bg: var(--bg-secondary);
+  --input-bg: var(--bg-tertiary);
   --hover-bg: var(--bg-hover);
   --border-color: var(--border-primary);
   --border-light: var(--border-secondary);
@@ -259,6 +290,15 @@ body {
   color: var(--text-primary);
   
   transition: var(--theme-transition);
+}
+
+/* VS Code style adjustments for dark theme */
+:root[data-theme="dark"] body {
+  background-color: var(--bg-primary);
+}
+
+:root[data-theme="dark"] #root {
+  background-color: var(--bg-primary);
 }
 
 #root {
@@ -311,21 +351,31 @@ body {
   scrollbar-color: var(--border-secondary) transparent;
 }
 
-/* Dark theme scrollbar adjustments */
+/* Dark theme scrollbar adjustments - VS Code Style */
 :root[data-theme="dark"] * {
-  scrollbar-color: var(--border-secondary) transparent;
+  scrollbar-color: #424242 transparent;
+}
+
+:root[data-theme="dark"] *::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+:root[data-theme="dark"] *::-webkit-scrollbar-track {
+  background: var(--bg-primary);
 }
 
 :root[data-theme="dark"] *::-webkit-scrollbar-thumb {
-  background: var(--border-primary);
+  background: #424242;
+  border-radius: 5px;
 }
 
 :root[data-theme="dark"] *::-webkit-scrollbar-thumb:hover {
-  background: var(--text-tertiary);
+  background: #4e4e4e;
 }
 
 :root[data-theme="dark"] *::-webkit-scrollbar-thumb:active {
-  background: var(--primary);
+  background: #5a5a5a;
 }
 
 /* Smooth scrolling */

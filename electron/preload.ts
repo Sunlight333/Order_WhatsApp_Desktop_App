@@ -24,7 +24,7 @@ contextBridge.exposeInMainWorld('electron', {
   getVersion: () => ipcRenderer.invoke('get-app-version'),
   config: {
     get: (): Promise<AppConfig> => ipcRenderer.invoke('config:get'),
-    save: (config: Partial<AppConfig>): Promise<void> => ipcRenderer.invoke('config:save', config),
+    save: (config: Partial<AppConfig>): Promise<{ needsRestart: boolean; newPort?: number }> => ipcRenderer.invoke('config:save', config),
   },
   openExternal: (url: string): Promise<{ success: boolean }> => ipcRenderer.invoke('open-external', url),
   dialog: {
@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld('electron', {
     showWarningDialog: (options: { title: string; message: string; detail?: string }): Promise<Electron.MessageBoxReturnValue> =>
       ipcRenderer.invoke('dialog:showWarningDialog', options),
   },
+  getLocalIp: (): Promise<string> => ipcRenderer.invoke('get-local-ip'),
 });
 
 // Type definitions for TypeScript
@@ -46,7 +47,7 @@ declare global {
       getVersion: () => Promise<string>;
       config: {
         get: () => Promise<AppConfig>;
-        save: (config: Partial<AppConfig>) => Promise<void>;
+        save: (config: Partial<AppConfig>) => Promise<{ needsRestart: boolean; newPort?: number }>;
       };
       openExternal: (url: string) => Promise<{ success: boolean }>;
       dialog: {
@@ -55,6 +56,7 @@ declare global {
         showErrorDialog: (options: { title: string; message: string; detail?: string }) => Promise<Electron.MessageBoxReturnValue>;
         showWarningDialog: (options: { title: string; message: string; detail?: string }) => Promise<Electron.MessageBoxReturnValue>;
       };
+      getLocalIp: () => Promise<string>;
     };
   }
 }

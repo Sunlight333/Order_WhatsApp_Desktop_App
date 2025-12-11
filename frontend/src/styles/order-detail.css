@@ -13,6 +13,12 @@
   box-shadow: var(--shadow-sm);
 }
 
+/* VS Code style detail cards for dark theme */
+:root[data-theme="dark"] .detail-card {
+  background: var(--bg-tertiary);
+  border-color: var(--border-primary);
+}
+
 .detail-card.full-width {
   grid-column: 1 / -1;
 }
@@ -105,9 +111,15 @@
 }
 
 .observations {
-  font-style: italic;
-  color: var(--text-secondary);
-  max-width: 300px;
+  background-color: var(--warning-light, #fef3c7);
+  padding: 0.75rem;
+  border-left: 3px solid var(--warning, #f59e0b);
+  border-radius: 4px;
+  font-weight: 500;
+  color: var(--text-primary);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-width: 100%;
   line-height: 1.5;
 }
 
@@ -162,6 +174,65 @@
 .status-action-btn.green:hover:not(:disabled) {
   background: var(--success-color);
   color: white;
+}
+
+.status-action-btn.red {
+  background-color: #fee;
+  color: #c00;
+  border: 1px solid #fcc;
+}
+
+.status-action-btn.red:hover:not(:disabled) {
+  background-color: #fcc;
+  color: #900;
+}
+
+.status-action-btn.active {
+  background: var(--primary-light);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+  cursor: default;
+}
+
+.status-action-btn.active:hover {
+  background: var(--primary-light);
+  color: var(--primary-color);
+  transform: none;
+  box-shadow: none;
+}
+
+/* Status Completed Message */
+.status-completed {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+  padding: var(--spacing-lg);
+  background: var(--success-light);
+  border-radius: var(--radius-md);
+  border: 2px solid var(--success-color);
+}
+
+.completed-icon {
+  color: var(--success-color);
+  flex-shrink: 0;
+}
+
+.completed-message {
+  flex: 1;
+}
+
+.completed-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--success-color);
+  margin: 0 0 var(--spacing-xs) 0;
+}
+
+.completed-description {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin: 0;
+  line-height: 1.5;
 }
 
 /* Products Table */
@@ -389,6 +460,20 @@
 .header-actions {
   display: flex;
   gap: var(--spacing-md);
+}
+
+/* Product received status */
+.product-received {
+  background-color: var(--success-light, #d1fae5);
+}
+
+.product-partial {
+  background-color: var(--warning-light, #fef3c7);
+}
+
+.products-table tbody tr.product-received td,
+.products-table tbody tr.product-partial td {
+  border-color: var(--border-light);
 }
 
 /* Responsive */

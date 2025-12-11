@@ -1,12 +1,21 @@
 import { Globe } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { configService } from '../services/config.service';
 
 export default function LanguageToggle() {
   const { i18n } = useTranslation();
 
-  const toggleLanguage = () => {
+  const toggleLanguage = async () => {
     const newLang = i18n.language === 'es' ? 'en' : 'es';
     i18n.changeLanguage(newLang);
+    
+    // Save language preference to config
+    try {
+      const currentConfig = await configService.loadConfig();
+      await configService.saveConfig({ ...currentConfig, language: newLang });
+    } catch (error) {
+      console.error('Failed to save language preference:', error);
+    }
   };
 
   const currentLang = i18n.language === 'es' ? 'ES' : 'EN';

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
-import { Plus, Edit2, Trash2, Package, Loader2, Search, X, Filter, Copy } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { Plus, Edit2, Trash2, Package, Loader2, Search, X, Filter, Copy, ArrowUp, ArrowDown, ChevronUp } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
@@ -32,11 +33,14 @@ interface ProductFormData {
 }
 
 export default function ProductsPage() {
+  const { t } = useTranslation();
   const [products, setProducts] = useState<Product[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedSupplierFilter, setSelectedSupplierFilter] = useState<string>('');
+  const [sortBy, setSortBy] = useState<string>('reference');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showEditModal, setShowEditModal] = useState(false);
   const [showUpdateConfirmModal, setShowUpdateConfirmModal] = useState(false);
@@ -61,7 +65,7 @@ export default function ProductsPage() {
 
   useEffect(() => {
     fetchProducts(selectedSupplierFilter || undefined);
-  }, [selectedSupplierFilter]);
+  }, [selectedSupplierFilter, sortBy, sortOrder]);
 
   const checkUserRole = async () => {
     try {
@@ -86,14 +90,38 @@ export default function ProductsPage() {
   const fetchProducts = async (supplierId?: string) => {
     try {
       setLoading(true);
-      const params = supplierId ? { supplierId } : {};
+      const params: any = supplierId ? { supplierId } : {};
+      if (sortBy) {
+        params.sortBy = sortBy;
+      }
+      if (sortOrder) {
+        params.sortOrder = sortOrder;
+      }
       const response = await api.get<{ success: true; data: Product[] }>('/products', { params });
       setProducts(response.data.data || []);
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to load products');
+      toast.error(error.response?.data?.error?.message || t('products.loadFailed'));
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSort = (field: string) => {
+    if (sortBy === field) {
+      // Toggle sort order if clicking the same field
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      // Set new sort field and default to asc
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+  };
+
+  const getSortIcon = (field: string) => {
+    if (sortBy !== field) {
+      return <ChevronUp size={14} style={{ opacity: 0.3 }} />;
+    }
+    return sortOrder === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
 
   const handleCreate = () => {
@@ -124,12 +152,12 @@ export default function ProductsPage() {
 
   const handleCreateSubmit = async () => {
     if (!formData.supplierId) {
-      toast.error('Please select a supplier');
+      toast.error(t('products.selectSupplier'));
       return;
     }
 
     if (!formData.reference.trim()) {
-      toast.error('Product reference is required');
+      toast.error(t('products.referenceRequired'));
       return;
     }
 
@@ -141,11 +169,11 @@ export default function ProductsPage() {
         description: formData.description.trim() || undefined,
         defaultPrice: formData.defaultPrice.trim() || undefined,
       });
-      toast.success('Product created successfully');
+      toast.success(t('products.createSuccess'));
       setShowCreateModal(false);
       fetchProducts(selectedSupplierFilter || undefined);
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to create product');
+      toast.error(error.response?.data?.error?.message || t('products.createFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -153,7 +181,7 @@ export default function ProductsPage() {
 
   const handleEditSubmit = () => {
     if (!formData.reference.trim()) {
-      toast.error('Product reference is required');
+      toast.error(t('products.referenceRequired'));
       return;
     }
 
@@ -171,12 +199,12 @@ export default function ProductsPage() {
         description: formData.description.trim() || null,
         defaultPrice: formData.defaultPrice.trim() || null,
       });
-      toast.success('Product updated successfully');
+      toast.success(t('products.updateSuccess'));
       setShowEditModal(false);
       setSelectedProduct(null);
       fetchProducts(selectedSupplierFilter || undefined);
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to update product');
+      toast.error(error.response?.data?.error?.message || t('products.updateFailed'));
     } finally {
       setSubmitting(false);
     }
@@ -188,12 +216,12 @@ export default function ProductsPage() {
     try {
       setDeleteLoading(true);
       await api.delete(`/products/${selectedProduct.id}`);
-      toast.success('Product deleted successfully');
+      toast.success(t('products.deleteSuccess'));
       setShowDeleteModal(false);
       setSelectedProduct(null);
       fetchProducts(selectedSupplierFilter || undefined);
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to delete product');
+      toast.error(error.response?.data?.error?.message || t('products.deleteFailed'));
     } finally {
       setDeleteLoading(false);
     }
@@ -219,13 +247,13 @@ export default function ProductsPage() {
   const handleCopyReference = () => {
     if (!selectedProduct) return;
     navigator.clipboard.writeText(selectedProduct.reference);
-    toast.success('Reference copied to clipboard');
+    toast.success(t('common.copied'));
   };
 
   const handleCopyDescription = () => {
     if (!selectedProduct || !selectedProduct.description) return;
     navigator.clipboard.writeText(selectedProduct.description);
-    toast.success('Description copied to clipboard');
+    toast.success(t('common.copied'));
   };
 
   const getContextMenuItems = (product: Product): ContextMenuItem[] => {
@@ -233,7 +261,7 @@ export default function ProductsPage() {
 
     if (isSuperAdmin) {
       items.push({
-        label: 'Edit Product',
+        label: t('products.editProduct'),
         icon: <Edit2 size={16} />,
         action: () => {
           setSelectedProduct(product);
@@ -250,12 +278,12 @@ export default function ProductsPage() {
 
     items.push(
       {
-        label: 'Copy Reference',
+        label: t('products.copyReference'),
         icon: <Copy size={16} />,
         action: handleCopyReference,
       },
       {
-        label: 'Copy Description',
+        label: t('products.copyDescription'),
         icon: <Copy size={16} />,
         action: handleCopyDescription,
         disabled: !product.description,
@@ -265,7 +293,7 @@ export default function ProductsPage() {
     if (isSuperAdmin) {
       items.push({ divider: true });
       items.push({
-        label: 'Delete Product',
+        label: t('products.deleteProduct'),
         icon: <Trash2 size={16} />,
         action: () => {
           setSelectedProduct(product);
@@ -283,7 +311,7 @@ export default function ProductsPage() {
       <div className="page-container">
         <div className="loading-container">
           <Loader2 className="spinner" size={32} />
-          <p>Loading products...</p>
+          <p>{t('products.loadingProducts')}</p>
         </div>
       </div>
     );
@@ -293,13 +321,13 @@ export default function ProductsPage() {
     <div className="page-container">
       <div className="page-header">
         <div>
-          <h1>Products</h1>
-          <p className="page-subtitle">Manage products by supplier</p>
+          <h1>{t('products.title')}</h1>
+          <p className="page-subtitle">{t('products.manageProducts')}</p>
         </div>
         {isSuperAdmin && (
           <button className="btn-primary" onClick={handleCreate}>
             <Plus size={20} />
-            Create Product
+            {t('products.createProduct')}
           </button>
         )}
       </div>
@@ -309,7 +337,7 @@ export default function ProductsPage() {
           <Search size={20} className="search-icon" />
           <input
             type="text"
-            placeholder="Search products by reference, description, or supplier..."
+            placeholder={t('products.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="search-input"
@@ -318,7 +346,7 @@ export default function ProductsPage() {
             <button
               className="clear-search"
               onClick={() => setSearchQuery('')}
-              title="Clear search"
+              title={t('common.clearSearch')}
             >
               <X size={16} />
             </button>
@@ -331,7 +359,7 @@ export default function ProductsPage() {
             onChange={(e) => setSelectedSupplierFilter(e.target.value)}
             className="filter-select"
           >
-            <option value="">All Suppliers</option>
+            <option value="">{t('products.allSuppliers')}</option>
             {suppliers.map((supplier) => (
               <option key={supplier.id} value={supplier.id}>
                 {supplier.name}
@@ -344,7 +372,7 @@ export default function ProductsPage() {
       {filteredProducts.length === 0 ? (
         <div className="empty-state">
           <Package size={48} />
-          <p>No products found</p>
+          <p>{t('products.noProducts')}</p>
           {selectedSupplierFilter && (
             <p className="empty-subtitle">
               {suppliers.find((s) => s.id === selectedSupplierFilter)?.name}
@@ -353,7 +381,7 @@ export default function ProductsPage() {
           {isSuperAdmin && (
             <button className="btn-primary" onClick={handleCreate}>
               <Plus size={20} />
-              Create First Product
+              {t('products.createFirstProduct')}
             </button>
           )}
         </div>
@@ -362,11 +390,29 @@ export default function ProductsPage() {
           <table className="products-table">
             <thead>
               <tr>
-                <th>REFERENCE</th>
-                <th>SUPPLIER</th>
-                <th>DESCRIPTION</th>
-                <th>DEFAULT PRICE</th>
-                <th>ACTIONS</th>
+                <th 
+                  className="sortable-header"
+                  onClick={() => handleSort('reference')}
+                  style={{ cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {t('products.reference')}
+                    {getSortIcon('reference')}
+                  </div>
+                </th>
+                <th 
+                  className="sortable-header"
+                  onClick={() => handleSort('supplier')}
+                  style={{ cursor: 'pointer', userSelect: 'none' }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    {t('products.supplier')}
+                    {getSortIcon('supplier')}
+                  </div>
+                </th>
+                <th>{t('common.description')}</th>
+                <th>{t('products.defaultPrice')}</th>
+                <th>{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -389,7 +435,7 @@ export default function ProductsPage() {
                   </td>
                   <td>
                     <div className="product-price">
-                      {product.defaultPrice ? `$${product.defaultPrice}` : '-'}
+                      {product.defaultPrice ? `€${product.defaultPrice}` : '-'}
                     </div>
                   </td>
                   <td>
@@ -398,14 +444,14 @@ export default function ProductsPage() {
                         <button
                           className="btn-icon btn-edit"
                           onClick={() => handleEdit(product)}
-                          title="Edit product"
+                          title={t('products.editProduct')}
                         >
                           <Edit2 size={16} />
                         </button>
                         <button
                           className="btn-icon btn-delete"
                           onClick={() => handleDelete(product)}
-                          title="Delete product"
+                          title={t('products.deleteProduct')}
                         >
                           <Trash2 size={16} />
                         </button>
@@ -428,12 +474,12 @@ export default function ProductsPage() {
             isOpen={showCreateModal}
             onClose={() => setShowCreateModal(false)}
             onConfirm={handleCreateSubmit}
-            title="Create New Product"
+            title={t('products.createProduct')}
             message={
               <div className="product-form">
                 <div className="form-group">
                   <label>
-                    Supplier <span className="required">*</span>
+                    {t('products.supplier')} <span className="required">*</span>
                   </label>
                   <select
                     value={formData.supplierId}
@@ -441,7 +487,7 @@ export default function ProductsPage() {
                     className="form-input"
                     required
                   >
-                    <option value="">Select a supplier</option>
+                    <option value="">{t('products.selectSupplier')}</option>
                     {suppliers.map((supplier) => (
                       <option key={supplier.id} value={supplier.id}>
                         {supplier.name}
@@ -451,41 +497,41 @@ export default function ProductsPage() {
                 </div>
                 <div className="form-group">
                   <label>
-                    Product Reference <span className="required">*</span>
+                    {t('products.reference')} <span className="required">*</span>
                   </label>
                   <input
                     type="text"
                     value={formData.reference}
                     onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
-                    placeholder="Enter product reference"
+                    placeholder={t('products.enterReference')}
                     className="form-input"
                     required
                   />
                 </div>
                 <div className="form-group">
-                  <label>Description</label>
+                  <label>{t('common.description')}</label>
                   <textarea
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    placeholder="Enter product description (optional)"
+                    placeholder={t('products.enterDescription')}
                     className="form-input form-textarea"
                     rows={3}
                   />
                 </div>
                 <div className="form-group">
-                  <label>Default Price</label>
+                  <label>{t('products.defaultPrice')}</label>
                   <input
                     type="text"
                     value={formData.defaultPrice}
                     onChange={(e) => setFormData({ ...formData, defaultPrice: e.target.value })}
-                    placeholder="e.g., 29.99"
+                    placeholder={t('products.enterDefaultPrice')}
                     className="form-input"
                   />
                 </div>
               </div>
             }
-            confirmText="Create Product"
-            cancelText="Cancel"
+            confirmText={t('products.createProduct')}
+            cancelText={t('common.cancel')}
             type="info"
             loading={submitting}
           />
@@ -498,56 +544,56 @@ export default function ProductsPage() {
               setSelectedProduct(null);
             }}
             onConfirm={handleEditSubmit}
-            title="Edit Product"
+            title={t('products.editProduct')}
             message={
               <div className="product-form">
                 <div className="form-group">
-                  <label>Supplier</label>
+                  <label>{t('products.supplier')}</label>
                   <input
                     type="text"
                     value={suppliers.find((s) => s.id === formData.supplierId)?.name || ''}
                     disabled
                     className="form-input"
                   />
-                  <small className="form-hint">Supplier cannot be changed after creation</small>
+                  <small className="form-hint">{t('products.supplierCannotChange')}</small>
                 </div>
                 <div className="form-group">
                   <label>
-                    Product Reference <span className="required">*</span>
+                    {t('products.reference')} <span className="required">*</span>
                   </label>
                   <input
                     type="text"
                     value={formData.reference}
                     onChange={(e) => setFormData({ ...formData, reference: e.target.value })}
-                    placeholder="Enter product reference"
+                    placeholder={t('products.enterReference')}
                     className="form-input"
                     required
                   />
                 </div>
                 <div className="form-group">
-                  <label>Description</label>
+                  <label>{t('common.description')}</label>
                   <textarea
                     value={formData.description}
                     onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    placeholder="Enter product description (optional)"
+                    placeholder={t('products.enterDescription')}
                     className="form-input form-textarea"
                     rows={3}
                   />
                 </div>
                 <div className="form-group">
-                  <label>Default Price</label>
+                  <label>{t('products.defaultPrice')}</label>
                   <input
                     type="text"
                     value={formData.defaultPrice}
                     onChange={(e) => setFormData({ ...formData, defaultPrice: e.target.value })}
-                    placeholder="e.g., 29.99"
+                    placeholder={t('products.enterDefaultPrice')}
                     className="form-input"
                   />
                 </div>
               </div>
             }
-            confirmText="Save Changes"
-            cancelText="Cancel"
+            confirmText={t('products.saveChanges')}
+            cancelText={t('common.cancel')}
             type="info"
             loading={submitting}
           />
@@ -560,19 +606,19 @@ export default function ProductsPage() {
               setSelectedProduct(null);
             }}
             onConfirm={handleDeleteConfirm}
-            title="Delete Product"
+            title={t('products.deleteProduct')}
             message={
               <div>
                 <p>
-                  Are you sure you want to delete product <strong>{selectedProduct?.reference}</strong>? This action cannot be undone.
+                  {t('products.deleteConfirm', { reference: selectedProduct?.reference })}
                 </p>
                 <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                  This action will be permanently recorded in the system logs and cannot be reversed.
+                  {t('products.deleteWarning')}
                 </p>
               </div>
             }
-            confirmText="Delete Product"
-            cancelText="Cancel"
+            confirmText={t('products.deleteProduct')}
+            cancelText={t('common.cancel')}
             type="danger"
             loading={deleteLoading}
           />
@@ -582,17 +628,17 @@ export default function ProductsPage() {
             isOpen={showUpdateConfirmModal}
             onClose={() => setShowUpdateConfirmModal(false)}
             onConfirm={confirmProductUpdate}
-            title="Confirm Product Update"
+            title={t('products.confirmUpdate')}
             message={
               <div>
-                <p>Are you sure you want to update product <strong>{selectedProduct?.reference}</strong>?</p>
+                <p>{t('products.confirmUpdateMessage', { reference: selectedProduct?.reference })}</p>
                 <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                  All changes will be saved and this action will be recorded in the system logs.
+                  {t('products.updateWarning')}
                 </p>
               </div>
             }
-            confirmText="Update Product"
-            cancelText="Cancel"
+            confirmText={t('products.updateProduct')}
+            cancelText={t('common.cancel')}
             type="info"
             loading={submitting}
           />

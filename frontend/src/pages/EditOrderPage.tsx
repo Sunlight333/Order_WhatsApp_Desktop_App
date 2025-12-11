@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { Plus, X, Save, Loader2, ArrowLeft } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
@@ -17,6 +18,13 @@ interface Product {
   reference: string;
 }
 
+interface Customer {
+  id: string;
+  name: string;
+  phone?: string;
+  countryCode?: string;
+}
+
 interface OrderProduct {
   id: string;
   supplierId: string;
@@ -31,14 +39,18 @@ interface OrderProduct {
 
 interface Order {
   id: string;
+  orderNumber?: number; // Auto-incremental order number (1, 2, 3...)
   customerName?: string;
-  customerPhone: string;
+  customerId?: string;
+  customerPhone?: string;
+  countryCode?: string;
   observations?: string;
   products: OrderProduct[];
   suppliers: Array<{
     id: string;
     name: string;
   }>;
+  customer?: Customer;
 }
 
 interface SupplierData {
@@ -58,25 +70,44 @@ interface ProductData {
 export default function EditOrderPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [suppliersList, setSuppliersList] = useState<Supplier[]>([]);
   const [productsList, setProductsList] = useState<Product[]>([]);
+  const [customersList, setCustomersList] = useState<Customer[]>([]);
   
   // Form state
   const [customerName, setCustomerName] = useState('');
+  const [customerId, setCustomerId] = useState<string | null>(null);
   const [customerPhone, setCustomerPhone] = useState('');
   const [observations, setObservations] = useState('');
   const [suppliers, setSuppliers] = useState<SupplierData[]>([]);
+  
+  // Country code is fixed to +34 for Spain
+  const countryCode = '+34';
 
   useEffect(() => {
     if (id) {
       fetchOrder(id);
       fetchSuppliers();
       fetchProducts();
+      fetchCustomers();
     }
   }, [id]);
+
+  // Fetch customers when customer name changes (for autocomplete)
+  useEffect(() => {
+    if (customerName.trim()) {
+      const timeoutId = setTimeout(() => {
+        searchCustomers(customerName);
+      }, 300); // Debounce search
+      return () => clearTimeout(timeoutId);
+    } else {
+      fetchCustomers(); // Fetch all customers when empty
+    }
+  }, [customerName]);
 
   const fetchOrder = async (orderId: string) => {
     try {
@@ -85,8 +116,9 @@ export default function EditOrderPage() {
       const order = response.data.data;
 
       // Set customer info
-      setCustomerName(order.customerName || '');
-      setCustomerPhone(order.customerPhone);
+      setCustomerName(order.customerName || order.customer?.name || '');
+      setCustomerId(order.customerId || order.customer?.id || null);
+      setCustomerPhone(order.customerPhone || order.customer?.phone || '');
       setObservations(order.observations || '');
 
       // Group products by supplier
@@ -113,7 +145,7 @@ export default function EditOrderPage() {
 
       setSuppliers(Array.from(supplierMap.values()));
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to load order');
+      toast.error(error.response?.data?.error?.message || t('editOrder.loadFailed'));
       navigate('/orders');
     } finally {
       setLoading(false);
@@ -139,6 +171,41 @@ export default function EditOrderPage() {
     }
   };
 
+  const fetchCustomers = async () => {
+    try {
+      const response = await api.get<{ success: true; data: Customer[] }>('/customers/search');
+      setCustomersList(response.data.data || []);
+    } catch (error) {
+      console.error('Failed to fetch customers:', error);
+    }
+  };
+
+  const searchCustomers = async (query: string) => {
+    try {
+      const response = await api.get<{ success: true; data: Customer[] }>('/customers/search', {
+        params: { q: query, limit: 20 },
+      });
+      setCustomersList(response.data.data || []);
+    } catch (error) {
+      console.error('Failed to search customers:', error);
+    }
+  };
+
+  const handleCustomerNameChange = (value: string) => {
+    setCustomerName(value);
+    setCustomerId(null); // Reset customer ID when name changes
+    
+    // Find matching customer and pre-fill phone
+    const matchingCustomer = customersList.find(
+      (c) => c.name.toLowerCase() === value.toLowerCase()
+    );
+    
+    if (matchingCustomer) {
+      setCustomerId(matchingCustomer.id);
+      setCustomerPhone(matchingCustomer.phone || '');
+    }
+  };
+
   const addSupplier = () => {
     setSuppliers([
       ...suppliers,
@@ -159,7 +226,7 @@ export default function EditOrderPage() {
 
   const removeSupplier = (supplierId: string) => {
     if (suppliers.length === 1) {
-      toast.error('At least one supplier is required');
+      toast.error(t('createOrder.atLeastOneSupplier'));
       return;
     }
     setSuppliers(suppliers.filter((s) => s.id !== supplierId));
@@ -203,7 +270,7 @@ export default function EditOrderPage() {
       suppliers.map((s) => {
         if (s.id === supplierId) {
           if (s.products.length === 1) {
-            toast.error('At least one product is required per supplier');
+            toast.error(t('createOrder.atLeastOneProduct'));
             return s;
           }
           return {
@@ -258,28 +325,25 @@ export default function EditOrderPage() {
   };
 
   const validateForm = (): boolean => {
-    if (!customerPhone.trim()) {
-      toast.error('Customer phone is required');
-      return false;
-    }
+    // Phone is now optional, no validation needed
 
     for (const supplier of suppliers) {
       if (!supplier.name.trim()) {
-        toast.error('All suppliers must have a name');
+        toast.error(t('createOrder.supplierRequired'));
         return false;
       }
 
       for (const product of supplier.products) {
         if (!product.productRef.trim()) {
-          toast.error('All products must have a reference');
+          toast.error(t('createOrder.productRefRequired'));
           return false;
         }
         if (!product.quantity.trim()) {
-          toast.error('All products must have a quantity');
+          toast.error(t('createOrder.quantityRequired'));
           return false;
         }
         if (!product.price.trim()) {
-          toast.error('All products must have a price');
+          toast.error(t('createOrder.priceRequired'));
           return false;
         }
       }
@@ -305,8 +369,11 @@ export default function EditOrderPage() {
       setShowSaveModal(false);
 
       const orderData = {
+        // orderNumber cannot be updated once created
         customerName: customerName.trim() || undefined,
-        customerPhone: customerPhone.trim(),
+        customerId: customerId || undefined,
+        customerPhone: customerPhone.trim() || undefined,
+        countryCode: countryCode || '+34',
         observations: observations.trim() || undefined,
         suppliers: suppliers.map((s) => ({
           name: s.name.trim(),
@@ -321,10 +388,10 @@ export default function EditOrderPage() {
 
       await api.put(`/orders/${id}`, orderData);
       
-      toast.success('Order updated successfully!');
+      toast.success(t('editOrder.updateSuccess'));
       navigate(`/orders/${id}`);
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to update order');
+      toast.error(error.response?.data?.error?.message || t('editOrder.updateFailed'));
     } finally {
       setSaving(false);
     }
@@ -335,7 +402,7 @@ export default function EditOrderPage() {
       <div className="page-container">
         <div className="loading-container">
           <Loader2 className="spinner" size={32} />
-          <p>Loading order...</p>
+          <p>{t('editOrder.loadingOrder')}</p>
         </div>
       </div>
     );
@@ -347,54 +414,73 @@ export default function EditOrderPage() {
         <button
           className="btn-icon"
           onClick={() => navigate(`/orders/${id}`)}
-          title="Back to order details"
+          title={t('orderDetail.backToOrders')}
         >
           <ArrowLeft size={20} />
         </button>
         <div>
-          <h1>Edit Order</h1>
-          <p className="page-subtitle">Update order information and products</p>
+          <h1>{t('editOrder.title')}</h1>
+          <p className="page-subtitle">{t('editOrder.updateOrderInfo')}</p>
         </div>
       </div>
 
       <form onSubmit={handleSubmit} className="edit-order-form">
         {/* Customer Information */}
         <section className="form-section">
-          <h2>Customer Information</h2>
+          <h2>{t('createOrder.customerInfo')}</h2>
           <div className="form-grid">
             <div className="form-group">
-              <label htmlFor="customerName">Customer Name (Optional)</label>
+              <label htmlFor="customerName">{t('createOrder.customerNameOptional')}</label>
               <input
                 id="customerName"
                 type="text"
+                list="customer-hints-edit"
                 value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-                placeholder="Enter customer name"
+                onChange={(e) => handleCustomerNameChange(e.target.value)}
+                placeholder={t('createOrder.enterCustomerName')}
                 className="form-input"
               />
+              <datalist id="customer-hints-edit">
+                {customersList.map((customer) => (
+                  <option key={customer.id} value={customer.name} />
+                ))}
+              </datalist>
             </div>
             <div className="form-group">
               <label htmlFor="customerPhone">
-                Customer Phone <span className="required">*</span>
+                {t('createOrder.customerPhone')} <span className="optional">({t('common.optional')})</span>
               </label>
-              <input
-                id="customerPhone"
-                type="tel"
-                value={customerPhone}
-                onChange={(e) => setCustomerPhone(e.target.value)}
-                placeholder="+1234567890"
-                className="form-input"
-                required
-              />
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <span style={{ 
+                  padding: 'var(--spacing-sm) var(--spacing-md)',
+                  background: 'var(--bg-secondary)',
+                  border: '1px solid var(--border-color)',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: '0.9375rem',
+                  color: 'var(--text-secondary)',
+                  whiteSpace: 'nowrap'
+                }}>
+                  +34
+                </span>
+                <input
+                  id="customerPhone"
+                  type="tel"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  placeholder={t('createOrder.enterCustomerPhone')}
+                  className="form-input"
+                  style={{ flex: 1 }}
+                />
+              </div>
             </div>
           </div>
           <div className="form-group">
-            <label htmlFor="observations">Observations (Optional)</label>
+            <label htmlFor="observations">{t('createOrder.observationsOptional')}</label>
             <textarea
               id="observations"
               value={observations}
               onChange={(e) => setObservations(e.target.value)}
-              placeholder="Additional notes or observations..."
+              placeholder={t('createOrder.additionalNotes')}
               className="form-input form-textarea"
               rows={3}
             />
@@ -404,14 +490,14 @@ export default function EditOrderPage() {
         {/* Suppliers and Products */}
         <section className="form-section">
           <div className="section-header">
-            <h2>Suppliers & Products</h2>
+            <h2>{t('createOrder.suppliersAndProducts')}</h2>
             <button
               type="button"
               className="btn-secondary btn-sm"
               onClick={addSupplier}
             >
               <Plus size={16} />
-              Add Supplier
+              {t('createOrder.addSupplier')}
             </button>
           </div>
 
@@ -419,13 +505,13 @@ export default function EditOrderPage() {
             <div key={supplier.id} className="supplier-card">
               <div className="supplier-header">
                 <div className="supplier-title">
-                  <span className="supplier-number">Supplier {supplierIndex + 1}</span>
+                  <span className="supplier-number">{t('createOrder.supplier')} {supplierIndex + 1}</span>
                   {suppliers.length > 1 && (
                     <button
                       type="button"
                       className="btn-icon btn-danger"
                       onClick={() => removeSupplier(supplier.id)}
-                      title="Remove supplier"
+                      title={t('createOrder.removeSupplier')}
                     >
                       <X size={18} />
                     </button>
@@ -433,14 +519,14 @@ export default function EditOrderPage() {
                 </div>
                 <div className="form-group">
                   <label>
-                    Supplier Name <span className="required">*</span>
+                    {t('createOrder.supplierName')} <span className="required">*</span>
                   </label>
                   <input
                     type="text"
                     list={`supplier-hints-${supplier.id}`}
                     value={supplier.name}
                     onChange={(e) => updateSupplierName(supplier.id, e.target.value)}
-                    placeholder="Type supplier name (new suppliers will be created automatically)"
+                    placeholder={t('createOrder.enterSupplierName')}
                     className="form-input"
                     required
                   />
@@ -454,14 +540,14 @@ export default function EditOrderPage() {
 
               <div className="products-container">
                 <div className="products-header">
-                  <h3>Products</h3>
+                  <h3>{t('editOrder.products')}</h3>
                   <button
                     type="button"
                     className="btn-secondary btn-sm"
                     onClick={() => addProduct(supplier.id)}
                   >
                     <Plus size={16} />
-                    Add Product
+                    {t('createOrder.addProduct')}
                   </button>
                 </div>
 
@@ -469,7 +555,7 @@ export default function EditOrderPage() {
                   <div key={product.id} className="product-row">
                     <div className="form-group">
                       <label>
-                        Product Reference <span className="required">*</span>
+                        {t('createOrder.productReference')} <span className="required">*</span>
                       </label>
                       <input
                         type="text"
@@ -478,7 +564,7 @@ export default function EditOrderPage() {
                         onChange={(e) =>
                           updateProduct(supplier.id, product.id, 'productRef', e.target.value)
                         }
-                        placeholder="Type product reference"
+                        placeholder={t('createOrder.enterProductRef')}
                         className="form-input"
                         required
                       />
@@ -490,7 +576,7 @@ export default function EditOrderPage() {
                     </div>
                     <div className="form-group">
                       <label>
-                        Quantity <span className="required">*</span>
+                        {t('orderDetail.quantity')} <span className="required">*</span>
                       </label>
                       <input
                         type="text"
@@ -498,14 +584,14 @@ export default function EditOrderPage() {
                         onChange={(e) =>
                           updateProduct(supplier.id, product.id, 'quantity', e.target.value)
                         }
-                        placeholder="e.g., 2"
+                        placeholder={t('createOrder.enterQuantity')}
                         className="form-input"
                         required
                       />
                     </div>
                     <div className="form-group">
                       <label>
-                        Price <span className="required">*</span>
+                        {t('orderDetail.price')} <span className="required">*</span>
                       </label>
                       <input
                         type="text"
@@ -513,7 +599,7 @@ export default function EditOrderPage() {
                         onChange={(e) =>
                           updateProduct(supplier.id, product.id, 'price', e.target.value)
                         }
-                        placeholder="e.g., 29.99"
+                        placeholder={t('createOrder.enterPrice')}
                         className="form-input"
                         required
                       />
@@ -523,7 +609,7 @@ export default function EditOrderPage() {
                         type="button"
                         className="btn-icon btn-danger"
                         onClick={() => removeProduct(supplier.id, product.id)}
-                        title="Remove product"
+                        title={t('createOrder.removeProduct')}
                       >
                         <X size={18} />
                       </button>
@@ -543,7 +629,7 @@ export default function EditOrderPage() {
             onClick={() => navigate(`/orders/${id}`)}
             disabled={saving}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             type="submit"
@@ -553,12 +639,12 @@ export default function EditOrderPage() {
             {saving ? (
               <>
                 <Loader2 className="spinner" size={18} />
-                Saving...
+                {t('editOrder.saving')}
               </>
             ) : (
               <>
                 <Save size={18} />
-                Save Changes
+                {t('editOrder.saveChanges')}
               </>
             )}
           </button>
@@ -570,17 +656,17 @@ export default function EditOrderPage() {
         isOpen={showSaveModal}
         onClose={() => setShowSaveModal(false)}
         onConfirm={confirmSave}
-        title="Confirm Order Update"
+        title={t('editOrder.confirmUpdate')}
         message={
           <div>
-            <p>Are you sure you want to update this order?</p>
+            <p>{t('editOrder.confirmUpdateMessage')}</p>
             <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              All changes will be saved and recorded in the order's audit log. This action will update the order status and history.
+              {t('editOrder.confirmUpdateDetails')}
             </p>
           </div>
         }
-        confirmText="Save Changes"
-        cancelText="Cancel"
+        confirmText={t('editOrder.saveChanges')}
+        cancelText={t('common.cancel')}
         type="info"
         loading={saving}
       />

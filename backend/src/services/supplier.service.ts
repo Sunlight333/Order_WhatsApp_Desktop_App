@@ -16,9 +16,28 @@ export interface UpdateSupplierInput {
 /**
  * List all suppliers
  */
-export async function listSuppliers() {
+export async function listSuppliers(sortBy?: string, sortOrder: 'asc' | 'desc' = 'asc') {
+  // Map frontend sort keys to database fields
+  const sortFieldMap: Record<string, string> = {
+    name: 'name',
+    createdAt: 'createdAt',
+    updatedAt: 'updatedAt',
+    productsCount: 'productsCount', // Will be sorted in memory
+    ordersCount: 'ordersCount', // Will be sorted in memory
+  };
+
+  const sortField = sortBy && sortFieldMap[sortBy] ? sortFieldMap[sortBy] : 'name';
+  
+  // For computed fields, we'll sort in memory
+  const isComputedField = sortField === 'productsCount' || sortField === 'ordersCount';
+  
+  let orderBy: any = { [sortField]: sortOrder };
+  if (isComputedField) {
+    orderBy = { name: 'asc' }; // Default sort, will override in memory
+  }
+
   const suppliers = await prisma.supplier.findMany({
-    orderBy: { name: 'asc' },
+    orderBy,
     include: {
       _count: {
         select: {
@@ -29,7 +48,7 @@ export async function listSuppliers() {
     },
   });
 
-  return suppliers.map((s) => ({
+  let mappedSuppliers = suppliers.map((s) => ({
     id: s.id,
     name: s.name,
     description: s.description,
@@ -38,6 +57,17 @@ export async function listSuppliers() {
     productsCount: s._count.products,
     ordersCount: s._count.orderSuppliers,
   }));
+
+  // Sort computed fields in memory
+  if (isComputedField) {
+    mappedSuppliers.sort((a, b) => {
+      const aValue = sortField === 'productsCount' ? a.productsCount : a.ordersCount;
+      const bValue = sortField === 'productsCount' ? b.productsCount : b.ordersCount;
+      return sortOrder === 'asc' ? aValue - bValue : bValue - aValue;
+    });
+  }
+
+  return mappedSuppliers;
 }
 
 /**

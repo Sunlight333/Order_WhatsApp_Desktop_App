@@ -32,6 +32,27 @@
   letter-spacing: 0.05em;
 }
 
+.suppliers-table th.sortable-header {
+  transition: background-color 0.2s ease, color 0.2s ease;
+  cursor: pointer;
+  user-select: none;
+}
+
+.suppliers-table th.sortable-header:hover {
+  background: var(--bg-hover);
+  color: var(--primary);
+}
+
+.suppliers-table th.sortable-header:active {
+  background: var(--bg-active);
+}
+
+.suppliers-table th.sortable-header > div {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .suppliers-table td {
   padding: var(--spacing-md);
   border-bottom: 1px solid var(--border-light);

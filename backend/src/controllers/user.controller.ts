@@ -11,7 +11,9 @@ import path from 'path';
  */
 export async function listUsersController(req: Request, res: Response): Promise<void> {
   try {
-    const users = await listUsers();
+    const sortBy = req.query.sortBy as string | undefined;
+    const sortOrder = (req.query.sortOrder as 'asc' | 'desc') || 'desc';
+    const users = await listUsers(sortBy, sortOrder);
     res.status(200).json(createSuccessResponse(users));
   } catch (error) {
     throw error;

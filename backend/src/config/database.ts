@@ -104,6 +104,16 @@ async function createDatabaseSchema(): Promise<void> {
         "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
       )`,
       
+      `CREATE TABLE IF NOT EXISTS "customers" (
+        "id" TEXT NOT NULL PRIMARY KEY,
+        "name" TEXT NOT NULL,
+        "phone" TEXT,
+        "countryCode" TEXT DEFAULT '+34',
+        "description" TEXT,
+        "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+      )`,
+      
       `CREATE TABLE IF NOT EXISTS "config" (
         "id" TEXT NOT NULL PRIMARY KEY,
         "key" TEXT NOT NULL UNIQUE,
@@ -126,8 +136,11 @@ async function createDatabaseSchema(): Promise<void> {
       
       `CREATE TABLE IF NOT EXISTS "orders" (
         "id" TEXT NOT NULL PRIMARY KEY,
+        "orderNumber" INTEGER,
         "customerName" TEXT,
-        "customerPhone" TEXT NOT NULL,
+        "customerId" TEXT,
+        "customerPhone" TEXT,
+        "countryCode" TEXT DEFAULT '+34',
         "status" TEXT NOT NULL DEFAULT 'PENDING',
         "notificationMethod" TEXT,
         "observations" TEXT,
@@ -135,7 +148,8 @@ async function createDatabaseSchema(): Promise<void> {
         "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "notifiedAt" DATETIME,
-        FOREIGN KEY ("createdById") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE
+        FOREIGN KEY ("createdById") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+        FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE SET NULL ON UPDATE CASCADE
       )`,
       
       // Tables with foreign keys to orders
@@ -156,6 +170,7 @@ async function createDatabaseSchema(): Promise<void> {
         "productRef" TEXT NOT NULL,
         "quantity" TEXT NOT NULL,
         "price" TEXT NOT NULL,
+        "receivedQuantity" TEXT,
         "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY ("orderId") REFERENCES "orders"("id") ON DELETE CASCADE ON UPDATE CASCADE,
@@ -179,9 +194,13 @@ async function createDatabaseSchema(): Promise<void> {
     
     // Define index creation statements (after tables exist)
     const indexStatements = [
+      `CREATE UNIQUE INDEX IF NOT EXISTS "orders_orderNumber_key" ON "orders"("orderNumber")`,
       `CREATE INDEX IF NOT EXISTS "orders_customerPhone_idx" ON "orders"("customerPhone")`,
+      `CREATE INDEX IF NOT EXISTS "orders_customerId_idx" ON "orders"("customerId")`,
       `CREATE INDEX IF NOT EXISTS "orders_status_idx" ON "orders"("status")`,
       `CREATE INDEX IF NOT EXISTS "orders_createdAt_idx" ON "orders"("createdAt")`,
+      `CREATE INDEX IF NOT EXISTS "orders_orderNumber_idx" ON "orders"("orderNumber")`,
+      `CREATE INDEX IF NOT EXISTS "customers_name_idx" ON "customers"("name")`,
       `CREATE INDEX IF NOT EXISTS "orderProducts_orderId_idx" ON "orderProducts"("orderId")`,
       `CREATE INDEX IF NOT EXISTS "auditLogs_orderId_idx" ON "auditLogs"("orderId")`,
       `CREATE INDEX IF NOT EXISTS "auditLogs_userId_idx" ON "auditLogs"("userId")`,
@@ -250,7 +269,7 @@ async function createDatabaseSchema(): Promise<void> {
       SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%';
     `;
     const tableNames = tables.map(t => t.name.toLowerCase());
-    const requiredTables = ['users', 'orders', 'suppliers', 'products', 'ordersuppliers', 'orderproducts', 'auditlogs', 'config'];
+    const requiredTables = ['users', 'orders', 'suppliers', 'products', 'customers', 'ordersuppliers', 'orderproducts', 'auditlogs', 'config'];
     const missingTables = requiredTables.filter(table => !tableNames.includes(table));
     
     if (missingTables.length > 0) {
@@ -463,6 +482,67 @@ export async function initializeDatabaseConnection(): Promise<void> {
           }
         } else {
           console.log(`✅ Database schema verified (${tables.length} tables found)`);
+          
+          // Check and upgrade schema for missing columns (for existing databases)
+          try {
+            const orderColumns = await prismaClient.$queryRaw<Array<{ name: string }>>`
+              PRAGMA table_info("orders");
+            `;
+            const orderColumnNames = orderColumns.map(c => c.name);
+
+            if (!orderColumnNames.includes('orderNumber')) {
+              console.log('🛠️ Adding missing column orders.orderNumber');
+              await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "orderNumber" INTEGER;`);
+              await prismaClient.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "orders_orderNumber_key" ON "orders"("orderNumber");`);
+            }
+            if (!orderColumnNames.includes('customerId')) {
+              console.log('🛠️ Adding missing column orders.customerId');
+              await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "customerId" TEXT;`);
+              await prismaClient.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "orders_customerId_idx" ON "orders"("customerId");`);
+            }
+            if (!orderColumnNames.includes('customerPhone')) {
+              console.log('🛠️ Adding missing column orders.customerPhone');
+              await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "customerPhone" TEXT;`);
+              await prismaClient.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "orders_customerPhone_idx" ON "orders"("customerPhone");`);
+            }
+            if (!orderColumnNames.includes('countryCode')) {
+              console.log('🛠️ Adding missing column orders.countryCode');
+              await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "countryCode" TEXT DEFAULT '+34';`);
+            }
+
+            // Check and add customers table if missing
+            const tableNames = tables.map(t => t.name.toLowerCase());
+            if (!tableNames.includes('customers')) {
+              console.log('🛠️ Creating missing customers table');
+              await prismaClient.$executeRawUnsafe(`
+                CREATE TABLE IF NOT EXISTS "customers" (
+                  "id" TEXT NOT NULL PRIMARY KEY,
+                  "name" TEXT NOT NULL,
+                  "phone" TEXT,
+                  "countryCode" TEXT DEFAULT '+34',
+                  "description" TEXT,
+                  "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                  "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                );
+              `);
+              await prismaClient.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "customers_name_idx" ON "customers"("name");`);
+            }
+
+            // Check orderProducts table for receivedQuantity column
+            const orderProductColumns = await prismaClient.$queryRaw<Array<{ name: string }>>`
+              PRAGMA table_info("orderProducts");
+            `;
+            const orderProductColumnNames = orderProductColumns.map(c => c.name);
+
+            if (!orderProductColumnNames.includes('receivedQuantity')) {
+              console.log('🛠️ Adding missing column orderProducts.receivedQuantity');
+              await prismaClient.$executeRawUnsafe(`ALTER TABLE "orderProducts" ADD COLUMN "receivedQuantity" TEXT;`);
+            }
+          } catch (upgradeError: any) {
+            console.warn('⚠️  Error during schema upgrade:', upgradeError.message);
+            // Continue anyway - app might still work
+          }
+          
           // Still seed data in case it's missing
           try {
             await seedInitialData(prismaClient);

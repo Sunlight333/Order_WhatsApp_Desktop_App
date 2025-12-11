@@ -13,8 +13,8 @@ function getApiBaseUrl(): string {
   } catch (error) {
     console.warn('⚠️  Config service error:', error);
   }
-  // Fallback if config service is not ready
-  const fallbackUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000/api/v1';
+  // Fallback if config service is not ready - use 127.0.0.1 instead of localhost to avoid IPv6 (::1) issues
+  const fallbackUrl = import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:3000/api/v1';
   console.log('🔗 API Base URL (fallback):', fallbackUrl);
   return fallbackUrl;
 }
@@ -104,7 +104,21 @@ api.interceptors.response.use(
       // Clear token and redirect to login
       localStorage.removeItem('auth_token');
       localStorage.removeItem('auth_user');
-      window.location.href = '/login';
+      // Use window.location for navigation (works with Electron app:// protocol)
+      // The protocol handler will serve index.html for client-side routes
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
+    }
+    
+    // Also handle USER_NOT_FOUND error (can happen after database restore)
+    if (error.response?.data?.error?.code === 'USER_NOT_FOUND') {
+      // Clear token and redirect to login
+      localStorage.removeItem('auth_token');
+      localStorage.removeItem('auth_user');
+      if (window.location.pathname !== '/login') {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

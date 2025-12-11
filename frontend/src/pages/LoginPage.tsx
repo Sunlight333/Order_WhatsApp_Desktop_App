@@ -42,7 +42,11 @@ export default function LoginPage() {
       <div className="login-card">
         <div className="login-header">
           <div className="login-icon">
-            <LogIn size={48} />
+            <img 
+              src="/assets/images/logo.png" 
+              alt="Order Management Logo" 
+              className="login-logo-img"
+            />
           </div>
           <h1>{t('login.title')}</h1>
           <p>{t('login.subtitle')}</p>
@@ -104,7 +108,7 @@ export default function LoginPage() {
 
         <div className="login-footer">
           <p className="login-hint">
-            Default credentials: <strong>admin</strong> / <strong>admin123</strong>
+            {t('login.defaultCredentials')}: <strong>admin</strong> / <strong>admin123</strong>
           </p>
           <button
             type="button"
@@ -120,7 +124,7 @@ export default function LoginPage() {
             }}
           >
             <Settings size={18} />
-            Configure Application Settings
+            {t('settings.configureApplicationSettings')}
           </button>
         </div>
       </div>

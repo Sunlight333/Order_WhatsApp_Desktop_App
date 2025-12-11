@@ -28,19 +28,23 @@ import authRoutes from './routes/auth.routes';
 import orderRoutes from './routes/order.routes';
 import supplierRoutes from './routes/supplier.routes';
 import productRoutes from './routes/product.routes';
+import customerRoutes from './routes/customer.routes';
 import configRoutes from './routes/config.routes';
 import userRoutes from './routes/user.routes';
 import databaseRoutes from './routes/database.routes';
 import backupRoutes from './routes/backup.routes';
+import analyticsRoutes from './routes/analytics.routes';
 
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/orders', orderRoutes);
 app.use('/api/v1/suppliers', supplierRoutes);
 app.use('/api/v1/products', productRoutes);
+app.use('/api/v1/customers', customerRoutes);
 app.use('/api/v1/config', configRoutes);
 app.use('/api/v1/users', userRoutes);
 app.use('/api/v1/database', databaseRoutes);
 app.use('/api/v1/backup', backupRoutes);
+app.use('/api/v1/analytics', analyticsRoutes);
 // etc.
 
 // Error handling middleware (must be last)
@@ -127,7 +131,17 @@ export async function createServer(port: number = env.port): Promise<{ app: expr
 
 // For standalone server execution (not in Electron)
 if (require.main === module) {
-  createServer().then(({ server }) => {
+  // Use the port from env config (from .env file or process.env.PORT)
+  const port = env.port;
+  console.log(`🚀 Starting standalone server on port ${port}...`);
+  
+  createServer(port).then(({ server }) => {
+    if (!server) {
+      console.error('❌ Server failed to start');
+      process.exit(1);
+      return;
+    }
+    
     process.on('SIGTERM', () => {
       console.log('SIGTERM signal received: closing HTTP server');
       server.close(() => {

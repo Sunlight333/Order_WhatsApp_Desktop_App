@@ -6,6 +6,7 @@ import {
   updateOrderStatusController,
   updateOrderController,
 } from '../controllers/order.controller';
+import { updateProductReceivedController } from '../controllers/order-product.controller';
 import { authenticate } from '../middleware/auth.middleware';
 
 const router = Router();
@@ -44,6 +45,13 @@ router.put('/:id', authenticate, updateOrderController);
  * @access  Private
  */
 router.patch('/:id/status', authenticate, updateOrderStatusController);
+
+/**
+ * @route   PATCH /api/v1/orders/:orderId/products/:productId/received
+ * @desc    Update received quantity for an order product
+ * @access  Private
+ */
+router.patch('/:orderId/products/:productId/received', authenticate, updateProductReceivedController);
 
 export default router;
 

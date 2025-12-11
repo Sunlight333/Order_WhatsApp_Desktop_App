@@ -64,13 +64,15 @@ class ConfigService {
 
   /**
    * Save configuration via Electron
+   * Returns information about whether server restart is needed
    */
-  async saveConfig(config: Partial<AppConfig>): Promise<void> {
+  async saveConfig(config: Partial<AppConfig>): Promise<{ needsRestart: boolean; newPort?: number }> {
     try {
       if (window.electron?.config) {
-        await window.electron.config.save(config);
+        const result = await window.electron.config.save(config);
         // Reload config after saving
         await this.loadConfig();
+        return result || { needsRestart: false };
       } else {
         // Fallback to localStorage if Electron is not available
         const current = await this.loadConfig();
@@ -78,6 +80,7 @@ class ConfigService {
         localStorage.setItem('app_config', JSON.stringify(updated));
         this.config = updated;
         this.notifyListeners();
+        return { needsRestart: false };
       }
     } catch (error: any) {
       console.error('Failed to save config:', error);
@@ -119,9 +122,9 @@ class ConfigService {
       return `http://${config.serverAddress}:${port}/api/v1`;
     }
     
-    // Server mode or fallback
+    // Server mode or fallback - use 127.0.0.1 instead of localhost to avoid IPv6 (::1) issues
     const port = config.serverPort || 3000;
-    return `http://localhost:${port}/api/v1`;
+    return `http://127.0.0.1:${port}/api/v1`;
   }
 
   /**
@@ -135,9 +138,9 @@ class ConfigService {
       return `http://${config.serverAddress}:${port}`;
     }
     
-    // Server mode or fallback
+    // Server mode or fallback - use 127.0.0.1 instead of localhost to avoid IPv6 (::1) issues
     const port = config.serverPort || 3000;
-    return `http://localhost:${port}`;
+    return `http://127.0.0.1:${port}`;
   }
 
   /**

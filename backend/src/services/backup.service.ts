@@ -466,13 +466,16 @@ async function restoreMySQL(backupFilePath: string, password?: string): Promise<
     
     // Check if encrypted
     const encrypted = isEncrypted(fileBuffer);
-    if (encrypted && !password) {
+    if (encrypted && (!password || password.trim().length === 0)) {
       throw createError('PASSWORD_REQUIRED', 'This backup file is encrypted. Password is required.', 400);
     }
 
     // Decrypt if needed
     if (encrypted) {
-      sqlData = decryptData(fileBuffer, password!);
+      if (!password || password.trim().length === 0) {
+        throw createError('PASSWORD_REQUIRED', 'This backup file is encrypted. Password is required.', 400);
+      }
+      sqlData = decryptData(fileBuffer, password.trim());
     } else {
       sqlData = fileBuffer;
     }
@@ -539,13 +542,16 @@ async function restorePostgreSQL(backupFilePath: string, password?: string): Pro
     
     // Check if encrypted
     const encrypted = isEncrypted(fileBuffer);
-    if (encrypted && !password) {
+    if (encrypted && (!password || password.trim().length === 0)) {
       throw createError('PASSWORD_REQUIRED', 'This backup file is encrypted. Password is required.', 400);
     }
 
     // Decrypt if needed
     if (encrypted) {
-      sqlData = decryptData(fileBuffer, password!);
+      if (!password || password.trim().length === 0) {
+        throw createError('PASSWORD_REQUIRED', 'This backup file is encrypted. Password is required.', 400);
+      }
+      sqlData = decryptData(fileBuffer, password.trim());
     } else {
       sqlData = fileBuffer;
     }
@@ -622,8 +628,8 @@ export async function restoreDatabase(backupFilePath: string, password?: string)
       // Check if file is encrypted
       const encrypted = isEncrypted(fileBuffer);
 
-      // If encrypted, require password
-      if (encrypted && !password) {
+      // If encrypted, require password (check for both undefined and empty string)
+      if (encrypted && (!password || password.trim().length === 0)) {
         throw createError('PASSWORD_REQUIRED', 'This backup file is encrypted. Password is required.', 400);
       }
 
@@ -631,8 +637,14 @@ export async function restoreDatabase(backupFilePath: string, password?: string)
       let dbData: Buffer;
       if (encrypted) {
         try {
-          dbData = decryptData(fileBuffer, password!);
+          if (!password || password.trim().length === 0) {
+            throw createError('PASSWORD_REQUIRED', 'This backup file is encrypted. Password is required.', 400);
+          }
+          dbData = decryptData(fileBuffer, password.trim());
         } catch (error: any) {
+          if (error.code === 'PASSWORD_REQUIRED') {
+            throw error;
+          }
           if (error.code === 'DECRYPTION_FAILED' || error.code === 'INVALID_ENCRYPTED_FILE') {
             throw error;
           }

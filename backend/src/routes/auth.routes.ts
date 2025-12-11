@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { loginController, meController, updateProfileController, uploadProfileAvatarController, logoutController } from '../controllers/auth.controller';
+import { loginController, meController, updateProfileController, uploadProfileAvatarController, logoutController, verifyAdminPasswordController } from '../controllers/auth.controller';
 import { authenticate } from '../middleware/auth.middleware';
 import { uploadAvatar } from '../middleware/upload.middleware';
 
@@ -39,6 +39,13 @@ router.post('/profile/avatar', authenticate, uploadAvatar.single('avatar'), uplo
  * @access  Private
  */
 router.post('/logout', authenticate, logoutController);
+
+/**
+ * @route   POST /api/v1/auth/verify-admin-password
+ * @desc    Verify admin password for accessing protected settings
+ * @access  Private
+ */
+router.post('/verify-admin-password', authenticate, verifyAdminPasswordController);
 
 export default router;
 

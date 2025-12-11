@@ -26,13 +26,14 @@ declare global {
       getVersion: () => Promise<string>;
       config: {
         get: () => Promise<AppConfig>;
-        save: (config: Partial<AppConfig>) => Promise<void>;
+        save: (config: Partial<AppConfig>) => Promise<{ needsRestart: boolean; newPort?: number }>;
       };
       openExternal: (url: string) => Promise<{ success: boolean }>;
       dialog: {
         showSaveDialog: (options: Electron.SaveDialogOptions) => Promise<Electron.SaveDialogReturnValue>;
         showOpenDialog: (options: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>;
       };
+      getLocalIp: () => Promise<string>;
     };
   }
 }
