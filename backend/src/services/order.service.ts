@@ -292,12 +292,18 @@ export async function updateOrderStatus(
   orderId: string,
   userId: string,
   status: string,
-  notificationMethod?: string
+  notificationMethod?: string,
+  cancellationReason?: string
 ) {
-  const validStatuses = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO'];
+  const validStatuses = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO', 'DELIVERED_COUNTER'];
   
   if (!validStatuses.includes(status)) {
     throw createError('INVALID_STATUS', 'Invalid order status', 400);
+  }
+
+  // Validate cancellation reason is required when cancelling
+  if (status === 'CANCELLED' && (!cancellationReason || !cancellationReason.trim())) {
+    throw createError('CANCELLATION_REASON_REQUIRED', 'Cancellation reason is required', 400);
   }
 
   // Get current order
@@ -319,6 +325,7 @@ export async function updateOrderStatus(
         status,
         notificationMethod: notificationMethod || null,
         notifiedAt: status.startsWith('NOTIFIED_') ? new Date() : undefined,
+        cancellationReason: status === 'CANCELLED' ? (cancellationReason?.trim() || null) : null,
       },
     });
 
@@ -333,6 +340,7 @@ export async function updateOrderStatus(
         newValue: status,
         metadata: JSON.stringify({
           notificationMethod,
+          cancellationReason: status === 'CANCELLED' ? cancellationReason : undefined,
         }),
       },
     });
@@ -427,6 +435,16 @@ export async function listOrders(options: {
   status?: string;
   dateFrom?: string;
   dateTo?: string;
+  updatedDateFrom?: string;
+  updatedDateTo?: string;
+  supplierIds?: string;
+  customerId?: string;
+  createdById?: string;
+  minAmount?: string;
+  maxAmount?: string;
+  minOrderNumber?: string;
+  maxOrderNumber?: string;
+  hasObservations?: string;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
 }) {
@@ -436,23 +454,34 @@ export async function listOrders(options: {
 
   const where: any = {};
   
-  // Date filters
+  // Created date filters
   if (options.dateFrom || options.dateTo) {
     where.createdAt = {};
     if (options.dateFrom) {
       where.createdAt.gte = new Date(options.dateFrom);
     }
     if (options.dateTo) {
-      // Add one day to include the entire end date
       const endDate = new Date(options.dateTo);
       endDate.setHours(23, 59, 59, 999);
       where.createdAt.lte = endDate;
     }
   }
 
+  // Updated date filters
+  if (options.updatedDateFrom || options.updatedDateTo) {
+    where.updatedAt = {};
+    if (options.updatedDateFrom) {
+      where.updatedAt.gte = new Date(options.updatedDateFrom);
+    }
+    if (options.updatedDateTo) {
+      const endDate = new Date(options.updatedDateTo);
+      endDate.setHours(23, 59, 59, 999);
+      where.updatedAt.lte = endDate;
+    }
+  }
+
   // Search filter (SQLite doesn't support case-insensitive mode, but contains works)
   if (options.search) {
-    // Try to parse search as number for orderNumber search
     const searchAsNumber = parseInt(options.search, 10);
     const isNumberSearch = !isNaN(searchAsNumber) && searchAsNumber.toString() === options.search.trim();
     
@@ -464,9 +493,70 @@ export async function listOrders(options: {
     ];
   }
 
-  // Status filter
+  // Status filter (supports comma-separated multiple statuses)
   if (options.status) {
-    where.status = options.status;
+    const statuses = options.status.split(',').map(s => s.trim()).filter(Boolean);
+    if (statuses.length === 1) {
+      where.status = statuses[0];
+    } else if (statuses.length > 1) {
+      where.status = { in: statuses };
+    }
+  }
+
+  // Customer filter
+  if (options.customerId) {
+    where.customerId = options.customerId;
+  }
+
+  // Created by filter
+  if (options.createdById) {
+    where.createdById = options.createdById;
+  }
+
+  // Order number range filter
+  if (options.minOrderNumber || options.maxOrderNumber) {
+    where.orderNumber = {};
+    if (options.minOrderNumber) {
+      where.orderNumber.gte = parseInt(options.minOrderNumber, 10);
+    }
+    if (options.maxOrderNumber) {
+      where.orderNumber.lte = parseInt(options.maxOrderNumber, 10);
+    }
+  }
+
+  // Observations filter
+  if (options.hasObservations === 'true') {
+    where.AND = [
+      ...(where.AND || []),
+      {
+        AND: [
+          { observations: { not: null } },
+          { observations: { not: '' } },
+        ],
+      },
+    ];
+  } else if (options.hasObservations === 'false') {
+    where.AND = [
+      ...(where.AND || []),
+      {
+        OR: [
+          { observations: null },
+          { observations: '' },
+        ],
+      },
+    ];
+  }
+
+  // Supplier filter - needs to be applied through OrderSupplier relation
+  if (options.supplierIds) {
+    const supplierIds = options.supplierIds.split(',').map(s => s.trim()).filter(Boolean);
+    if (supplierIds.length > 0) {
+      where.suppliers = {
+        some: {
+          supplierId: { in: supplierIds },
+        },
+      };
+    }
   }
 
   // Sorting - default to createdAt desc
@@ -555,7 +645,7 @@ export async function listOrders(options: {
     prisma.order.count({ where }),
   ]);
 
-  // Format orders
+  // Format orders and apply amount filter if needed
   let formattedOrders = orders.map((order) => {
     const totalAmount = order.products.reduce((sum, product) => {
       const quantity = parseFloat(product.quantity) || 0;
@@ -576,6 +666,16 @@ export async function listOrders(options: {
       })),
     };
   });
+
+  // Apply amount range filter if specified (after computing totalAmount)
+  if (options.minAmount || options.maxAmount) {
+    formattedOrders = formattedOrders.filter((order) => {
+      const amount = parseFloat(order.totalAmount) || 0;
+      const minAmount = options.minAmount ? parseFloat(options.minAmount) : 0;
+      const maxAmount = options.maxAmount ? parseFloat(options.maxAmount) : Infinity;
+      return amount >= minAmount && amount <= maxAmount;
+    });
+  }
 
   // If sorting by totalAmount (computed field), sort in memory
   if (shouldSortByTotalAmount) {
@@ -739,11 +839,121 @@ export async function updateOrder(orderId: string, userId: string, input: Update
       observations: input.observations?.trim(),
     };
     
+    // Track field changes for order basic info
+    const fieldChanges: Array<{
+      field: string;
+      oldValue: string | null;
+      newValue: string | null;
+      metadata?: any;
+    }> = [];
+
+    // Check customerName change
+    if (existingOrder.customerName !== finalCustomerName) {
+      fieldChanges.push({
+        field: 'customerName',
+        oldValue: existingOrder.customerName,
+        newValue: finalCustomerName,
+      });
+    }
+
+    // Check customerPhone change
+    if (existingOrder.customerPhone !== finalCustomerPhone) {
+      fieldChanges.push({
+        field: 'customerPhone',
+        oldValue: existingOrder.customerPhone,
+        newValue: finalCustomerPhone,
+      });
+    }
+
+    // Check countryCode change
+    const oldCountryCode = existingOrder.countryCode || '+34';
+    const newCountryCode = finalCountryCode || '+34';
+    if (oldCountryCode !== newCountryCode) {
+      fieldChanges.push({
+        field: 'countryCode',
+        oldValue: oldCountryCode,
+        newValue: newCountryCode,
+      });
+    }
+
+    // Check observations change
+    const oldObservations = existingOrder.observations || '';
+    const newObservations = input.observations?.trim() || '';
+    if (oldObservations !== newObservations) {
+      fieldChanges.push({
+        field: 'observations',
+        oldValue: oldObservations || null,
+        newValue: newObservations || null,
+      });
+    }
+
+    // Get existing order suppliers BEFORE deletion to track supplier changes
+    const existingSuppliers = await tx.orderSupplier.findMany({
+      where: { orderId },
+      include: {
+        supplier: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Get existing order products BEFORE deletion to track product changes
+    const existingProducts = await tx.orderProduct.findMany({
+      where: { orderId },
+      include: {
+        supplier: {
+          select: {
+            id: true,
+            name: true,
+          },
+        },
+      },
+    });
+
+    // Create a map of existing suppliers by supplierId
+    const existingSuppliersMap = new Map<string, string>();
+    existingSuppliers.forEach((orderSupplier) => {
+      existingSuppliersMap.set(orderSupplier.supplierId, orderSupplier.supplier.name);
+    });
+
+    // Create a map of existing products by supplierId + productRef for quick lookup
+    const existingProductsMap = new Map<string, { 
+      price: string; 
+      quantity: string;
+      supplierName: string;
+    }>();
+    existingProducts.forEach((product) => {
+      const key = `${product.supplierId}|${product.productRef}`;
+      existingProductsMap.set(key, {
+        price: product.price,
+        quantity: product.quantity,
+        supplierName: product.supplier.name,
+      });
+    });
+
     // Update order basic info
     const updatedOrder = await tx.order.update({
       where: { id: orderId },
       data: updateData,
     });
+
+    // Create audit logs for field changes
+    for (const change of fieldChanges) {
+      await tx.auditLog.create({
+        data: {
+          orderId,
+          userId,
+          action: 'UPDATE',
+          fieldChanged: change.field,
+          oldValue: change.oldValue,
+          newValue: change.newValue,
+          metadata: change.metadata ? JSON.stringify(change.metadata) : null,
+        },
+      });
+    }
 
     // Delete existing order-supplier and order-product relationships
     await tx.orderSupplier.deleteMany({
@@ -764,6 +974,9 @@ export async function updateOrder(orderId: string, userId: string, input: Update
       price: string;
     }> = [];
 
+    // Track new suppliers (for audit log)
+    const newSupplierIds = new Set<string>();
+
     for (const supplierData of input.suppliers) {
       // Find or create supplier
       let supplier;
@@ -774,6 +987,27 @@ export async function updateOrder(orderId: string, userId: string, input: Update
         }
       } else {
         supplier = await findOrCreateSupplierInTx(supplierData.name);
+      }
+
+      newSupplierIds.add(supplier.id);
+
+      // Track supplier addition/removal
+      if (!existingSuppliersMap.has(supplier.id)) {
+        // New supplier added
+        await tx.auditLog.create({
+          data: {
+            orderId,
+            userId,
+            action: 'UPDATE',
+            fieldChanged: 'supplier',
+            oldValue: null,
+            newValue: supplier.name,
+            metadata: JSON.stringify({
+              supplierId: supplier.id,
+              action: 'added',
+            }),
+          },
+        });
       }
 
       orderSuppliers.push({
@@ -794,12 +1028,129 @@ export async function updateOrder(orderId: string, userId: string, input: Update
           product = await findOrCreateProductInTx(supplier.id, productData.productRef);
         }
 
+        const newPrice = productData.price.trim();
+        const newQuantity = productData.quantity.trim();
+        const productKey = `${supplier.id}|${product.reference}`;
+        const existingProduct = existingProductsMap.get(productKey);
+
+        if (existingProduct) {
+          // Product exists - track changes
+          // Track price changes
+          if (existingProduct.price !== newPrice) {
+            await tx.auditLog.create({
+              data: {
+                orderId,
+                userId,
+                action: 'UPDATE',
+                fieldChanged: 'price',
+                oldValue: existingProduct.price,
+                newValue: newPrice,
+                metadata: JSON.stringify({
+                  productRef: product.reference,
+                  supplierName: supplier.name,
+                  supplierId: supplier.id,
+                }),
+              },
+            });
+          }
+
+          // Track quantity changes
+          if (existingProduct.quantity !== newQuantity) {
+            await tx.auditLog.create({
+              data: {
+                orderId,
+                userId,
+                action: 'UPDATE',
+                fieldChanged: 'quantity',
+                oldValue: existingProduct.quantity,
+                newValue: newQuantity,
+                metadata: JSON.stringify({
+                  productRef: product.reference,
+                  supplierName: supplier.name,
+                  supplierId: supplier.id,
+                }),
+              },
+            });
+          }
+        } else {
+          // New product added
+          await tx.auditLog.create({
+            data: {
+              orderId,
+              userId,
+              action: 'UPDATE',
+              fieldChanged: 'product',
+              oldValue: null,
+              newValue: product.reference,
+              metadata: JSON.stringify({
+                productRef: product.reference,
+                supplierName: supplier.name,
+                supplierId: supplier.id,
+                quantity: newQuantity,
+                price: newPrice,
+                action: 'added',
+              }),
+            },
+          });
+        }
+
         orderProducts.push({
           orderId,
           supplierId: supplier.id,
           productRef: product.reference,
-          quantity: productData.quantity.trim(),
-          price: productData.price.trim(),
+          quantity: newQuantity,
+          price: newPrice,
+        });
+      }
+    }
+
+    // Track removed suppliers
+    for (const [supplierId, supplierName] of existingSuppliersMap.entries()) {
+      if (!newSupplierIds.has(supplierId)) {
+        await tx.auditLog.create({
+          data: {
+            orderId,
+            userId,
+            action: 'UPDATE',
+            fieldChanged: 'supplier',
+            oldValue: supplierName,
+            newValue: null,
+            metadata: JSON.stringify({
+              supplierId,
+              action: 'removed',
+            }),
+          },
+        });
+      }
+    }
+
+    // Track removed products (products that existed but are not in the new list)
+    // Build set of new product keys from orderProducts array
+    const newProductKeys = new Set<string>();
+    for (const product of orderProducts) {
+      const key = `${product.supplierId}|${product.productRef}`;
+      newProductKeys.add(key);
+    }
+
+    // Check for removed products
+    for (const [productKey, productData] of existingProductsMap.entries()) {
+      if (!newProductKeys.has(productKey)) {
+        const [supplierId, productRef] = productKey.split('|');
+        await tx.auditLog.create({
+          data: {
+            orderId,
+            userId,
+            action: 'UPDATE',
+            fieldChanged: 'product',
+            oldValue: productRef,
+            newValue: null,
+            metadata: JSON.stringify({
+              productRef,
+              supplierName: productData.supplierName,
+              supplierId,
+              action: 'removed',
+            }),
+          },
         });
       }
     }
@@ -815,19 +1166,6 @@ export async function updateOrder(orderId: string, userId: string, input: Update
         data: orderProducts,
       });
     }
-
-    // Create audit log
-    await tx.auditLog.create({
-      data: {
-        orderId,
-        userId,
-        action: 'UPDATE',
-        metadata: JSON.stringify({
-          suppliersCount: input.suppliers.length,
-          productsCount: input.suppliers.reduce((sum, s) => sum + s.products.length, 0),
-        }),
-      },
-    });
   });
 
   // Return updated order

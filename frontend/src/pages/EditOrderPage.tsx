@@ -502,7 +502,15 @@ export default function EditOrderPage() {
           </div>
 
           {suppliers.map((supplier, supplierIndex) => (
-            <div key={supplier.id} className="supplier-card">
+            <div 
+              key={supplier.id} 
+              className="supplier-card"
+              data-supplier-index={supplierIndex}
+              style={{
+                borderLeft: `4px solid var(--supplier-color-${(supplierIndex % 6) + 1})`,
+                boxShadow: `0 2px 8px rgba(0, 0, 0, 0.08), inset 0 0 0 1px var(--supplier-color-${(supplierIndex % 6) + 1})20`
+              }}
+            >
               <div className="supplier-header">
                 <div className="supplier-title">
                   <span className="supplier-number">{t('createOrder.supplier')} {supplierIndex + 1}</span>
@@ -512,8 +520,9 @@ export default function EditOrderPage() {
                       className="btn-icon btn-danger"
                       onClick={() => removeSupplier(supplier.id)}
                       title={t('createOrder.removeSupplier')}
+                      aria-label={t('createOrder.removeSupplier')}
                     >
-                      <X size={18} />
+                      <X />
                     </button>
                   )}
                 </div>
@@ -610,8 +619,9 @@ export default function EditOrderPage() {
                         className="btn-icon btn-danger"
                         onClick={() => removeProduct(supplier.id, product.id)}
                         title={t('createOrder.removeProduct')}
+                        aria-label={t('createOrder.removeProduct')}
                       >
-                        <X size={18} />
+                        <X />
                       </button>
                     )}
                   </div>

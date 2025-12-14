@@ -29,6 +29,16 @@ export interface OrderStatistics {
   averageOrderValue: number;
 }
 
+export interface SupplierMonthlyData {
+  supplierId: string;
+  supplierName: string;
+  monthlyData: {
+    month: string; // "YYYY-MM"
+    totalAmount: number;
+    orderCount: number;
+  }[];
+}
+
 /**
  * Get top products (most requested references) by quantity
  */
@@ -225,5 +235,139 @@ export async function getOrderStatistics(): Promise<OrderStatistics> {
     })),
     averageOrderValue,
   };
+}
+
+/**
+ * Get supplier monthly assessment data
+ * Returns monthly totals (amount and order count) for each supplier
+ */
+export async function getSupplierMonthlyData(
+  year?: number,
+  month?: number,
+  supplierId?: string
+): Promise<SupplierMonthlyData[]> {
+  // Default to current year if not specified
+  const targetYear = year || new Date().getFullYear();
+  
+  // Build where clause
+  const where: any = {};
+  
+  // Filter by year and optionally by month - use UTC to avoid timezone issues
+  let dateStart: Date;
+  let dateEnd: Date;
+  
+  if (month !== undefined && month !== null) {
+    // Filter by specific month (1-12)
+    const targetMonth = Math.max(1, Math.min(12, month));
+    dateStart = new Date(Date.UTC(targetYear, targetMonth - 1, 1, 0, 0, 0, 0));
+    // Use first moment of next month minus 1ms to include all of the last day
+    dateEnd = new Date(Date.UTC(targetYear, targetMonth, 1, 0, 0, 0, 0) - 1);
+  } else {
+    // Filter by entire year
+    dateStart = new Date(Date.UTC(targetYear, 0, 1, 0, 0, 0, 0));
+    // Use first moment of next year minus 1ms to include all of December 31st
+    dateEnd = new Date(Date.UTC(targetYear + 1, 0, 1, 0, 0, 0, 0) - 1);
+  }
+  
+  where.createdAt = {
+    gte: dateStart,
+    lte: dateEnd,
+  };
+
+  // Get all orders with products for the specified year
+  const orders = await prisma.order.findMany({
+    where,
+    select: {
+      id: true,
+      createdAt: true,
+      products: {
+        select: {
+          supplierId: true,
+          quantity: true,
+          price: true,
+        },
+      },
+    },
+  });
+
+  // Get all suppliers (or specific supplier if filtered)
+  const supplierWhere: any = {};
+  if (supplierId) {
+    supplierWhere.id = supplierId;
+  }
+  
+  const suppliers = await prisma.supplier.findMany({
+    where: supplierWhere,
+    select: {
+      id: true,
+      name: true,
+    },
+  });
+
+  // Group data by supplier and month
+  const supplierDataMap = new Map<string, Map<string, { totalAmount: number; orderCount: Set<string> }>>();
+
+  // Initialize all suppliers with months (all months if no month filter, or just the selected month)
+  const monthsToInclude = month !== undefined && month !== null 
+    ? [month] 
+    : Array.from({ length: 12 }, (_, i) => i + 1);
+  
+  suppliers.forEach((supplier) => {
+    const monthMap = new Map<string, { totalAmount: number; orderCount: Set<string> }>();
+    monthsToInclude.forEach((m) => {
+      const monthStr = `${targetYear}-${String(m).padStart(2, '0')}`;
+      monthMap.set(monthStr, { totalAmount: 0, orderCount: new Set() });
+    });
+    supplierDataMap.set(supplier.id, monthMap);
+  });
+
+  // Process orders
+  for (const order of orders) {
+    const orderMonth = `${targetYear}-${String(order.createdAt.getMonth() + 1).padStart(2, '0')}`;
+    
+    // Group products by supplier
+    const orderSuppliers = new Map<string, { amount: number }>();
+    
+    for (const product of order.products) {
+      if (!orderSuppliers.has(product.supplierId)) {
+        orderSuppliers.set(product.supplierId, { amount: 0 });
+      }
+      const quantity = parseFloat(product.quantity || '0');
+      const price = parseFloat(product.price || '0');
+      orderSuppliers.get(product.supplierId)!.amount += quantity * price;
+    }
+
+    // Update supplier monthly data
+    for (const [supplierId, data] of orderSuppliers.entries()) {
+      const supplierMonthMap = supplierDataMap.get(supplierId);
+      if (supplierMonthMap) {
+        const monthData = supplierMonthMap.get(orderMonth);
+        if (monthData) {
+          monthData.totalAmount += data.amount;
+          monthData.orderCount.add(order.id);
+        }
+      }
+    }
+  }
+
+  // Convert to response format
+  const result: SupplierMonthlyData[] = suppliers.map((supplier) => {
+    const monthMap = supplierDataMap.get(supplier.id)!;
+    const monthlyData = Array.from(monthMap.entries())
+      .map(([month, data]) => ({
+        month,
+        totalAmount: data.totalAmount,
+        orderCount: data.orderCount.size,
+      }))
+      .sort((a, b) => a.month.localeCompare(b.month)); // Sort by month, include all months
+
+    return {
+      supplierId: supplier.id,
+      supplierName: supplier.name,
+      monthlyData,
+    };
+  }).filter((data) => data.monthlyData.length > 0); // Only include suppliers with data
+
+  return result;
 }
 

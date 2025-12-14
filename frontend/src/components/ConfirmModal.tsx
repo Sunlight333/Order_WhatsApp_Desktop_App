@@ -7,11 +7,13 @@ interface ConfirmModalProps {
   onClose: () => void;
   onConfirm: () => void;
   title: string;
-  message: string | ReactNode;
+  message?: string | ReactNode;
   confirmText?: string;
   cancelText?: string;
   type?: 'danger' | 'warning' | 'info' | 'success';
   loading?: boolean;
+  hideCancel?: boolean;
+  customContent?: ReactNode;
 }
 
 export default function ConfirmModal({
@@ -24,6 +26,8 @@ export default function ConfirmModal({
   cancelText = 'Cancel',
   type = 'warning',
   loading = false,
+  hideCancel = false,
+  customContent,
 }: ConfirmModalProps) {
   if (!isOpen) return null;
 
@@ -72,16 +76,22 @@ export default function ConfirmModal({
           </button>
         </div>
         <div className="modal-body">
-          <div className="modal-message">{message}</div>
+          {customContent ? (
+            <div className="modal-custom-content">{customContent}</div>
+          ) : message ? (
+            <div className="modal-message">{message}</div>
+          ) : null}
         </div>
         <div className="modal-actions">
-          <button
-            className="btn-secondary"
-            onClick={onClose}
-            disabled={loading}
-          >
-            {cancelText}
-          </button>
+          {!hideCancel && (
+            <button
+              className="btn-secondary"
+              onClick={onClose}
+              disabled={loading}
+            >
+              {cancelText}
+            </button>
+          )}
           <button
             className={`btn ${getButtonClass()}`}
             onClick={onConfirm}

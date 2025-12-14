@@ -3,6 +3,7 @@ import { testDatabaseConnection, initializeDatabase, DatabaseTestConfig } from '
 import { createSuccessResponse } from '../utils/response.util';
 import { createErrorResponse } from '../utils/error.util';
 import { PrismaClient } from '@prisma/client';
+import { upgradeDatabaseSchema } from '../config/database';
 
 /**
  * Test database connection
@@ -139,6 +140,36 @@ export async function initializeDatabaseController(req: Request, res: Response) 
   } catch (error: any) {
     res.status(500).json(
       createErrorResponse('INTERNAL_ERROR', error.message || 'Failed to initialize database')
+    );
+  }
+}
+
+/**
+ * Upgrade database schema (add missing columns and tables)
+ * POST /api/v1/database/upgrade
+ */
+export async function upgradeDatabaseController(req: Request, res: Response) {
+  try {
+    const result = await upgradeDatabaseSchema();
+
+    if (result.success) {
+      res.status(200).json(
+        createSuccessResponse(
+          {
+            message: result.message,
+            changes: result.changes,
+          },
+          result.message
+        )
+      );
+    } else {
+      res.status(400).json(
+        createErrorResponse('UPGRADE_FAILED', result.message)
+      );
+    }
+  } catch (error: any) {
+    res.status(500).json(
+      createErrorResponse('INTERNAL_ERROR', error.message || 'Failed to upgrade database schema')
     );
   }
 }

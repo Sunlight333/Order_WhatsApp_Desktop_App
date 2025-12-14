@@ -25,8 +25,8 @@ model User {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
   
-  createdOrders Order[]     @relation("OrderCreator")
-  auditLogs     AuditLog[]  @relation("AuditLogUser")
+  createdOrders Order[]         @relation("OrderCreator")
+  auditLogs     AuditLog[]      @relation("AuditLogUser")
   
   @@map("users")
 }
@@ -69,7 +69,7 @@ model Customer {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   
-  orders Order[] @relation("CustomerOrders")
+  orders Order[]           @relation("CustomerOrders")
   
   @@index([name])
   @@map("customers")
@@ -85,6 +85,7 @@ model Order {
   status            String   @default("PENDING") // PENDING | RECEIVED | NOTIFIED_CALL | NOTIFIED_WHATSAPP | CANCELLED | INCOMPLETO
   notificationMethod String? // CALL | WHATSAPP
   observations      String?
+  cancellationReason String? // Reason for cancellation (required when status is CANCELLED)
   createdById       String
   createdAt         DateTime @default(now())
   updatedAt         DateTime @updatedAt

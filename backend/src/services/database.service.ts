@@ -86,6 +86,7 @@ async function createDatabaseSchema(prismaClient: PrismaClient, dbType: string =
       "status" TEXT NOT NULL DEFAULT 'PENDING',
       "notificationMethod" TEXT,
       "observations" TEXT,
+      "cancellationReason" TEXT,
       "createdById" TEXT NOT NULL,
       "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Save, Database, Server, Monitor, Loader2, CheckCircle, AlertCircle, RefreshCw, Wifi, ArrowLeft, MessageSquare, Download, Upload, HardDrive, User, Image as ImageIcon, X, Globe } from 'lucide-react';
+import { Save, Database, Server, Monitor, Loader2, CheckCircle, AlertCircle, RefreshCw, Wifi, ArrowLeft, MessageSquare, Download, Upload, HardDrive, User, Image as ImageIcon, X, Globe, Palette } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
@@ -10,6 +10,7 @@ import api, { updateApiBaseUrl } from '../lib/api';
 import '../styles/settings.css';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
+import { clearStatusConfigCache } from '../hooks/useOrderStatusConfig';
 
 // Helper function to get full avatar URL
 function getAvatarUrl(avatarPath: string | null | undefined): string | null {
@@ -29,6 +30,7 @@ export default function SettingsPage() {
   const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
   const [connectionMessage, setConnectionMessage] = useState('');
   const [initializingDatabase, setInitializingDatabase] = useState(false);
+  const [upgradingDatabase, setUpgradingDatabase] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
   const [localIp, setLocalIp] = useState<string>('');
   const [whatsappMessage, setWhatsappMessage] = useState<string>('');
@@ -57,6 +59,11 @@ export default function SettingsPage() {
     // Check if password was verified in this session
     return sessionStorage.getItem('settings_password_verified') === 'true';
   });
+  const [orderStatusConfig, setOrderStatusConfig] = useState<Record<string, any>>({});
+  const [loadingStatusConfig, setLoadingStatusConfig] = useState(false);
+  const [savingStatusConfig, setSavingStatusConfig] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState<string>('PENDING');
+  const [activeTab, setActiveTab] = useState<'system' | 'user'>('system');
 
   useEffect(() => {
     loadSettings();
@@ -70,8 +77,13 @@ export default function SettingsPage() {
       }
     });
 
+    // Load order status configuration if user is admin
+    if (isAuthenticated && user?.role === 'SUPER_ADMIN') {
+      loadOrderStatusConfig();
+    }
+
     return unsubscribe;
-  }, []);
+  }, [isAuthenticated, user]);
 
   // Load user's WhatsApp message when user changes
   useEffect(() => {
@@ -223,6 +235,48 @@ export default function SettingsPage() {
     }
   };
 
+  const handleUpgradeDatabase = async () => {
+    try {
+      setUpgradingDatabase(true);
+      setConnectionStatus('idle');
+      setConnectionMessage('');
+
+      const response = await api.post('/database/upgrade');
+
+      if (response.data.success) {
+        setConnectionStatus('success');
+        const message = response.data.data?.message || 'Database schema upgraded successfully!';
+        const changes = response.data.data?.changes || [];
+        
+        if (changes.length > 0) {
+          toast.success(
+            `${message}\n\nChanges applied:\n${changes.map((c: string) => `• ${c}`).join('\n')}`,
+            { duration: 6000 }
+          );
+        } else {
+          toast.success(message, { duration: 3000 });
+        }
+        setConnectionMessage(message);
+      } else {
+        setConnectionStatus('error');
+        const errorMessage = response.data.error?.message || 'Failed to upgrade database schema';
+        toast.error(errorMessage);
+        setConnectionMessage(errorMessage);
+      }
+    } catch (error: any) {
+      setConnectionStatus('error');
+      const errorMessage = 
+        error.response?.data?.error?.message || 
+        error.response?.data?.message ||
+        error.message || 
+        'Failed to upgrade database schema';
+      toast.error(errorMessage);
+      setConnectionMessage(errorMessage);
+    } finally {
+      setUpgradingDatabase(false);
+    }
+  };
+
   const handleInitializeDatabase = async () => {
     if (!config) return;
     
@@ -233,12 +287,12 @@ export default function SettingsPage() {
       if (config.database.type === 'sqlite') {
         const dbPath = config.database.path || config.database.url?.replace('file:', '');
         if (!dbPath || dbPath.trim().length === 0) {
-          toast.error('Please provide a database path for SQLite');
+          toast.error(t('settings.databasePathRequired'));
           return;
         }
       } else {
         if (!config.database.url || config.database.url.trim().length === 0) {
-          toast.error('Please provide a database connection URL');
+          toast.error(t('settings.databaseUrlRequired'));
           return;
         }
       }
@@ -420,7 +474,7 @@ export default function SettingsPage() {
 
   const handleSaveProfile = async () => {
     if (!isAuthenticated) {
-      toast.error('You must be logged in to save your WhatsApp message');
+      toast.error(t('settings.mustBeLoggedInWhatsApp'));
       return;
     }
 
@@ -435,9 +489,9 @@ export default function SettingsPage() {
       // Refresh auth store to get updated user data
       await checkAuth();
 
-      toast.success('WhatsApp message saved successfully!');
+      toast.success(t('settings.whatsappMessageSaved'));
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || error.message || 'Failed to save WhatsApp message');
+      toast.error(error.response?.data?.error?.message || error.message || t('settings.whatsappMessageSaveFailed'));
     } finally {
       setSavingProfile(false);
     }
@@ -448,12 +502,12 @@ export default function SettingsPage() {
     if (file) {
       // Validate file type
       if (!file.type.startsWith('image/')) {
-        toast.error('Please select an image file');
+        toast.error(t('settings.selectImageFile'));
         return;
       }
       // Validate file size (5MB)
       if (file.size > 5 * 1024 * 1024) {
-        toast.error('Image size must be less than 5MB');
+        toast.error(t('settings.imageSizeLimit'));
         return;
       }
       setProfileAvatar(file);
@@ -501,20 +555,57 @@ export default function SettingsPage() {
     await handleVerifySettingsPassword();
   };
 
+  const loadOrderStatusConfig = async () => {
+    try {
+      setLoadingStatusConfig(true);
+      const response = await api.get('/config/order-statuses');
+      if (response.data.success) {
+        setOrderStatusConfig(response.data.data || {});
+      }
+    } catch (error: any) {
+      console.error('Failed to load order status config:', error);
+    } finally {
+      setLoadingStatusConfig(false);
+    }
+  };
+
+  const handleSaveOrderStatusConfig = async () => {
+    try {
+      setSavingStatusConfig(true);
+      await api.put('/config/order-statuses', orderStatusConfig);
+      clearStatusConfigCache(); // Clear cache so components reload the new config
+      toast.success(t('settings.orderStatusConfigSaved') || 'Order status configuration saved successfully');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || error.message || 'Failed to save order status configuration');
+    } finally {
+      setSavingStatusConfig(false);
+    }
+  };
+
+  const updateStatusConfig = (status: string, field: string, value: any) => {
+    setOrderStatusConfig(prev => ({
+      ...prev,
+      [status]: {
+        ...prev[status],
+        [field]: value,
+      },
+    }));
+  };
+
   const handleUpdateProfile = async () => {
     if (!isAuthenticated) {
-      toast.error('You must be logged in to update your profile');
+      toast.error(t('settings.mustBeLoggedInProfile'));
       return;
     }
 
     // Validate password if provided
     if (profilePassword && profilePassword !== profileConfirmPassword) {
-      toast.error('Passwords do not match');
+      toast.error(t('settings.passwordsDoNotMatch'));
       return;
     }
 
     if (profilePassword && profilePassword.length < 6) {
-      toast.error('Password must be at least 6 characters');
+      toast.error(t('settings.passwordMinLength'));
       return;
     }
 
@@ -558,9 +649,9 @@ export default function SettingsPage() {
       setProfileAvatar(null);
       setAvatarRemoved(false);
 
-      toast.success('Profile updated successfully!');
+      toast.success(t('settings.profileUpdated'));
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || error.message || 'Failed to update profile');
+      toast.error(error.response?.data?.error?.message || error.message || t('settings.profileUpdateFailed'));
     } finally {
       setUpdatingProfile(false);
     }
@@ -568,13 +659,13 @@ export default function SettingsPage() {
 
   const handleBackupDatabase = async () => {
     if (!isAuthenticated) {
-      toast.error('You must be logged in to backup the database');
+      toast.error(t('settings.mustBeLoggedInBackup'));
       return;
     }
     
     // Check if Electron dialog is available
     if (!window.electron?.dialog?.showSaveDialog) {
-      toast.error('File save dialog is not available. Running in web mode?');
+      toast.error(t('settings.fileDialogNotAvailable'));
       return;
     }
 
@@ -603,7 +694,7 @@ export default function SettingsPage() {
       setShowBackupPasswordModal(true);
     } catch (error: any) {
       console.error('Error showing save dialog:', error);
-      toast.error('Failed to show file save dialog: ' + (error.message || 'Unknown error'));
+      toast.error(t('settings.fileDialogError', { error: error.message || 'Unknown error' }));
     }
   };
 
@@ -633,7 +724,7 @@ export default function SettingsPage() {
     setPendingBackupFilePath(null);
 
     if (!filePath) {
-      toast.error('No file path selected');
+      toast.error(t('settings.noFilePathSelected'));
       return;
     }
 
@@ -693,13 +784,13 @@ export default function SettingsPage() {
 
   const handleSelectRestoreFile = async () => {
     if (!isAuthenticated) {
-      toast.error('You must be logged in to restore the database');
+      toast.error(t('settings.mustBeLoggedInRestore'));
       return;
     }
 
     try {
       if (!window.electron?.dialog) {
-        toast.error('File selection is only available in the desktop application');
+        toast.error(t('settings.fileSelectionNotAvailable'));
         return;
       }
 
@@ -740,7 +831,7 @@ export default function SettingsPage() {
         }
       }
     } catch (error: any) {
-      toast.error('Failed to select backup file');
+      toast.error(t('settings.failedToSelectBackupFile'));
       console.error('File selection error:', error);
     }
   };
@@ -754,7 +845,7 @@ export default function SettingsPage() {
 
   const handleRestoreDatabase = async () => {
     if (!restoreFilePath) {
-      toast.error('Please select a backup file first');
+      toast.error(t('settings.selectBackupFileFirst'));
       return;
     }
 
@@ -855,11 +946,36 @@ export default function SettingsPage() {
         </div>
       )}
 
+      {/* Tabs Navigation */}
+      <div className="settings-tabs">
+        <div className="settings-tabs-container">
+          <button
+            onClick={() => setActiveTab('system')}
+            className={`settings-tab ${activeTab === 'system' ? 'active' : ''}`}
+          >
+            <Server size={18} />
+            <span>{t('settings.systemSettings') || 'System Settings'}</span>
+          </button>
+          {isAuthenticated && (
+            <button
+              onClick={() => setActiveTab('user')}
+              className={`settings-tab ${activeTab === 'user' ? 'active' : ''}`}
+            >
+              <User size={18} />
+              <span>{t('settings.userSettings') || 'User Settings'}</span>
+            </button>
+          )}
+        </div>
+      </div>
+
       <div className="settings-grid">
-        {/* Server/Client Mode Configuration
-            - Visible before login for initial setup
-            - After login, only SUPER_ADMIN or users who verified password */}
-        {(!isAuthenticated || user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
+        {/* System Settings Tab */}
+        {activeTab === 'system' && (
+          <>
+            {/* Server/Client Mode Configuration
+                - Visible before login for initial setup
+                - After login, only SUPER_ADMIN or users who verified password */}
+            {(!isAuthenticated || user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
         <section className="settings-section">
           <div className="section-header">
             <Server size={24} />
@@ -1133,8 +1249,26 @@ export default function SettingsPage() {
               </button>
               <button
                 className="btn-primary"
+                onClick={handleUpgradeDatabase}
+                disabled={testingConnection || upgradingDatabase || initializingDatabase || !config.database.url}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                {upgradingDatabase ? (
+                  <>
+                    <Loader2 className="spinner" size={16} />
+                    Upgrading...
+                  </>
+                ) : (
+                  <>
+                    <Database size={16} />
+                    Upgrade Database Schema
+                  </>
+                )}
+              </button>
+              <button
+                className="btn-primary"
                 onClick={handleInitializeDatabase}
-                disabled={testingConnection || initializingDatabase || !config.database.url}
+                disabled={testingConnection || initializingDatabase || upgradingDatabase || !config.database.url}
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
               >
                 {initializingDatabase ? (
@@ -1165,117 +1299,116 @@ export default function SettingsPage() {
                 </div>
               )}
               <small className="form-hint" style={{ width: '100%', marginTop: '0.25rem' }}>
+                <strong>Upgrade Database Schema:</strong> Add missing columns and tables to existing database without losing data.
+              </small>
+              <small className="form-hint" style={{ width: '100%', marginTop: '0.25rem' }}>
                 <strong>{t('settings.initializeDatabase')}:</strong> {t('settings.initializeDatabaseDesc')}
               </small>
             </div>
             )}
           </div>
         </section>
+            )}
+
+            {/* Appearance & Language Configuration */}
+            <section className="settings-section">
+              <div className="section-header">
+                <Monitor size={24} />
+                <h2>{t('settings.appearance')} & {t('settings.language')}</h2>
+              </div>
+
+              <div className="settings-content">
+                {/* Theme Configuration */}
+                <div className="form-group">
+                  <label>
+                    {t('settings.theme')} <span className="required">*</span>
+                  </label>
+                  <div className="radio-group">
+                    <label className="radio-label">
+                      <input
+                        type="radio"
+                        name="theme"
+                        value="light"
+                        checked={config.theme === 'light'}
+                        onChange={() =>
+                          setConfig({ ...config, theme: 'light' })
+                        }
+                      />
+                      <span>{t('settings.light')}</span>
+                    </label>
+                    <label className="radio-label">
+                      <input
+                        type="radio"
+                        name="theme"
+                        value="dark"
+                        checked={config.theme === 'dark'}
+                        onChange={() =>
+                          setConfig({ ...config, theme: 'dark' })
+                        }
+                      />
+                      <span>{t('settings.dark')}</span>
+                    </label>
+                    <label className="radio-label">
+                      <input
+                        type="radio"
+                        name="theme"
+                        value="system"
+                        checked={config.theme === 'system'}
+                        onChange={() =>
+                          setConfig({ ...config, theme: 'system' })
+                        }
+                      />
+                      <span>{t('settings.system')}</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Language Configuration */}
+                <div className="form-group">
+                  <label>
+                    {t('settings.language')} <span className="required">*</span>
+                  </label>
+                  <div className="radio-group">
+                    <label className="radio-label">
+                      <input
+                        type="radio"
+                        name="language"
+                        value="es"
+                        checked={(config.language || 'es') === 'es'}
+                        onChange={() =>
+                          setConfig({ ...config, language: 'es' })
+                        }
+                      />
+                      <span>{t('settings.spanish')}</span>
+                    </label>
+                    <label className="radio-label">
+                      <input
+                        type="radio"
+                        name="language"
+                        value="en"
+                        checked={config.language === 'en'}
+                        onChange={() =>
+                          setConfig({ ...config, language: 'en' })
+                        }
+                      />
+                      <span>{t('settings.english')}</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </>
         )}
 
-        {/* Theme Configuration */}
-        <section className="settings-section">
-          <div className="section-header">
-            <Monitor size={24} />
-            <h2>{t('settings.appearance')}</h2>
-          </div>
-
-          <div className="settings-content">
-            <div className="form-group">
-              <label>
-                {t('settings.theme')} <span className="required">*</span>
-              </label>
-              <div className="radio-group">
-                <label className="radio-label">
-                  <input
-                    type="radio"
-                    name="theme"
-                    value="light"
-                    checked={config.theme === 'light'}
-                    onChange={() =>
-                      setConfig({ ...config, theme: 'light' })
-                    }
-                  />
-                  <span>{t('settings.light')}</span>
-                </label>
-                <label className="radio-label">
-                  <input
-                    type="radio"
-                    name="theme"
-                    value="dark"
-                    checked={config.theme === 'dark'}
-                    onChange={() =>
-                      setConfig({ ...config, theme: 'dark' })
-                    }
-                  />
-                  <span>{t('settings.dark')}</span>
-                </label>
-                <label className="radio-label">
-                  <input
-                    type="radio"
-                    name="theme"
-                    value="system"
-                    checked={config.theme === 'system'}
-                    onChange={() =>
-                      setConfig({ ...config, theme: 'system' })
-                    }
-                  />
-                  <span>{t('settings.system')}</span>
-                </label>
+        {/* User Settings Tab */}
+        {activeTab === 'user' && isAuthenticated && (
+          <>
+            {/* Profile Configuration - Only visible when authenticated */}
+            <section className="settings-section">
+              <div className="section-header">
+                <User size={24} />
+                <h2>{t('settings.profile')}</h2>
               </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Language Configuration */}
-        <section className="settings-section">
-          <div className="section-header">
-            <Globe size={24} />
-            <h2>{t('settings.language')}</h2>
-          </div>
-
-          <div className="settings-content">
-            <div className="form-group">
-              <label>
-                {t('settings.language')} <span className="required">*</span>
-              </label>
-              <div className="radio-group">
-                <label className="radio-label">
-                  <input
-                    type="radio"
-                    name="language"
-                    value="es"
-                    checked={(config.language || 'es') === 'es'}
-                    onChange={() =>
-                      setConfig({ ...config, language: 'es' })
-                    }
-                  />
-                  <span>{t('settings.spanish')}</span>
-                </label>
-                <label className="radio-label">
-                  <input
-                    type="radio"
-                    name="language"
-                    value="en"
-                    checked={config.language === 'en'}
-                    onChange={() =>
-                      setConfig({ ...config, language: 'en' })
-                    }
-                  />
-                  <span>{t('settings.english')}</span>
-                </label>
-              </div>
-            </div>
-          </div>
-        </section>
-
-        {/* Profile Configuration - Only visible when authenticated */}
-        {isAuthenticated && (
-          <section className="settings-section">
-            <div className="section-header">
-              <User size={24} />
-              <h2>{t('settings.profile')}</h2>
-            </div>
 
             <div className="settings-content">
               {/* Avatar Upload */}
@@ -1426,39 +1559,8 @@ export default function SettingsPage() {
                 </div>
               )}
 
-              <div className="form-actions-inline">
-                <button
-                  className="btn-primary"
-                  onClick={handleUpdateProfile}
-                  disabled={updatingProfile || !isAuthenticated}
-                >
-                  {updatingProfile ? (
-                    <>
-                      <Loader2 className="spinner" size={16} />
-                      {t('common.loading')}
-                    </>
-                  ) : (
-                    <>
-                      <Save size={16} />
-                      {t('settings.updateProfile')}
-                    </>
-                  )}
-                </button>
-              </div>
-            </div>
-          </section>
-        )}
-
-        {/* WhatsApp Message Configuration - Only visible when authenticated */}
-        {isAuthenticated && (
-          <section className="settings-section">
-            <div className="section-header">
-              <MessageSquare size={24} />
-              <h2>{t('settings.whatsappMessage')}</h2>
-            </div>
-
-            <div className="settings-content">
-              <div className="form-group">
+              {/* WhatsApp Message Configuration */}
+              <div className="form-group" style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)' }}>
                 <label>
                   {t('settings.whatsappMessageTemplate')}
                 </label>
@@ -1478,6 +1580,23 @@ export default function SettingsPage() {
               <div className="form-actions-inline">
                 <button
                   className="btn-primary"
+                  onClick={handleUpdateProfile}
+                  disabled={updatingProfile || !isAuthenticated}
+                >
+                  {updatingProfile ? (
+                    <>
+                      <Loader2 className="spinner" size={16} />
+                      {t('common.loading')}
+                    </>
+                  ) : (
+                    <>
+                      <Save size={16} />
+                      {t('settings.updateProfile')}
+                    </>
+                  )}
+                </button>
+                <button
+                  className="btn-secondary"
                   onClick={handleSaveProfile}
                   disabled={savingProfile}
                 >
@@ -1488,7 +1607,7 @@ export default function SettingsPage() {
                     </>
                   ) : (
                     <>
-                      <Save size={16} />
+                      <MessageSquare size={16} />
                       {t('settings.saveWhatsAppMessage')}
                     </>
                   )}
@@ -1496,15 +1615,231 @@ export default function SettingsPage() {
               </div>
             </div>
           </section>
+
+          {/* Order Status Customization - Only visible when authenticated as Super Admin */}
+          {isAuthenticated && user?.role === 'SUPER_ADMIN' && (
+            <section className="settings-section">
+              <div className="section-header">
+                <Palette size={24} />
+                <h2>{t('settings.orderStatusCustomization')}</h2>
+              </div>
+
+            <div className="settings-content">
+              {loadingStatusConfig ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
+                  <Loader2 className="spinner" size={32} />
+                </div>
+              ) : (
+                <>
+                  <p className="form-hint" style={{ marginBottom: '1.5rem' }}>
+                    {t('settings.orderStatusCustomizationHint')}
+                  </p>
+                  
+                  {/* Status Selector */}
+                  <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                      {t('settings.selectStatus') || 'Select Status'}
+                    </label>
+                    <select
+                      value={selectedStatus}
+                      onChange={(e) => setSelectedStatus(e.target.value)}
+                      className="form-input"
+                      style={{ fontSize: '1rem', padding: '0.75rem' }}
+                    >
+                      <option value="PENDING">{t('orders.statusPending')}</option>
+                      <option value="RECEIVED">{t('orders.statusReceived')}</option>
+                      <option value="NOTIFIED_CALL">{t('orders.statusNotifiedCall')}</option>
+                      <option value="NOTIFIED_WHATSAPP">{t('orders.statusNotifiedWhatsApp')}</option>
+                      <option value="CANCELLED">{t('orders.statusCancelled')}</option>
+                      <option value="INCOMPLETO">{t('orders.statusIncompleto')}</option>
+                      <option value="DELIVERED_COUNTER">{t('orders.statusDeliveredCounter')}</option>
+                    </select>
+                  </div>
+
+                  {/* Configuration Fields for Selected Status */}
+                  <div className="form-group" style={{ 
+                    padding: '1.5rem', 
+                    border: '1px solid var(--border-color)', 
+                    borderRadius: 'var(--radius-lg)',
+                    backgroundColor: 'var(--card-bg)'
+                  }}>
+                    <h3 style={{ marginBottom: '1.5rem', fontSize: '1.125rem', fontWeight: 600 }}>
+                      {selectedStatus}
+                    </h3>
+                    
+                    {/* Text Field - Full Width */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                        {t('settings.statusText')}
+                      </label>
+                      <input
+                        type="text"
+                        value={orderStatusConfig[selectedStatus]?.text || ''}
+                        onChange={(e) => updateStatusConfig(selectedStatus, 'text', e.target.value)}
+                        placeholder={t('settings.enterStatusText')}
+                        className="form-input"
+                      />
+                    </div>
+
+                    {/* Colors - Inline */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                      {/* Text Color */}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                          {t('settings.statusColor')}
+                        </label>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <input
+                            type="color"
+                            value={orderStatusConfig[selectedStatus]?.color || '#000000'}
+                            onChange={(e) => updateStatusConfig(selectedStatus, 'color', e.target.value)}
+                            style={{ width: '50px', height: '38px', cursor: 'pointer', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}
+                          />
+                          <input
+                            type="text"
+                            value={orderStatusConfig[selectedStatus]?.color || ''}
+                            onChange={(e) => updateStatusConfig(selectedStatus, 'color', e.target.value)}
+                            placeholder="#000000"
+                            className="form-input"
+                            style={{ flex: 1 }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Background Color */}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                          {t('settings.statusBackgroundColor')}
+                        </label>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <input
+                            type="color"
+                            value={orderStatusConfig[selectedStatus]?.backgroundColor || '#ffffff'}
+                            onChange={(e) => updateStatusConfig(selectedStatus, 'backgroundColor', e.target.value)}
+                            style={{ width: '50px', height: '38px', cursor: 'pointer', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}
+                          />
+                          <input
+                            type="text"
+                            value={orderStatusConfig[selectedStatus]?.backgroundColor || ''}
+                            onChange={(e) => updateStatusConfig(selectedStatus, 'backgroundColor', e.target.value)}
+                            placeholder="#ffffff"
+                            className="form-input"
+                            style={{ flex: 1 }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Font Settings - Inline */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                      {/* Font Family */}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                          {t('settings.statusFontFamily')}
+                        </label>
+                        <select
+                          value={orderStatusConfig[selectedStatus]?.fontFamily || 'inherit'}
+                          onChange={(e) => updateStatusConfig(selectedStatus, 'fontFamily', e.target.value)}
+                          className="form-input"
+                        >
+                          <option value="inherit">{t('settings.inherit')}</option>
+                          <option value="Arial, sans-serif">Arial</option>
+                          <option value="'Times New Roman', serif">Times New Roman</option>
+                          <option value="'Courier New', monospace">Courier New</option>
+                          <option value="Georgia, serif">Georgia</option>
+                          <option value="Verdana, sans-serif">Verdana</option>
+                          <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                        </select>
+                      </div>
+
+                      {/* Font Size */}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                          {t('settings.statusFontSize')}
+                        </label>
+                        <input
+                          type="text"
+                          value={orderStatusConfig[selectedStatus]?.fontSize || ''}
+                          onChange={(e) => updateStatusConfig(selectedStatus, 'fontSize', e.target.value)}
+                          placeholder="inherit (e.g., 14px)"
+                          className="form-input"
+                        />
+                      </div>
+
+                      {/* Font Weight */}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                          {t('settings.statusFontWeight')}
+                        </label>
+                        <select
+                          value={orderStatusConfig[selectedStatus]?.fontWeight || 'normal'}
+                          onChange={(e) => updateStatusConfig(selectedStatus, 'fontWeight', e.target.value)}
+                          className="form-input"
+                        >
+                          <option value="normal">{t('settings.normal')}</option>
+                          <option value="bold">{t('settings.bold')}</option>
+                          <option value="600">600</option>
+                          <option value="700">700</option>
+                          <option value="800">800</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Preview */}
+                    <div style={{ marginTop: '1.5rem', padding: '1rem', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                        {t('settings.preview')}:
+                      </label>
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '0.5rem 1rem',
+                          borderRadius: 'var(--radius-md)',
+                          color: orderStatusConfig[selectedStatus]?.color || '#000000',
+                          backgroundColor: orderStatusConfig[selectedStatus]?.backgroundColor || '#ffffff',
+                          fontFamily: orderStatusConfig[selectedStatus]?.fontFamily || 'inherit',
+                          fontSize: orderStatusConfig[selectedStatus]?.fontSize || 'inherit',
+                          fontWeight: orderStatusConfig[selectedStatus]?.fontWeight || 'normal',
+                          border: '1px solid var(--border-color)',
+                        }}
+                      >
+                        {orderStatusConfig[selectedStatus]?.text || selectedStatus}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="form-actions-inline" style={{ marginTop: '1.5rem' }}>
+                    <button
+                      className="btn-primary"
+                      onClick={handleSaveOrderStatusConfig}
+                      disabled={savingStatusConfig}
+                    >
+                      {savingStatusConfig ? (
+                        <>
+                          <Loader2 className="spinner" size={16} />
+                          {t('common.saving')}
+                        </>
+                      ) : (
+                        <>
+                          <Save size={16} />
+                          {t('settings.saveOrderStatusConfig')}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
         )}
 
-        {/* Database Backup & Restore - Only visible when authenticated as Super Admin or with password */}
-        {isAuthenticated && (user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
-          <section className="settings-section">
-            <div className="section-header">
-              <HardDrive size={24} />
-              <h2>{t('settings.databaseBackupRestore')}</h2>
-            </div>
+          {/* Database Backup & Restore - Only visible when authenticated as Super Admin or with password */}
+          {isAuthenticated && (user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
+            <section className="settings-section">
+              <div className="section-header">
+                <HardDrive size={24} />
+                <h2>{t('settings.databaseBackupRestore')}</h2>
+              </div>
 
             <div className="settings-content">
               <div className="form-group">
@@ -1579,8 +1914,10 @@ export default function SettingsPage() {
                   </p>
                 )}
               </div>
-            </div>
-          </section>
+              </div>
+            </section>
+          )}
+          </>
         )}
       </div>
 

@@ -87,6 +87,32 @@
   border-radius: var(--radius-md);
   padding: var(--spacing-md);
   margin-bottom: var(--spacing-md);
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.supplier-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* Supplier color palette for visual differentiation */
+:root {
+  --supplier-color-1: #3b82f6; /* Blue */
+  --supplier-color-2: #10b981; /* Green */
+  --supplier-color-3: #f59e0b; /* Amber */
+  --supplier-color-4: #ef4444; /* Red */
+  --supplier-color-5: #8b5cf6; /* Purple */
+  --supplier-color-6: #ec4899; /* Pink */
+}
+
+[data-theme="dark"] {
+  --supplier-color-1: #60a5fa;
+  --supplier-color-2: #34d399;
+  --supplier-color-3: #fbbf24;
+  --supplier-color-4: #f87171;
+  --supplier-color-5: #a78bfa;
+  --supplier-color-6: #f472b6;
 }
 
 .supplier-header {
@@ -100,6 +126,11 @@
   justify-content: space-between;
   align-items: center;
   margin-bottom: var(--spacing-sm);
+  gap: var(--spacing-sm);
+}
+
+.supplier-title .btn-icon {
+  flex-shrink: 0;
 }
 
 .supplier-number {
@@ -137,6 +168,12 @@
   border-radius: var(--radius-md);
   margin-bottom: var(--spacing-md);
   transition: all 0.2s ease;
+  position: relative;
+}
+
+.product-row .btn-icon {
+  align-self: end;
+  margin-bottom: calc(var(--spacing-xs) + 2px); /* Align with input fields */
 }
 
 .product-row:hover {
@@ -217,6 +254,7 @@
   color: var(--text-primary);
   cursor: pointer;
   transition: all 0.2s ease;
+  flex-shrink: 0;
 }
 
 .btn-icon:hover {
@@ -225,10 +263,51 @@
   color: var(--primary-color);
 }
 
+.btn-icon.btn-danger {
+  background: var(--error-light, #fee2e2);
+  border-color: var(--error-color, #ef4444);
+  color: var(--error-color, #ef4444);
+  opacity: 1;
+  visibility: visible;
+  min-width: 36px;
+  min-height: 36px;
+  width: 36px;
+  height: 36px;
+  position: relative;
+  box-shadow: 0 1px 3px rgba(239, 68, 68, 0.2);
+}
+
+.btn-icon.btn-danger svg {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.5;
+  flex-shrink: 0;
+}
+
 .btn-icon.btn-danger:hover {
-  background: var(--error-color);
-  border-color: var(--error-color);
+  background: var(--error-color, #ef4444);
+  border-color: var(--error-color, #ef4444);
   color: white;
+  transform: scale(1.05);
+  box-shadow: 0 2px 6px rgba(239, 68, 68, 0.4);
+}
+
+.btn-icon.btn-danger:active {
+  transform: scale(0.95);
+}
+
+[data-theme="dark"] .btn-icon.btn-danger {
+  background: rgba(239, 68, 68, 0.15);
+  border-color: var(--error-color, #f87171);
+  color: var(--error-color, #f87171);
+  box-shadow: 0 1px 3px rgba(239, 68, 68, 0.3);
+}
+
+[data-theme="dark"] .btn-icon.btn-danger:hover {
+  background: var(--error-color, #f87171);
+  border-color: var(--error-color, #f87171);
+  color: white;
+  box-shadow: 0 2px 8px rgba(239, 68, 68, 0.5);
 }
 
 .btn-icon:disabled {
@@ -254,6 +333,12 @@
   .product-row {
     grid-template-columns: 1fr;
     gap: var(--spacing-sm);
+  }
+
+  .product-row .btn-icon {
+    align-self: flex-start;
+    margin-bottom: 0;
+    margin-top: var(--spacing-xs);
   }
 
   .form-grid {

@@ -18,6 +18,7 @@ import {
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
+import { useOrderStatusConfig, getStatusConfig } from '../hooks/useOrderStatusConfig';
 import WhatsAppModal from '../components/WhatsAppModal';
 import '../styles/order-detail.css';
 
@@ -43,6 +44,7 @@ interface AuditLog {
   oldValue?: string;
   newValue?: string;
   timestamp: string;
+  metadata?: string | Record<string, any>;
   user: {
     username: string;
   };
@@ -58,6 +60,7 @@ interface Order {
   status: string;
   notificationMethod?: string;
   observations?: string;
+  cancellationReason?: string;
   createdAt: string;
   updatedAt: string;
   notifiedAt?: string;
@@ -77,7 +80,7 @@ interface Order {
   auditLogs?: AuditLog[];
 }
 
-type OrderStatus = 'PENDING' | 'RECEIVED' | 'NOTIFIED_CALL' | 'NOTIFIED_WHATSAPP' | 'CANCELLED' | 'INCOMPLETO';
+type OrderStatus = 'PENDING' | 'RECEIVED' | 'NOTIFIED_CALL' | 'NOTIFIED_WHATSAPP' | 'CANCELLED' | 'INCOMPLETO' | 'DELIVERED_COUNTER';
 
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -91,6 +94,7 @@ export default function OrderDetailPage() {
   const [showPhoneCallModal, setShowPhoneCallModal] = useState(false);
   const [whatsappMessage, setWhatsappMessage] = useState<string>('');
   const [selectedStatus, setSelectedStatus] = useState<OrderStatus | null>(null);
+  const [cancellationReason, setCancellationReason] = useState<string>('');
   const [updatingProducts, setUpdatingProducts] = useState<Set<string>>(new Set());
 
   useEffect(() => {
@@ -108,7 +112,7 @@ export default function OrderDetailPage() {
       }>(`/orders/${orderId}`);
       setOrder(response.data.data);
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to load order');
+      toast.error(error.response?.data?.error?.message || t('orderDetail.loadOrderFailed'));
       navigate('/orders');
     } finally {
       setLoading(false);
@@ -128,38 +132,28 @@ export default function OrderDetailPage() {
     }
   };
 
+  const { config: statusConfig } = useOrderStatusConfig();
+
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'RECEIVED':
-        return 'status-green';
-      case 'NOTIFIED_CALL':
-      case 'NOTIFIED_WHATSAPP':
-        return 'status-green';
-      case 'CANCELLED':
-      case 'INCOMPLETO':
-        return 'status-red';
-      default:
-        return 'status-pending';
-    }
+    // Use custom config if available, otherwise fallback to default
+    const config = getStatusConfig(status, statusConfig);
+    return 'status-custom';
   };
 
   const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'PENDING':
-        return t('orders.statusPending');
-      case 'RECEIVED':
-        return t('orderDetail.merchandiseReceived');
-      case 'NOTIFIED_CALL':
-        return t('orderDetail.customerNotifiedCall');
-      case 'NOTIFIED_WHATSAPP':
-        return t('orderDetail.customerNotifiedWhatsApp');
-      case 'CANCELLED':
-        return t('orders.statusCancelled');
-      case 'INCOMPLETO':
-        return t('orders.statusIncompleto');
-      default:
-        return status;
-    }
+    const config = getStatusConfig(status, statusConfig);
+    return config.text || status;
+  };
+
+  const getStatusStyle = (status: string) => {
+    const config = getStatusConfig(status, statusConfig);
+    return {
+      color: config.color || '#6b7280',
+      backgroundColor: config.backgroundColor || '#f3f4f6',
+      fontFamily: config.fontFamily || 'inherit',
+      fontSize: config.fontSize || 'inherit',
+      fontWeight: config.fontWeight || 'normal',
+    };
   };
 
   const handleWhatsAppClick = async () => {
@@ -281,7 +275,7 @@ export default function OrderDetailPage() {
           toast.success(t('orderDetail.statusUpdatedWhatsApp'));
         } catch (error: any) {
           console.error('Failed to update status:', error);
-          toast.error('Failed to update order status');
+          toast.error(t('orderDetail.updateStatusFailed'));
         }
       }, 500);
       
@@ -338,7 +332,7 @@ export default function OrderDetailPage() {
           toast.success(t('orderDetail.statusUpdatedCall'));
         } catch (error: any) {
           console.error('Failed to update status:', error);
-          toast.error('Failed to update order status');
+          toast.error(t('orderDetail.updateStatusFailed'));
         }
       }, 1000);
     } catch (error: any) {
@@ -347,7 +341,7 @@ export default function OrderDetailPage() {
     }
   };
 
-  const updateOrderStatus = async (newStatus: OrderStatus) => {
+  const updateOrderStatus = async (newStatus: OrderStatus, reason?: string) => {
     if (!order || !id) return;
 
     try {
@@ -359,7 +353,8 @@ export default function OrderDetailPage() {
         status: newStatus,
         notificationMethod: newStatus.startsWith('NOTIFIED_') 
           ? newStatus.replace('NOTIFIED_', '') 
-          : undefined
+          : undefined,
+        cancellationReason: newStatus === 'CANCELLED' ? reason : undefined
       });
 
       setOrder(response.data.data);
@@ -369,7 +364,7 @@ export default function OrderDetailPage() {
       // Refresh order to get updated audit logs
       fetchOrder(id);
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || 'Failed to update status');
+      toast.error(error.response?.data?.error?.message || t('orderDetail.updateStatusGenericFailed'));
     } finally {
       setUpdating(false);
     }
@@ -377,6 +372,7 @@ export default function OrderDetailPage() {
 
   const handleStatusUpdate = (status: OrderStatus) => {
     setSelectedStatus(status);
+    setCancellationReason(''); // Reset cancellation reason
     setShowStatusModal(true);
   };
 
@@ -438,7 +434,12 @@ export default function OrderDetailPage() {
 
   const confirmStatusUpdate = () => {
     if (selectedStatus) {
-      updateOrderStatus(selectedStatus);
+      // Validate cancellation reason is required when cancelling
+      if (selectedStatus === 'CANCELLED' && !cancellationReason.trim()) {
+        toast.error(t('orderDetail.cancellationReasonRequired'));
+        return;
+      }
+      updateOrderStatus(selectedStatus, cancellationReason.trim() || undefined);
     }
   };
 
@@ -481,6 +482,7 @@ export default function OrderDetailPage() {
       'observations': t('orders.observations'),
       'totalAmount': t('orderDetail.totalAmount'),
       'receivedQuantity': t('orderDetail.receivedQuantity'),
+      'price': t('orderDetail.price'),
     };
     return fieldTranslations[fieldName] || fieldName;
   };
@@ -543,7 +545,10 @@ export default function OrderDetailPage() {
             <div className="detail-row">
               <span className="detail-label">{t('common.status')}</span>
               <div className="detail-value">
-                <span className={`status-badge ${getStatusColor(order.status)}`}>
+                <span 
+                  className="status-badge status-custom"
+                  style={getStatusStyle(order.status)}
+                >
                   {getStatusIcon(order.status)}
                   {getStatusLabel(order.status)}
                 </span>
@@ -624,6 +629,14 @@ export default function OrderDetailPage() {
                 <span className="detail-value observations">{order.observations}</span>
               </div>
             )}
+            {order.cancellationReason && (
+              <div className="detail-row">
+                <span className="detail-label">{t('orderDetail.cancellationReason')}</span>
+                <span className="detail-value" style={{ color: 'var(--error-color)', fontStyle: 'italic' }}>
+                  {order.cancellationReason}
+                </span>
+              </div>
+            )}
           </div>
         </section>
 
@@ -650,6 +663,16 @@ export default function OrderDetailPage() {
             >
               <Package size={20} />
               {t('orderDetail.markAsReceived')}
+            </button>
+            
+            <button
+              className={`status-action-btn green ${order.status === 'DELIVERED_COUNTER' ? 'active' : ''}`}
+              onClick={() => handleStatusUpdate('DELIVERED_COUNTER')}
+              disabled={updating || order.status === 'DELIVERED_COUNTER'}
+              title={order.status === 'DELIVERED_COUNTER' ? t('orderDetail.currentStatus') : t('orderDetail.markAsDeliveredCounter')}
+            >
+              <Package size={20} />
+              {t('orderDetail.markAsDeliveredCounter')}
             </button>
             
             <button
@@ -790,14 +813,34 @@ export default function OrderDetailPage() {
                     </div>
                     {log.fieldChanged && (
                       <div className="audit-details">
-                        <span className="field-name">{getFieldLabel(log.fieldChanged)}:</span>
-                        {log.oldValue && (
-                          <span className="old-value">{log.oldValue}</span>
+                        {log.fieldChanged === 'price' && log.metadata && (
+                          <div style={{ marginBottom: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                            {(() => {
+                              try {
+                                const meta = typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
+                                return meta.productRef && meta.supplierName 
+                                  ? `${meta.productRef} (${meta.supplierName})`
+                                  : meta.productRef || '';
+                              } catch {
+                                return '';
+                              }
+                            })()}
+                          </div>
                         )}
-                        {log.oldValue && log.newValue && <span>→</span>}
-                        {log.newValue && (
-                          <span className="new-value">{log.newValue}</span>
-                        )}
+                        <div>
+                          <span className="field-name">{getFieldLabel(log.fieldChanged)}:</span>
+                          {log.oldValue && (
+                            <span className="old-value">
+                              {log.fieldChanged === 'price' ? '€' : ''}{log.oldValue}
+                            </span>
+                          )}
+                          {log.oldValue && log.newValue && <span> → </span>}
+                          {log.newValue && (
+                            <span className="new-value">
+                              {log.fieldChanged === 'price' ? '€' : ''}{log.newValue}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -818,14 +861,44 @@ export default function OrderDetailPage() {
           <div>
             <p>{t('orderDetail.confirmStatusUpdateMessage')}</p>
             <div className="status-preview">
-              <span className={`status-badge ${getStatusColor(selectedStatus!)}`}>
+              <span 
+                className="status-badge status-custom"
+                style={getStatusStyle(selectedStatus!)}
+              >
                 {getStatusIcon(selectedStatus!)}
                 {getStatusLabel(selectedStatus!)}
               </span>
             </div>
-            <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              {t('orderDetail.statusUpdateDescription')}
-            </p>
+            {selectedStatus === 'CANCELLED' && (
+              <div style={{ marginTop: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                  {t('orderDetail.cancellationReason')} <span style={{ color: 'var(--error-color)' }}>*</span>
+                </label>
+                <textarea
+                  value={cancellationReason}
+                  onChange={(e) => setCancellationReason(e.target.value)}
+                  placeholder={t('orderDetail.enterCancellationReason')}
+                  style={{
+                    width: '100%',
+                    minHeight: '100px',
+                    padding: '0.75rem',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: 'var(--input-bg)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.9375rem',
+                    fontFamily: 'inherit',
+                    resize: 'vertical'
+                  }}
+                  required
+                />
+              </div>
+            )}
+            {selectedStatus !== 'CANCELLED' && (
+              <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                {t('orderDetail.statusUpdateDescription')}
+              </p>
+            )}
           </div>
         }
         confirmText={t('common.confirm')}

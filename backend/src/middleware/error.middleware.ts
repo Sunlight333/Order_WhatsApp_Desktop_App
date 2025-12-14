@@ -85,6 +85,23 @@ function handlePrismaError(error: Prisma.PrismaClientKnownRequestError, res: Res
         },
       });
       break;
+    case 'P2022':
+      // Column does not exist - database schema needs to be upgraded
+      const columnName = error.meta?.column as string || 'unknown';
+      const modelName = error.meta?.modelName as string || 'unknown';
+      res.status(500).json({
+        success: false,
+        error: {
+          code: 'SCHEMA_OUTDATED',
+          message: `Database schema is outdated. Column '${columnName}' is missing from table '${modelName}'. Please go to Settings and click 'Upgrade Database Schema' to update the database.`,
+          details: {
+            column: columnName,
+            model: modelName,
+            action: 'upgrade_schema',
+          },
+        },
+      });
+      break;
     case 'P2025':
       res.status(404).json({
         success: false,

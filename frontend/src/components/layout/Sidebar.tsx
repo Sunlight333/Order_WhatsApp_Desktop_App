@@ -8,7 +8,7 @@ import {
   Package, 
   Box, 
   Settings,
-  Shield 
+  Shield
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 

@@ -144,6 +144,7 @@ async function createDatabaseSchema(): Promise<void> {
         "status" TEXT NOT NULL DEFAULT 'PENDING',
         "notificationMethod" TEXT,
         "observations" TEXT,
+        "cancellationReason" TEXT,
         "createdById" TEXT NOT NULL,
         "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         "updatedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -193,15 +194,27 @@ async function createDatabaseSchema(): Promise<void> {
     ];
     
     // Define index creation statements (after tables exist)
+    // Performance-optimized indexes for filtering and sorting
     const indexStatements = [
       `CREATE UNIQUE INDEX IF NOT EXISTS "orders_orderNumber_key" ON "orders"("orderNumber")`,
+      // Order indexes for filtering
       `CREATE INDEX IF NOT EXISTS "orders_customerPhone_idx" ON "orders"("customerPhone")`,
       `CREATE INDEX IF NOT EXISTS "orders_customerId_idx" ON "orders"("customerId")`,
       `CREATE INDEX IF NOT EXISTS "orders_status_idx" ON "orders"("status")`,
       `CREATE INDEX IF NOT EXISTS "orders_createdAt_idx" ON "orders"("createdAt")`,
+      `CREATE INDEX IF NOT EXISTS "orders_updatedAt_idx" ON "orders"("updatedAt")`,
       `CREATE INDEX IF NOT EXISTS "orders_orderNumber_idx" ON "orders"("orderNumber")`,
+      `CREATE INDEX IF NOT EXISTS "orders_createdById_idx" ON "orders"("createdById")`,
+      // Composite indexes for common filter combinations
+      `CREATE INDEX IF NOT EXISTS "orders_status_createdAt_idx" ON "orders"("status", "createdAt")`,
+      `CREATE INDEX IF NOT EXISTS "orders_customerId_status_idx" ON "orders"("customerId", "status")`,
+      // Supplier and product indexes
+      `CREATE INDEX IF NOT EXISTS "orderSuppliers_supplierId_idx" ON "orderSuppliers"("supplierId")`,
+      `CREATE INDEX IF NOT EXISTS "orderSuppliers_orderId_idx" ON "orderSuppliers"("orderId")`,
       `CREATE INDEX IF NOT EXISTS "customers_name_idx" ON "customers"("name")`,
       `CREATE INDEX IF NOT EXISTS "orderProducts_orderId_idx" ON "orderProducts"("orderId")`,
+      `CREATE INDEX IF NOT EXISTS "orderProducts_supplierId_idx" ON "orderProducts"("supplierId")`,
+      // Audit log indexes
       `CREATE INDEX IF NOT EXISTS "auditLogs_orderId_idx" ON "auditLogs"("orderId")`,
       `CREATE INDEX IF NOT EXISTS "auditLogs_userId_idx" ON "auditLogs"("userId")`,
       `CREATE INDEX IF NOT EXISTS "auditLogs_timestamp_idx" ON "auditLogs"("timestamp")`,
@@ -488,26 +501,39 @@ export async function initializeDatabaseConnection(): Promise<void> {
             const orderColumns = await prismaClient.$queryRaw<Array<{ name: string }>>`
               PRAGMA table_info("orders");
             `;
-            const orderColumnNames = orderColumns.map(c => c.name);
+            const orderColumnNames = orderColumns.map(c => c.name.toLowerCase());
+            console.log('📋 Current orders table columns:', orderColumnNames.join(', '));
 
-            if (!orderColumnNames.includes('orderNumber')) {
+            if (!orderColumnNames.includes('ordernumber')) {
               console.log('🛠️ Adding missing column orders.orderNumber');
               await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "orderNumber" INTEGER;`);
               await prismaClient.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "orders_orderNumber_key" ON "orders"("orderNumber");`);
             }
-            if (!orderColumnNames.includes('customerId')) {
+            if (!orderColumnNames.includes('customerid')) {
               console.log('🛠️ Adding missing column orders.customerId');
               await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "customerId" TEXT;`);
               await prismaClient.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "orders_customerId_idx" ON "orders"("customerId");`);
             }
-            if (!orderColumnNames.includes('customerPhone')) {
+            if (!orderColumnNames.includes('customerphone')) {
               console.log('🛠️ Adding missing column orders.customerPhone');
               await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "customerPhone" TEXT;`);
               await prismaClient.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "orders_customerPhone_idx" ON "orders"("customerPhone");`);
             }
-            if (!orderColumnNames.includes('countryCode')) {
+            if (!orderColumnNames.includes('countrycode')) {
               console.log('🛠️ Adding missing column orders.countryCode');
               await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "countryCode" TEXT DEFAULT '+34';`);
+            }
+            if (!orderColumnNames.includes('cancellationreason')) {
+              console.log('🛠️ Adding missing column orders.cancellationReason');
+              try {
+                await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "cancellationReason" TEXT;`);
+                console.log('✅ Successfully added cancellationReason column');
+              } catch (colError: any) {
+                console.error('❌ Failed to add cancellationReason column:', colError.message);
+                throw colError; // Re-throw to be caught by outer catch
+              }
+            } else {
+              console.log('✅ Column orders.cancellationReason already exists');
             }
 
             // Check and add customers table if missing
@@ -539,8 +565,11 @@ export async function initializeDatabaseConnection(): Promise<void> {
               await prismaClient.$executeRawUnsafe(`ALTER TABLE "orderProducts" ADD COLUMN "receivedQuantity" TEXT;`);
             }
           } catch (upgradeError: any) {
-            console.warn('⚠️  Error during schema upgrade:', upgradeError.message);
-            // Continue anyway - app might still work
+            console.error('❌ Error during schema upgrade:', upgradeError.message);
+            console.error('Error stack:', upgradeError.stack);
+            // Don't continue silently - this is critical for app functionality
+            // The upgrade will be retried on next server restart or can be done manually via /api/v1/database/upgrade
+            throw upgradeError;
           }
           
           // Still seed data in case it's missing
@@ -626,6 +655,69 @@ export async function isDatabaseConnected(): Promise<boolean> {
   } catch (error: any) {
     console.warn('⚠️  Database connection check failed:', error.message);
     return false;
+  }
+}
+
+/**
+ * Upgrade database schema (add missing columns and tables)
+ * This can be called manually to update an existing database
+ */
+export async function upgradeDatabaseSchema(): Promise<{ success: boolean; message: string; changes: string[] }> {
+  const changes: string[] = [];
+  
+  if (!prisma || !isInitialized) {
+    throw new Error('Database is not initialized');
+  }
+
+  const provider = process.env.DATABASE_PROVIDER || 'sqlite';
+  
+  if (provider !== 'sqlite') {
+    return {
+      success: false,
+      message: 'Schema upgrade is only supported for SQLite databases',
+      changes: [],
+    };
+  }
+
+  try {
+    // Check if orders table exists
+    const tables = await prisma.$queryRaw<Array<{ name: string }>>`
+      SELECT name FROM sqlite_master WHERE type='table' AND name='orders';
+    `;
+
+    if (tables.length === 0) {
+      return {
+        success: false,
+        message: 'Orders table does not exist. Please initialize the database first.',
+        changes: [],
+      };
+    }
+
+    // Check and add missing columns to orders table
+    const orderColumns = await prisma.$queryRaw<Array<{ name: string }>>`
+      PRAGMA table_info("orders");
+    `;
+    const orderColumnNames = orderColumns.map(c => c.name.toLowerCase());
+
+    if (!orderColumnNames.includes('cancellationreason')) {
+      console.log('🛠️ Adding missing column orders.cancellationReason');
+      await prisma.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "cancellationReason" TEXT;`);
+      changes.push('Added cancellationReason column to orders table');
+    }
+
+
+    const message = changes.length > 0 
+      ? `Schema upgraded successfully. ${changes.length} change(s) applied.`
+      : 'Database schema is up to date. No changes needed.';
+
+    return {
+      success: true,
+      message,
+      changes,
+    };
+  } catch (error: any) {
+    console.error('❌ Failed to upgrade database schema:', error.message);
+    throw new Error(`Failed to upgrade database schema: ${error.message}`);
   }
 }
 

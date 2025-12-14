@@ -246,6 +246,11 @@
   border-radius: var(--radius-full);
   font-size: var(--text-xs);
   font-weight: 600;
+}
+
+.status-badge.status-custom {
+  /* Allow inline styles to override */
+  text-transform: none; /* Allow custom text case */
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }

@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react';
-import { Plus, Search, Filter, Loader2, X, ChevronLeft, ChevronRight, MessageSquare, Eye, Copy, ArrowUp, ArrowDown, ChevronUp, ChevronDown } from 'lucide-react';
+import { useState, useEffect, useMemo } from 'react';
+import { Plus, Search, Filter, Loader2, X, ChevronLeft, ChevronRight, MessageSquare, Eye, Copy, ArrowUp, ArrowDown, ChevronUp, ChevronDown, BarChart3, ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon, User, Building2, DollarSign, Hash, FileText } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
@@ -9,6 +9,9 @@ import { useContextMenu } from '../hooks/useContextMenu';
 import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
 import { getWhatsAppMessage, openWhatsApp } from '../utils/whatsapp';
 import WhatsAppModal from '../components/WhatsAppModal';
+import { useAuthStore } from '../store/authStore';
+import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
+import { useOrderStatusConfig, getStatusConfig } from '../hooks/useOrderStatusConfig';
 
 interface Order {
   id: string;
@@ -41,10 +44,33 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
+  const [updatedDateFrom, setUpdatedDateFrom] = useState<string>('');
+  const [updatedDateTo, setUpdatedDateTo] = useState<string>('');
+  const [supplierFilter, setSupplierFilter] = useState<string[]>([]);
+  const [customerFilter, setCustomerFilter] = useState<string>('');
+  const [createdByFilter, setCreatedByFilter] = useState<string>('');
+  const [minAmount, setMinAmount] = useState<string>('');
+  const [maxAmount, setMaxAmount] = useState<string>('');
+  const [minOrderNumber, setMinOrderNumber] = useState<string>('');
+  const [maxOrderNumber, setMaxOrderNumber] = useState<string>('');
+  const [hasObservations, setHasObservations] = useState<string>('');
   const [showFilters, setShowFilters] = useState(false);
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
+    dates: true,
+    status: true,
+    entities: false,
+    amounts: false,
+    advanced: false,
+  });
+  
+  // Filter data caches
+  const [suppliersList, setSuppliersList] = useState<Array<{ id: string; name: string }>>([]);
+  const [customersList, setCustomersList] = useState<Array<{ id: string; name: string }>>([]);
+  const [usersList, setUsersList] = useState<Array<{ id: string; username: string }>>([]);
+  const [loadingFilters, setLoadingFilters] = useState(false);
   const [page, setPage] = useState(1);
   const [sortBy, setSortBy] = useState<string>('createdAt');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
@@ -58,12 +84,80 @@ export default function OrdersPage() {
   const [selectedOrder, setSelectedOrder] = useState<Order | null>(null);
   const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
   const [whatsappMessage, setWhatsappMessage] = useState<string>('');
+  const [activeTab, setActiveTab] = useState<'orders' | 'supplier-analytics'>('orders');
+  const [supplierAnalyticsYear, setSupplierAnalyticsYear] = useState<number>(new Date().getFullYear());
+  const [supplierAnalyticsMonth, setSupplierAnalyticsMonth] = useState<number | null>(null); // null = all months (default)
+  const [supplierAnalyticsChartType, setSupplierAnalyticsChartType] = useState<'amount' | 'count'>('count'); // Default: Order Count by Month
+  const [supplierAnalyticsView, setSupplierAnalyticsView] = useState<'chart' | 'table' | 'both'>('both'); // Default: both chart and table
+  const [supplierAnalyticsTableFilter, setSupplierAnalyticsTableFilter] = useState<string>(''); // Filter by supplier name
+  const [supplierAnalyticsLoading, setSupplierAnalyticsLoading] = useState(false);
+  const [supplierAnalyticsData, setSupplierAnalyticsData] = useState<any[]>([]);
 
   const debouncedSearch = useDebounce(searchQuery, 500);
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'SUPER_ADMIN';
+  const { config: statusConfig } = useOrderStatusConfig();
+
+  // Load filter data when filters panel opens
+  useEffect(() => {
+    if (showFilters && (suppliersList.length === 0 || customersList.length === 0 || usersList.length === 0)) {
+      loadFilterData();
+    }
+  }, [showFilters]);
 
   useEffect(() => {
     fetchOrders();
-  }, [debouncedSearch, statusFilter, dateFrom, dateTo, page, sortBy, sortOrder]);
+  }, [debouncedSearch, statusFilter, dateFrom, dateTo, updatedDateFrom, updatedDateTo, supplierFilter, customerFilter, createdByFilter, minAmount, maxAmount, minOrderNumber, maxOrderNumber, hasObservations, page, sortBy, sortOrder]);
+
+  // Fetch supplier analytics when tab, year, or month changes
+  useEffect(() => {
+    if (isAdmin && activeTab === 'supplier-analytics') {
+      fetchSupplierAnalytics();
+    }
+  }, [isAdmin, activeTab, supplierAnalyticsYear, supplierAnalyticsMonth]);
+
+  const fetchSupplierAnalytics = async () => {
+    if (!isAdmin) return;
+    
+    try {
+      setSupplierAnalyticsLoading(true);
+      const params: any = {
+        year: supplierAnalyticsYear,
+      };
+      
+      if (supplierAnalyticsMonth !== null) {
+        params.month = supplierAnalyticsMonth;
+      }
+      
+      const response = await api.get<{ success: true; data: any[] }>('/analytics/supplier-monthly', { params });
+      setSupplierAnalyticsData(response.data.data || []);
+    } catch (error: any) {
+      console.error('Failed to fetch supplier analytics:', error);
+      toast.error(error.response?.data?.error?.message || t('orders.supplierAnalyticsError'));
+      setSupplierAnalyticsData([]);
+    } finally {
+      setSupplierAnalyticsLoading(false);
+    }
+  };
+
+  const loadFilterData = async () => {
+    try {
+      setLoadingFilters(true);
+      const [suppliersRes, customersRes, usersRes] = await Promise.all([
+        api.get<{ success: true; data: Array<{ id: string; name: string }> }>('/suppliers').catch(() => ({ data: { success: true, data: [] } })),
+        api.get<{ success: true; data: Array<{ id: string; name: string }> }>('/customers/search').catch(() => ({ data: { success: true, data: [] } })),
+        api.get<{ success: true; data: Array<{ id: string; username: string }> }>('/users').catch(() => ({ data: { success: true, data: [] } })),
+      ]);
+      
+      if (suppliersRes.data.success) setSuppliersList(suppliersRes.data.data || []);
+      if (customersRes.data.success) setCustomersList(customersRes.data.data || []);
+      if (usersRes.data.success) setUsersList(usersRes.data.data || []);
+    } catch (error) {
+      console.error('Failed to load filter data:', error);
+    } finally {
+      setLoadingFilters(false);
+    }
+  };
 
   const fetchOrders = async () => {
     try {
@@ -77,8 +171,8 @@ export default function OrdersPage() {
         params.search = debouncedSearch.trim();
       }
 
-      if (statusFilter) {
-        params.status = statusFilter;
+      if (statusFilter.length > 0) {
+        params.status = statusFilter.join(',');
       }
 
       if (dateFrom) {
@@ -87,6 +181,46 @@ export default function OrdersPage() {
 
       if (dateTo) {
         params.dateTo = dateTo;
+      }
+
+      if (updatedDateFrom) {
+        params.updatedDateFrom = updatedDateFrom;
+      }
+
+      if (updatedDateTo) {
+        params.updatedDateTo = updatedDateTo;
+      }
+
+      if (supplierFilter.length > 0) {
+        params.supplierIds = supplierFilter.join(',');
+      }
+
+      if (customerFilter) {
+        params.customerId = customerFilter;
+      }
+
+      if (createdByFilter) {
+        params.createdById = createdByFilter;
+      }
+
+      if (minAmount) {
+        params.minAmount = minAmount;
+      }
+
+      if (maxAmount) {
+        params.maxAmount = maxAmount;
+      }
+
+      if (minOrderNumber) {
+        params.minOrderNumber = minOrderNumber;
+      }
+
+      if (maxOrderNumber) {
+        params.maxOrderNumber = maxOrderNumber;
+      }
+
+      if (hasObservations) {
+        params.hasObservations = hasObservations;
       }
 
       if (sortBy) {
@@ -120,41 +254,38 @@ export default function OrdersPage() {
   };
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case 'RECEIVED':
-        return 'status-green';
-      case 'NOTIFIED_CALL':
-      case 'NOTIFIED_WHATSAPP':
-        return 'status-green';
-      case 'CANCELLED':
-      case 'INCOMPLETO':
-        return 'status-red';
-      default:
-        return 'status-pending';
-    }
+    // Use custom config if available, otherwise fallback to default
+    const config = getStatusConfig(status, statusConfig);
+    // Return a class name that will be styled with inline styles
+    return 'status-custom';
   };
 
   const getStatusLabel = (status: string) => {
-    switch (status) {
-      case 'PENDING':
-        return t('orders.statusPending');
-      case 'RECEIVED':
-        return t('orders.statusReceived');
-      case 'NOTIFIED_CALL':
-        return t('orders.statusNotifiedCall');
-      case 'NOTIFIED_WHATSAPP':
-        return t('orders.statusNotifiedWhatsApp');
-      case 'CANCELLED':
-        return t('orders.statusCancelled');
-      case 'INCOMPLETO':
-        return t('orders.statusIncompleto');
-      default:
-        return status;
-    }
+    const config = getStatusConfig(status, statusConfig);
+    return config.text || status;
+  };
+
+  const getStatusStyle = (status: string) => {
+    const config = getStatusConfig(status, statusConfig);
+    return {
+      color: config.color || '#6b7280',
+      backgroundColor: config.backgroundColor || '#f3f4f6',
+      fontFamily: config.fontFamily || 'inherit',
+      fontSize: config.fontSize || 'inherit',
+      fontWeight: config.fontWeight || 'normal',
+    };
   };
 
   const handleStatusFilterChange = (status: string) => {
-    setStatusFilter(status);
+    setStatusFilter(prev => {
+      if (prev.includes(status)) {
+        // Remove status if already selected
+        return prev.filter(s => s !== status);
+      } else {
+        // Add status if not selected
+        return [...prev, status];
+      }
+    });
     setPage(1); // Reset to first page when filter changes
   };
 
@@ -165,11 +296,19 @@ export default function OrdersPage() {
 
   const clearFilters = () => {
     setSearchQuery('');
-    setStatusFilter('');
+    setStatusFilter([]);
     setDateFrom('');
     setDateTo('');
-    setSortBy('createdAt');
-    setSortOrder('desc');
+    setUpdatedDateFrom('');
+    setUpdatedDateTo('');
+    setSupplierFilter([]);
+    setCustomerFilter('');
+    setCreatedByFilter('');
+    setMinAmount('');
+    setMaxAmount('');
+    setMinOrderNumber('');
+    setMaxOrderNumber('');
+    setHasObservations('');
     setPage(1);
   };
 
@@ -192,7 +331,81 @@ export default function OrdersPage() {
     return sortOrder === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
 
-  const hasActiveFilters = searchQuery.trim() || statusFilter || dateFrom || dateTo;
+  const hasActiveFilters = useMemo(() => {
+    return !!(
+      searchQuery.trim() ||
+      statusFilter.length > 0 ||
+      dateFrom ||
+      dateTo ||
+      updatedDateFrom ||
+      updatedDateTo ||
+      supplierFilter.length > 0 ||
+      customerFilter ||
+      createdByFilter ||
+      minAmount ||
+      maxAmount ||
+      minOrderNumber ||
+      maxOrderNumber ||
+      hasObservations
+    );
+  }, [searchQuery, statusFilter, dateFrom, dateTo, updatedDateFrom, updatedDateTo, supplierFilter, customerFilter, createdByFilter, minAmount, maxAmount, minOrderNumber, maxOrderNumber, hasObservations]);
+
+  const toggleSection = (section: string) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [section]: !prev[section],
+    }));
+  };
+
+  const applyDatePreset = (preset: string) => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const endOfDay = new Date(today);
+    endOfDay.setHours(23, 59, 59, 999);
+    
+    switch (preset) {
+      case 'today':
+        setDateFrom(today.toISOString().split('T')[0]);
+        setDateTo(today.toISOString().split('T')[0]);
+        break;
+      case 'thisWeek':
+        const weekStart = new Date(today);
+        weekStart.setDate(today.getDate() - today.getDay());
+        setDateFrom(weekStart.toISOString().split('T')[0]);
+        setDateTo(endOfDay.toISOString().split('T')[0]);
+        break;
+      case 'thisMonth':
+        const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+        setDateFrom(monthStart.toISOString().split('T')[0]);
+        setDateTo(endOfDay.toISOString().split('T')[0]);
+        break;
+      case 'lastMonth':
+        const lastMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+        const lastMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0);
+        setDateFrom(lastMonthStart.toISOString().split('T')[0]);
+        setDateTo(lastMonthEnd.toISOString().split('T')[0]);
+        break;
+      case 'last7Days':
+        const last7Days = new Date(today);
+        last7Days.setDate(today.getDate() - 7);
+        setDateFrom(last7Days.toISOString().split('T')[0]);
+        setDateTo(endOfDay.toISOString().split('T')[0]);
+        break;
+      case 'last30Days':
+        const last30Days = new Date(today);
+        last30Days.setDate(today.getDate() - 30);
+        setDateFrom(last30Days.toISOString().split('T')[0]);
+        setDateTo(endOfDay.toISOString().split('T')[0]);
+        break;
+      case 'last90Days':
+        const last90Days = new Date(today);
+        last90Days.setDate(today.getDate() - 90);
+        setDateFrom(last90Days.toISOString().split('T')[0]);
+        setDateTo(endOfDay.toISOString().split('T')[0]);
+        break;
+    }
+    setPage(1);
+  };
 
   const handleRowRightClick = (e: React.MouseEvent, order: Order) => {
     e.preventDefault();
@@ -256,8 +469,9 @@ export default function OrdersPage() {
   const handleCopyOrderId = () => {
     if (!selectedOrder) return;
     // Copy orderNumber if it exists, otherwise copy the original order ID
-    const orderIdToCopy = selectedOrder.orderNumber?.toString() || selectedOrder.id;
-    navigator.clipboard.writeText(orderIdToCopy);
+    const orderNumber = selectedOrder.orderNumber?.toString() || selectedOrder.id;
+    const textToCopy = t('orders.copyOrderNumberText', { orderNumber });
+    navigator.clipboard.writeText(textToCopy);
     toast.success(t('common.copied'));
   };
 
@@ -318,16 +532,52 @@ export default function OrdersPage() {
           <h1>{t('orders.title')}</h1>
           <p className="page-subtitle">{t('orders.manageOrders')}</p>
         </div>
-        <button
-          className="btn-primary"
-          onClick={() => navigate('/orders/create')}
-        >
-          <Plus size={20} />
-          {t('orders.createOrder')}
-        </button>
+        {activeTab === 'orders' && (
+          <button
+            className="btn-primary"
+            onClick={() => navigate('/orders/create')}
+          >
+            <Plus size={20} />
+            {t('orders.createOrder')}
+          </button>
+        )}
       </div>
 
-      <div className="orders-toolbar">
+      {/* Tabs */}
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', borderBottom: '2px solid var(--border-color)' }}>
+          <button
+            className={`btn-secondary ${activeTab === 'orders' ? 'active' : ''}`}
+            onClick={() => setActiveTab('orders')}
+            style={{
+              borderBottom: activeTab === 'orders' ? '2px solid var(--primary-color)' : '2px solid transparent',
+              borderRadius: 0,
+              marginBottom: '-2px',
+              padding: '0.75rem 1.5rem',
+            }}
+          >
+            {t('orders.ordersList')}
+          </button>
+          <button
+            className={`btn-secondary ${activeTab === 'supplier-analytics' ? 'active' : ''}`}
+            onClick={() => setActiveTab('supplier-analytics')}
+            style={{
+              borderBottom: activeTab === 'supplier-analytics' ? '2px solid var(--primary-color)' : '2px solid transparent',
+              borderRadius: 0,
+              marginBottom: '-2px',
+              padding: '0.75rem 1.5rem',
+            }}
+          >
+            <BarChart3 size={18} style={{ marginRight: '0.5rem' }} />
+            {t('orders.supplierAnalytics')}
+          </button>
+        </div>
+      )}
+
+      {/* Orders Tab Content */}
+      {activeTab === 'orders' && (
+        <>
+          <div className="orders-toolbar">
         <div className="search-container">
           <Search size={20} className="search-icon" />
           <input
@@ -351,7 +601,7 @@ export default function OrdersPage() {
           {hasActiveFilters && (
             <button className="btn-secondary btn-sm" onClick={clearFilters}>
               <X size={16} />
-{t('common.clearFilters')}
+              {t('common.clearFilters')}
             </button>
           )}
           <button
@@ -364,115 +614,357 @@ export default function OrdersPage() {
         </div>
       </div>
 
-      {/* Filter Panel */}
+      {/* Modern Filter Panel */}
       {showFilters && (
-        <div className="filter-panel">
-          <div className="filter-group">
-            <label>{t('common.status')}</label>
-            <select
-              value={statusFilter}
-              onChange={(e) => handleStatusFilterChange(e.target.value)}
-              className="filter-select"
-            >
-              <option value="">{t('orders.allStatuses')}</option>
-              <option value="PENDING">{t('orders.statusPending')}</option>
-              <option value="RECEIVED">{t('orders.statusReceived')}</option>
-              <option value="NOTIFIED_CALL">{t('orders.statusNotifiedCall')}</option>
-              <option value="NOTIFIED_WHATSAPP">{t('orders.statusNotifiedWhatsApp')}</option>
-              <option value="CANCELLED">{t('orders.statusCancelled')}</option>
-            </select>
+        <div className="modern-filter-panel">
+          <div className="filter-header">
+            <h3>{t('common.filters')}</h3>
+            <button className="btn-icon-small" onClick={() => setShowFilters(false)} title={t('common.close')}>
+              <X size={18} />
+            </button>
           </div>
-          <div className="filter-group">
-            <label>{t('orders.dateFrom')}</label>
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => {
-                setDateFrom(e.target.value);
-                setPage(1);
-              }}
-              className="filter-input"
-            />
+
+          <div className="filter-content">
+            {/* Quick Date Presets */}
+            <div className="filter-section">
+              <button 
+                className="filter-section-header"
+                onClick={() => toggleSection('dates')}
+              >
+                <FileText size={18} />
+                <span>{t('orders.dateFilters')}</span>
+                {expandedSections.dates ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
+              </button>
+              {expandedSections.dates && (
+                <div className="filter-section-content">
+                  <div className="date-presets">
+                    <button className="preset-btn" onClick={() => applyDatePreset('today')}>{t('orders.today')}</button>
+                    <button className="preset-btn" onClick={() => applyDatePreset('thisWeek')}>{t('orders.thisWeek')}</button>
+                    <button className="preset-btn" onClick={() => applyDatePreset('thisMonth')}>{t('orders.thisMonth')}</button>
+                    <button className="preset-btn" onClick={() => applyDatePreset('lastMonth')}>{t('orders.lastMonth')}</button>
+                    <button className="preset-btn" onClick={() => applyDatePreset('last7Days')}>{t('orders.last7Days')}</button>
+                    <button className="preset-btn" onClick={() => applyDatePreset('last30Days')}>{t('orders.last30Days')}</button>
+                    <button className="preset-btn" onClick={() => applyDatePreset('last90Days')}>{t('orders.last90Days')}</button>
+                  </div>
+                  <div className="filter-row">
+                    <div className="filter-group">
+                      <label>{t('orders.createdDateFrom')}</label>
+                      <input
+                        type="date"
+                        value={dateFrom}
+                        onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+                        className="filter-input"
+                      />
+                    </div>
+                    <div className="filter-group">
+                      <label>{t('orders.createdDateTo')}</label>
+                      <input
+                        type="date"
+                        value={dateTo}
+                        onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+                        className="filter-input"
+                        min={dateFrom || undefined}
+                      />
+                    </div>
+                  </div>
+                  <div className="filter-row">
+                    <div className="filter-group">
+                      <label>{t('orders.updatedDateFrom')}</label>
+                      <input
+                        type="date"
+                        value={updatedDateFrom}
+                        onChange={(e) => { setUpdatedDateFrom(e.target.value); setPage(1); }}
+                        className="filter-input"
+                      />
+                    </div>
+                    <div className="filter-group">
+                      <label>{t('orders.updatedDateTo')}</label>
+                      <input
+                        type="date"
+                        value={updatedDateTo}
+                        onChange={(e) => { setUpdatedDateTo(e.target.value); setPage(1); }}
+                        className="filter-input"
+                        min={updatedDateFrom || undefined}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Status Filter */}
+            <div className="filter-section">
+              <button 
+                className="filter-section-header"
+                onClick={() => toggleSection('status')}
+              >
+                <Filter size={18} />
+                <span>{t('common.status')}</span>
+                {expandedSections.status ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
+              </button>
+              {expandedSections.status && (
+                <div className="filter-section-content">
+                  <div className="checkbox-grid">
+                    {[
+                      { value: 'PENDING', label: t('orders.statusPending') },
+                      { value: 'RECEIVED', label: t('orders.statusReceived') },
+                      { value: 'NOTIFIED_CALL', label: t('orders.statusNotifiedCall') },
+                      { value: 'NOTIFIED_WHATSAPP', label: t('orders.statusNotifiedWhatsApp') },
+                      { value: 'DELIVERED_COUNTER', label: t('orders.statusDeliveredCounter') },
+                      { value: 'CANCELLED', label: t('orders.statusCancelled') },
+                      { value: 'INCOMPLETO', label: t('orders.statusIncompleto') },
+                    ].map((statusOption) => (
+                      <label key={statusOption.value} className="checkbox-label">
+                        <input
+                          type="checkbox"
+                          checked={statusFilter.includes(statusOption.value)}
+                          onChange={() => handleStatusFilterChange(statusOption.value)}
+                        />
+                        <span>{statusOption.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Entities Filter (Suppliers, Customers, Users) */}
+            <div className="filter-section">
+              <button 
+                className="filter-section-header"
+                onClick={() => toggleSection('entities')}
+              >
+                <Building2 size={18} />
+                <span>{t('orders.entities')}</span>
+                {expandedSections.entities ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
+              </button>
+              {expandedSections.entities && (
+                <div className="filter-section-content">
+                  <div className="filter-group">
+                    <label>{t('orders.suppliers')}</label>
+                    {loadingFilters ? (
+                      <Loader2 className="spinner" size={16} />
+                    ) : (
+                      <div className="multi-select-container">
+                        {suppliersList.map((supplier) => (
+                          <label key={supplier.id} className="checkbox-label">
+                            <input
+                              type="checkbox"
+                              checked={supplierFilter.includes(supplier.id)}
+                              onChange={() => {
+                                setSupplierFilter(prev => 
+                                  prev.includes(supplier.id)
+                                    ? prev.filter(id => id !== supplier.id)
+                                    : [...prev, supplier.id]
+                                );
+                                setPage(1);
+                              }}
+                            />
+                            <span>{supplier.name}</span>
+                          </label>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                  <div className="filter-group">
+                    <label>{t('orders.customer')}</label>
+                    <select
+                      value={customerFilter}
+                      onChange={(e) => { setCustomerFilter(e.target.value); setPage(1); }}
+                      className="filter-input"
+                    >
+                      <option value="">{t('orders.allCustomers')}</option>
+                      {customersList.map((customer) => (
+                        <option key={customer.id} value={customer.id}>{customer.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="filter-group">
+                    <label>{t('orders.createdBy')}</label>
+                    <select
+                      value={createdByFilter}
+                      onChange={(e) => { setCreatedByFilter(e.target.value); setPage(1); }}
+                      className="filter-input"
+                    >
+                      <option value="">{t('orders.allUsers')}</option>
+                      {usersList.map((user) => (
+                        <option key={user.id} value={user.id}>{user.username}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Amount & Order Number Range */}
+            <div className="filter-section">
+              <button 
+                className="filter-section-header"
+                onClick={() => toggleSection('amounts')}
+              >
+                <DollarSign size={18} />
+                <span>{t('orders.amountsAndNumbers')}</span>
+                {expandedSections.amounts ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
+              </button>
+              {expandedSections.amounts && (
+                <div className="filter-section-content">
+                  <div className="filter-row">
+                    <div className="filter-group">
+                      <label>{t('orders.minAmount')}</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={minAmount}
+                        onChange={(e) => { setMinAmount(e.target.value); setPage(1); }}
+                        className="filter-input"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div className="filter-group">
+                      <label>{t('orders.maxAmount')}</label>
+                      <input
+                        type="number"
+                        step="0.01"
+                        value={maxAmount}
+                        onChange={(e) => { setMaxAmount(e.target.value); setPage(1); }}
+                        className="filter-input"
+                        placeholder="999999.99"
+                      />
+                    </div>
+                  </div>
+                  <div className="filter-row">
+                    <div className="filter-group">
+                      <label>{t('orders.minOrderNumber')}</label>
+                      <input
+                        type="number"
+                        value={minOrderNumber}
+                        onChange={(e) => { setMinOrderNumber(e.target.value); setPage(1); }}
+                        className="filter-input"
+                        placeholder="1"
+                      />
+                    </div>
+                    <div className="filter-group">
+                      <label>{t('orders.maxOrderNumber')}</label>
+                      <input
+                        type="number"
+                        value={maxOrderNumber}
+                        onChange={(e) => { setMaxOrderNumber(e.target.value); setPage(1); }}
+                        className="filter-input"
+                        placeholder="999999"
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Advanced Filters */}
+            <div className="filter-section">
+              <button 
+                className="filter-section-header"
+                onClick={() => toggleSection('advanced')}
+              >
+                <FileText size={18} />
+                <span>{t('orders.advanced')}</span>
+                {expandedSections.advanced ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
+              </button>
+              {expandedSections.advanced && (
+                <div className="filter-section-content">
+                  <div className="filter-group">
+                    <label>{t('orders.hasObservations')}</label>
+                    <select
+                      value={hasObservations}
+                      onChange={(e) => { setHasObservations(e.target.value); setPage(1); }}
+                      className="filter-input"
+                    >
+                      <option value="">{t('orders.any')}</option>
+                      <option value="true">{t('orders.yes')}</option>
+                      <option value="false">{t('orders.no')}</option>
+                    </select>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
-          <div className="filter-group">
-            <label>{t('orders.dateTo')}</label>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => {
-                setDateTo(e.target.value);
-                setPage(1);
-              }}
-              className="filter-input"
-              min={dateFrom || undefined}
-            />
-          </div>
+
+          {/* Active Filters Summary */}
           {hasActiveFilters && (
-            <div className="active-filters">
-              <span className="filter-label">{t('orders.activeFilters')}:</span>
-              {searchQuery && (
-                <span className="filter-tag">
-                  {t('orders.searchFilter')}: "{searchQuery}"
-                  <button onClick={() => setSearchQuery('')}>
-                    <X size={12} />
-                  </button>
-                </span>
-              )}
-              {statusFilter && (
-                <span className="filter-tag">
-                  {t('common.status')}: {getStatusLabel(statusFilter)}
-                  <button onClick={() => handleStatusFilterChange('')}>
-                    <X size={12} />
-                  </button>
-                </span>
-              )}
-              {dateFrom && (
-                <span className="filter-tag">
-                  {t('orders.dateFrom')}: {new Date(dateFrom).toLocaleDateString()}
-                  <button onClick={() => {
-                    setDateFrom('');
-                    setPage(1);
-                  }}>
-                    <X size={12} />
-                  </button>
-                </span>
-              )}
-              {dateTo && (
-                <span className="filter-tag">
-                  {t('orders.dateTo')}: {new Date(dateTo).toLocaleDateString()}
-                  <button onClick={() => {
-                    setDateTo('');
-                    setPage(1);
-                  }}>
-                    <X size={12} />
-                  </button>
-                </span>
-              )}
+            <div className="active-filters-summary">
+              <div className="active-filters-header">
+                <span className="filter-label">{t('orders.activeFilters')}:</span>
+                <button className="btn-link-small" onClick={clearFilters}>
+                  {t('common.clearAll')}
+                </button>
+              </div>
+              <div className="filter-tags">
+                {searchQuery && (
+                  <span className="filter-tag">
+                    {t('orders.search')}: "{searchQuery}"
+                    <button onClick={() => setSearchQuery('')}><X size={12} /></button>
+                  </span>
+                )}
+                {statusFilter.map((status) => (
+                  <span key={status} className="filter-tag">
+                    {t('common.status')}: {getStatusLabel(status)}
+                    <button onClick={() => handleStatusFilterChange(status)}><X size={12} /></button>
+                  </span>
+                ))}
+                {dateFrom && (
+                  <span className="filter-tag">
+                    {t('orders.createdFrom')}: {new Date(dateFrom).toLocaleDateString()}
+                    <button onClick={() => { setDateFrom(''); setPage(1); }}><X size={12} /></button>
+                  </span>
+                )}
+                {dateTo && (
+                  <span className="filter-tag">
+                    {t('orders.createdTo')}: {new Date(dateTo).toLocaleDateString()}
+                    <button onClick={() => { setDateTo(''); setPage(1); }}><X size={12} /></button>
+                  </span>
+                )}
+                {supplierFilter.length > 0 && (
+                  <span className="filter-tag">
+                    {t('orders.suppliers')}: {supplierFilter.length}
+                    <button onClick={() => { setSupplierFilter([]); setPage(1); }}><X size={12} /></button>
+                  </span>
+                )}
+                {customerFilter && (
+                  <span className="filter-tag">
+                    {t('orders.customer')}: {customersList.find(c => c.id === customerFilter)?.name || customerFilter}
+                    <button onClick={() => { setCustomerFilter(''); setPage(1); }}><X size={12} /></button>
+                  </span>
+                )}
+                {(minAmount || maxAmount) && (
+                  <span className="filter-tag">
+                    {t('orders.amount')}: {minAmount || '0'} - {maxAmount || '∞'}
+                    <button onClick={() => { setMinAmount(''); setMaxAmount(''); setPage(1); }}><X size={12} /></button>
+                  </span>
+                )}
+              </div>
             </div>
           )}
         </div>
       )}
 
-      {orders.length === 0 && !loading ? (
-        <div className="empty-state">
-          <p>{t('orders.noOrders')}</p>
-          {hasActiveFilters ? (
-            <button className="btn-secondary" onClick={clearFilters}>
-{t('common.clearFilters')}
-            </button>
+          {orders.length === 0 && !loading ? (
+            <div className="empty-state">
+              <p>{t('orders.noOrders')}</p>
+              {hasActiveFilters ? (
+                <button className="btn-secondary" onClick={clearFilters}>
+                  {t('common.clearFilters')}
+                </button>
+              ) : (
+                <button
+                  className="btn-primary"
+                  onClick={() => navigate('/orders/create')}
+                >
+                  <Plus size={20} />
+                  {t('orders.createFirstOrder')}
+                </button>
+              )}
+            </div>
           ) : (
-            <button
-              className="btn-primary"
-              onClick={() => navigate('/orders/create')}
-            >
-              <Plus size={20} />
-              {t('orders.createFirstOrder')}
-            </button>
-          )}
-        </div>
-      ) : (
-        <>
-          <div className="orders-list-container">
+            <>
+              <div className="orders-list-container">
             <table className="orders-table">
               <thead>
                 <tr>
@@ -519,16 +1011,6 @@ export default function OrdersPage() {
                   <th>{t('orders.suppliers')}</th>
                   <th 
                     className="sortable-header"
-                    onClick={() => handleSort('totalAmount')}
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      {t('orders.total')}
-                      {getSortIcon('totalAmount')}
-                    </div>
-                  </th>
-                  <th 
-                    className="sortable-header"
                     onClick={() => handleSort('createdBy')}
                     style={{ cursor: 'pointer', userSelect: 'none' }}
                   >
@@ -570,7 +1052,10 @@ export default function OrdersPage() {
                   className="order-row"
                 >
                   <td>
-                    <span className={`status-badge ${getStatusColor(order.status)}`}>
+                    <span 
+                      className="status-badge status-custom"
+                      style={getStatusStyle(order.status)}
+                    >
                       {getStatusLabel(order.status)}
                     </span>
                   </td>
@@ -579,8 +1064,9 @@ export default function OrdersPage() {
                       className="order-id clickable-copy" 
                       onClick={(e) => {
                         e.stopPropagation();
-                        const orderIdToCopy = order.orderNumber?.toString() || order.id;
-                        navigator.clipboard.writeText(orderIdToCopy);
+                        const orderNumber = order.orderNumber?.toString() || order.id;
+                        const textToCopy = t('orders.copyOrderNumberText', { orderNumber });
+                        navigator.clipboard.writeText(textToCopy);
                         toast.success(t('common.copied'));
                       }}
                       title={t('orders.clickToCopy')}
@@ -619,7 +1105,6 @@ export default function OrdersPage() {
                     })()}
                   </td>
                   <td>{order.suppliers?.length || 0}</td>
-                  <td>{order.totalAmount ? `€${order.totalAmount}` : '-'}</td>
                   <td>{order.createdBy?.username || '-'}</td>
                   <td>{new Date(order.createdAt).toLocaleDateString()}</td>
                   <td>
@@ -673,7 +1158,492 @@ export default function OrdersPage() {
               </button>
             </div>
           )}
+          </>
+          )}
         </>
+      )}
+
+      {/* Supplier Analytics Tab Content */}
+      {isAdmin && activeTab !== 'orders' && (
+        <div style={{ padding: '1.5rem', backgroundColor: 'var(--card-bg)', borderRadius: 'var(--radius-lg)', border: '1px solid var(--border-color)' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+            <h2 style={{ margin: 0 }}>{t('orders.supplierMonthlyAssessment')}</h2>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <label style={{ fontWeight: 500 }}>{t('orders.year')}:</label>
+                <select
+                  value={supplierAnalyticsYear}
+                  onChange={(e) => setSupplierAnalyticsYear(parseInt(e.target.value))}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: 'var(--input-bg)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.9375rem',
+                  }}
+                >
+                  {Array.from({ length: 10 }, (_, i) => {
+                    const currentYear = new Date().getFullYear();
+                    // Show 2 years in the future and 7 years in the past
+                    return currentYear + 2 - i;
+                  }).map((year) => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <label style={{ fontWeight: 500 }}>{t('orders.month')}:</label>
+                <select
+                  value={supplierAnalyticsMonth === null ? '' : supplierAnalyticsMonth}
+                  onChange={(e) => setSupplierAnalyticsMonth(e.target.value === '' ? null : parseInt(e.target.value))}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: 'var(--input-bg)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.9375rem',
+                  }}
+                >
+                  <option value="">{t('orders.allMonths')}</option>
+                  {Array.from({ length: 12 }, (_, i) => {
+                    const monthNum = i + 1;
+                    const monthNames = [
+                      t('orders.january'), t('orders.february'), t('orders.march'), t('orders.april'),
+                      t('orders.may'), t('orders.june'), t('orders.july'), t('orders.august'),
+                      t('orders.september'), t('orders.october'), t('orders.november'), t('orders.december')
+                    ];
+                    return (
+                      <option key={monthNum} value={monthNum}>
+                        {monthNames[i]}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          {supplierAnalyticsLoading ? (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', padding: '3rem' }}>
+              <Loader2 className="spinner" size={32} />
+            </div>
+          ) : supplierAnalyticsData.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '3rem', color: 'var(--text-secondary)' }}>
+              <p>{t('orders.noSupplierData')}</p>
+            </div>
+          ) : (
+            <div>
+              {/* View and Chart Type Selectors */}
+              <div style={{ marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <label style={{ fontWeight: 500 }}>{t('orders.view')}:</label>
+                  <select
+                    value={supplierAnalyticsView}
+                    onChange={(e) => setSupplierAnalyticsView(e.target.value as 'chart' | 'table' | 'both')}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: 'var(--radius-md)',
+                      backgroundColor: 'var(--input-bg)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.9375rem',
+                      minWidth: '150px',
+                    }}
+                  >
+                    <option value="chart">{t('orders.chart')}</option>
+                    <option value="table">{t('orders.table')}</option>
+                    <option value="both">{t('orders.chartAndTable')}</option>
+                  </select>
+                </div>
+                {(supplierAnalyticsView === 'chart' || supplierAnalyticsView === 'both') && (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <label style={{ fontWeight: 500 }}>{t('orders.chartType')}:</label>
+                    <select
+                      value={supplierAnalyticsChartType}
+                      onChange={(e) => setSupplierAnalyticsChartType(e.target.value as 'amount' | 'count')}
+                      style={{
+                        padding: '0.5rem 1rem',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 'var(--radius-md)',
+                        backgroundColor: 'var(--input-bg)',
+                        color: 'var(--text-primary)',
+                        fontSize: '0.9375rem',
+                        minWidth: '200px',
+                      }}
+                    >
+                      <option value="amount">{t('orders.totalAmountByMonth')}</option>
+                      <option value="count">{t('orders.orderCountByMonth')}</option>
+                    </select>
+                  </div>
+                )}
+              </div>
+
+              {/* Chart for Total Amount */}
+              {(supplierAnalyticsView === 'chart' || supplierAnalyticsView === 'both') && supplierAnalyticsChartType === 'amount' && (
+                <div>
+                  <h3 style={{ marginBottom: '1rem' }}>{t('orders.totalAmountByMonth')}</h3>
+                  <ResponsiveContainer width="100%" height={400}>
+                  <LineChart data={(() => {
+                    // Prepare data for chart - combine all suppliers by month
+                    // Ensure all 12 months are included
+                    const monthMap = new Map<string, { month: string; [key: string]: any }>();
+                    
+                    // Initialize months (all months if no month filter, or just the selected month)
+                    const monthsToInclude = supplierAnalyticsMonth !== null 
+                      ? [supplierAnalyticsMonth] 
+                      : Array.from({ length: 12 }, (_, i) => i + 1);
+                    
+                    monthsToInclude.forEach((m) => {
+                      const monthStr = `${supplierAnalyticsYear}-${String(m).padStart(2, '0')}`;
+                      monthMap.set(monthStr, { month: monthStr });
+                    });
+                    
+                    // Fill in supplier data
+                    supplierAnalyticsData.forEach((supplier) => {
+                      supplier.monthlyData.forEach((monthData: { month: string; totalAmount: number; orderCount: number }) => {
+                        if (monthMap.has(monthData.month)) {
+                          monthMap.get(monthData.month)![supplier.supplierName] = monthData.totalAmount;
+                        }
+                      });
+                    });
+                    
+                    // Set 0 for suppliers that don't have data for a month
+                    supplierAnalyticsData.forEach((supplier) => {
+                      monthMap.forEach((monthData, month) => {
+                        if (!(supplier.supplierName in monthData)) {
+                          monthData[supplier.supplierName] = 0;
+                        }
+                      });
+                    });
+                    
+                    return Array.from(monthMap.values()).sort((a, b) => a.month.localeCompare(b.month));
+                  })()}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                    <XAxis 
+                      dataKey="month" 
+                      stroke="var(--text-secondary)"
+                      tick={{ fill: 'var(--text-secondary)' }}
+                    />
+                    <YAxis 
+                      stroke="var(--text-secondary)"
+                      tick={{ fill: 'var(--text-secondary)' }}
+                      tickFormatter={(value) => `€${value.toFixed(0)}`}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'var(--card-bg)', 
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 'var(--radius-md)',
+                        color: 'var(--text-primary)'
+                      }}
+                      formatter={(value: any) => `€${parseFloat(value).toFixed(2)}`}
+                    />
+                    <Legend />
+                    {supplierAnalyticsData.map((supplier, index) => {
+                      const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+                      return (
+                        <Line
+                          key={supplier.supplierId}
+                          type="monotone"
+                          dataKey={supplier.supplierName}
+                          stroke={colors[index % colors.length]}
+                          strokeWidth={2}
+                          dot={{ r: 4 }}
+                          activeDot={{ r: 6 }}
+                        />
+                      );
+                    })}
+                  </LineChart>
+                </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* Chart for Order Count */}
+              {(supplierAnalyticsView === 'chart' || supplierAnalyticsView === 'both') && supplierAnalyticsChartType === 'count' && (
+                <div>
+                  <h3 style={{ marginBottom: '1rem' }}>{t('orders.orderCountByMonth')}</h3>
+                  <ResponsiveContainer width="100%" height={400}>
+                  <BarChart data={(() => {
+                    // Prepare data for chart - combine all suppliers by month
+                    // Ensure all 12 months are included
+                    const monthMap = new Map<string, { month: string; [key: string]: any }>();
+                    
+                    // Initialize months (all months if no month filter, or just the selected month)
+                    const monthsToInclude = supplierAnalyticsMonth !== null 
+                      ? [supplierAnalyticsMonth] 
+                      : Array.from({ length: 12 }, (_, i) => i + 1);
+                    
+                    monthsToInclude.forEach((m) => {
+                      const monthStr = `${supplierAnalyticsYear}-${String(m).padStart(2, '0')}`;
+                      monthMap.set(monthStr, { month: monthStr });
+                    });
+                    
+                    // Fill in supplier data
+                    supplierAnalyticsData.forEach((supplier) => {
+                      supplier.monthlyData.forEach((monthData: { month: string; totalAmount: number; orderCount: number }) => {
+                        if (monthMap.has(monthData.month)) {
+                          monthMap.get(monthData.month)![supplier.supplierName] = monthData.orderCount;
+                        }
+                      });
+                    });
+                    
+                    // Set 0 for suppliers that don't have data for a month
+                    supplierAnalyticsData.forEach((supplier) => {
+                      monthMap.forEach((monthData, month) => {
+                        if (!(supplier.supplierName in monthData)) {
+                          monthData[supplier.supplierName] = 0;
+                        }
+                      });
+                    });
+                    
+                    return Array.from(monthMap.values()).sort((a, b) => a.month.localeCompare(b.month));
+                  })()}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="var(--border-color)" />
+                    <XAxis 
+                      dataKey="month" 
+                      stroke="var(--text-secondary)"
+                      tick={{ fill: 'var(--text-secondary)' }}
+                    />
+                    <YAxis 
+                      stroke="var(--text-secondary)"
+                      tick={{ fill: 'var(--text-secondary)' }}
+                    />
+                    <Tooltip 
+                      contentStyle={{ 
+                        backgroundColor: 'var(--card-bg)', 
+                        border: '1px solid var(--border-color)',
+                        borderRadius: 'var(--radius-md)',
+                        color: 'var(--text-primary)'
+                      }}
+                    />
+                    <Legend />
+                    {supplierAnalyticsData.map((supplier, index) => {
+                      const colors = ['#3b82f6', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'];
+                      return (
+                        <Bar
+                          key={supplier.supplierId}
+                          dataKey={supplier.supplierName}
+                          fill={colors[index % colors.length]}
+                        />
+                      );
+                    })}
+                  </BarChart>
+                </ResponsiveContainer>
+                </div>
+              )}
+
+              {/* Table View */}
+              {(supplierAnalyticsView === 'table' || supplierAnalyticsView === 'both') && (
+                <div style={{ marginTop: supplierAnalyticsView === 'both' ? '2rem' : '0' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '1rem' }}>
+                    <h3 style={{ margin: 0 }}>{t('orders.supplierAnalyticsTable')}</h3>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Search size={18} style={{ color: 'var(--text-secondary)' }} />
+                      <input
+                        type="text"
+                        placeholder={t('orders.filterBySupplier')}
+                        value={supplierAnalyticsTableFilter}
+                        onChange={(e) => setSupplierAnalyticsTableFilter(e.target.value)}
+                        style={{
+                          padding: '0.5rem 1rem',
+                          border: '1px solid var(--border-color)',
+                          borderRadius: 'var(--radius-md)',
+                          backgroundColor: 'var(--input-bg)',
+                          color: 'var(--text-primary)',
+                          fontSize: '0.9375rem',
+                          minWidth: '250px',
+                        }}
+                      />
+                      {supplierAnalyticsTableFilter && (
+                        <button
+                          onClick={() => setSupplierAnalyticsTableFilter('')}
+                          style={{
+                            padding: '0.5rem',
+                            border: '1px solid var(--border-color)',
+                            borderRadius: 'var(--radius-md)',
+                            backgroundColor: 'var(--input-bg)',
+                            color: 'var(--text-primary)',
+                            cursor: 'pointer',
+                            display: 'flex',
+                            alignItems: 'center',
+                          }}
+                          title={t('common.clearSearch')}
+                        >
+                          <X size={18} />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{ overflowX: 'auto', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', backgroundColor: 'var(--card-bg)' }}>
+                      <thead>
+                        <tr style={{ backgroundColor: 'var(--bg-secondary)', borderBottom: '2px solid var(--border-color)' }}>
+                          <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 600, color: 'var(--text-primary)' }}>
+                            {t('orders.supplier')}
+                          </th>
+                          {supplierAnalyticsMonth !== null && (
+                            <th style={{ padding: '0.75rem 1rem', textAlign: 'left', fontWeight: 600, color: 'var(--text-primary)' }}>
+                              {t('orders.month')}
+                            </th>
+                          )}
+                          <th style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
+                            {t('orders.totalAmount')}
+                          </th>
+                          <th style={{ padding: '0.75rem 1rem', textAlign: 'right', fontWeight: 600, color: 'var(--text-primary)' }}>
+                            {t('orders.orderCount')}
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {(() => {
+                          // If a specific month is selected, show monthly data
+                          // If all months is selected, aggregate totals by supplier
+                          if (supplierAnalyticsMonth !== null) {
+                            // Show individual month rows
+                            const tableData: Array<{
+                              supplierName: string;
+                              month: string;
+                              totalAmount: number;
+                              orderCount: number;
+                            }> = [];
+                            
+                            supplierAnalyticsData
+                              .filter((supplier) => 
+                                !supplierAnalyticsTableFilter || 
+                                supplier.supplierName.toLowerCase().includes(supplierAnalyticsTableFilter.toLowerCase())
+                              )
+                              .forEach((supplier) => {
+                                supplier.monthlyData.forEach((monthData: { month: string; totalAmount: number; orderCount: number }) => {
+                                  tableData.push({
+                                    supplierName: supplier.supplierName,
+                                    month: monthData.month,
+                                    totalAmount: monthData.totalAmount,
+                                    orderCount: monthData.orderCount,
+                                  });
+                                });
+                              });
+                            
+                            // Sort by month, then by supplier name
+                            tableData.sort((a, b) => {
+                              if (a.month !== b.month) {
+                                return a.month.localeCompare(b.month);
+                              }
+                              return a.supplierName.localeCompare(b.supplierName);
+                            });
+                            
+                            if (tableData.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={4} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                    {supplierAnalyticsTableFilter 
+                                      ? t('orders.noSupplierDataFiltered')
+                                      : t('orders.noSupplierData')
+                                    }
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            
+                            return tableData.map((row, index) => (
+                              <tr 
+                                key={`${row.supplierName}-${row.month}`}
+                                style={{ 
+                                  borderBottom: '1px solid var(--border-color)',
+                                  backgroundColor: index % 2 === 0 ? 'var(--card-bg)' : 'var(--bg-secondary)'
+                                }}
+                              >
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)' }}>
+                                  {row.supplierName}
+                                </td>
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)' }}>
+                                  {row.month}
+                                </td>
+                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
+                                  €{row.totalAmount.toFixed(2)}
+                                </td>
+                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
+                                  {row.orderCount}
+                                </td>
+                              </tr>
+                            ));
+                          } else {
+                            // Aggregate totals by supplier for all months
+                            const aggregatedData = new Map<string, { totalAmount: number; orderCount: number }>();
+                            
+                            supplierAnalyticsData
+                              .filter((supplier) => 
+                                !supplierAnalyticsTableFilter || 
+                                supplier.supplierName.toLowerCase().includes(supplierAnalyticsTableFilter.toLowerCase())
+                              )
+                              .forEach((supplier) => {
+                                let totalAmount = 0;
+                                let totalOrderCount = 0;
+                                
+                                supplier.monthlyData.forEach((monthData: { month: string; totalAmount: number; orderCount: number }) => {
+                                  totalAmount += monthData.totalAmount;
+                                  totalOrderCount += monthData.orderCount;
+                                });
+                                
+                                if (totalAmount > 0 || totalOrderCount > 0) {
+                                  aggregatedData.set(supplier.supplierName, {
+                                    totalAmount,
+                                    orderCount: totalOrderCount,
+                                  });
+                                }
+                              });
+                            
+                            const tableData = Array.from(aggregatedData.entries())
+                              .map(([supplierName, data]) => ({
+                                supplierName,
+                                totalAmount: data.totalAmount,
+                                orderCount: data.orderCount,
+                              }))
+                              .sort((a, b) => a.supplierName.localeCompare(b.supplierName));
+                            
+                            if (tableData.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={3} style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-secondary)' }}>
+                                    {supplierAnalyticsTableFilter 
+                                      ? t('orders.noSupplierDataFiltered')
+                                      : t('orders.noSupplierData')
+                                    }
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            
+                            return tableData.map((row, index) => (
+                              <tr 
+                                key={row.supplierName}
+                                style={{ 
+                                  borderBottom: '1px solid var(--border-color)',
+                                  backgroundColor: index % 2 === 0 ? 'var(--card-bg)' : 'var(--bg-secondary)'
+                                }}
+                              >
+                                <td style={{ padding: '0.75rem 1rem', color: 'var(--text-primary)' }}>
+                                  {row.supplierName}
+                                </td>
+                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
+                                  €{row.totalAmount.toFixed(2)}
+                                </td>
+                                <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
+                                  {row.orderCount}
+                                </td>
+                              </tr>
+                            ));
+                          }
+                        })()}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Context Menu */}

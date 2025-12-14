@@ -20,3 +20,33 @@
 .edit-notice svg {
   flex-shrink: 0;
 }
+
+/* Supplier card visual differentiation - same as create-order */
+.supplier-card {
+  transition: all 0.3s ease;
+  position: relative;
+}
+
+.supplier-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.12) !important;
+}
+
+/* Supplier color palette for visual differentiation */
+:root {
+  --supplier-color-1: #3b82f6; /* Blue */
+  --supplier-color-2: #10b981; /* Green */
+  --supplier-color-3: #f59e0b; /* Amber */
+  --supplier-color-4: #ef4444; /* Red */
+  --supplier-color-5: #8b5cf6; /* Purple */
+  --supplier-color-6: #ec4899; /* Pink */
+}
+
+[data-theme="dark"] {
+  --supplier-color-1: #60a5fa;
+  --supplier-color-2: #34d399;
+  --supplier-color-3: #fbbf24;
+  --supplier-color-4: #f87171;
+  --supplier-color-5: #a78bfa;
+  --supplier-color-6: #f472b6;
+}
