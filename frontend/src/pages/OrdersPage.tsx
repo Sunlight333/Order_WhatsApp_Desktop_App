@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { Plus, Search, Filter, Loader2, X, ChevronLeft, ChevronRight, MessageSquare, Eye, Copy, ArrowUp, ArrowDown, ChevronUp, ChevronDown, BarChart3, ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon, User, Building2, DollarSign, Hash, FileText } from 'lucide-react';
+import { Plus, Search, Filter, Loader2, X, ChevronLeft, ChevronRight, MessageSquare, Eye, Copy, ArrowUp, ArrowDown, ChevronUp, ChevronDown, BarChart3, ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon, User, Building2, Coins, Hash, FileText, Download } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
 import api from '../lib/api';
@@ -12,6 +12,7 @@ import WhatsAppModal from '../components/WhatsAppModal';
 import { useAuthStore } from '../store/authStore';
 import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useOrderStatusConfig, getStatusConfig } from '../hooks/useOrderStatusConfig';
+import { exportMultipleSheets } from '../utils/excelExport';
 
 interface Order {
   id: string;
@@ -97,6 +98,169 @@ export default function OrdersPage() {
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'SUPER_ADMIN';
   const { config: statusConfig } = useOrderStatusConfig();
+
+  const handleExportSupplierAnalytics = () => {
+    if (!isAdmin) {
+      toast.error(t('common.unauthorized'));
+      return;
+    }
+
+    try {
+      if (!supplierAnalyticsData || supplierAnalyticsData.length === 0) {
+        toast.error(t('orders.noSupplierAnalyticsToExport'));
+        return;
+      }
+
+      const monthNames = [
+        t('orders.january'), t('orders.february'), t('orders.march'), t('orders.april'),
+        t('orders.may'), t('orders.june'), t('orders.july'), t('orders.august'),
+        t('orders.september'), t('orders.october'), t('orders.november'), t('orders.december'),
+      ];
+
+      const filteredSupplierAnalyticsData = supplierAnalyticsData.filter(
+        (supplier) =>
+          !supplierAnalyticsTableFilter ||
+          supplier.supplierName.toLowerCase().includes(supplierAnalyticsTableFilter.toLowerCase())
+      );
+
+      if (filteredSupplierAnalyticsData.length === 0) {
+        toast.error(t('orders.noSupplierAnalyticsToExport'));
+        return;
+      }
+
+      const sheets: Array<{ name: string; data: any[] }> = [];
+
+      // Sheet 1: Supplier Analytics table data (same as UI)
+      let supplierExportData: any[] = [];
+      if (supplierAnalyticsMonth !== null) {
+        const tableData: Array<{
+          supplierName: string;
+          month: string;
+          totalAmount: number;
+          orderCount: number;
+        }> = [];
+
+        filteredSupplierAnalyticsData.forEach((supplier) => {
+          (supplier.monthlyData || []).forEach((monthData: { month: string; totalAmount: number; orderCount: number }) => {
+            tableData.push({
+              supplierName: supplier.supplierName,
+              month: monthData.month,
+              totalAmount: Number(monthData.totalAmount || 0),
+              orderCount: Number(monthData.orderCount || 0),
+            });
+          });
+        });
+
+        tableData.sort((a, b) => (a.month !== b.month ? a.month.localeCompare(b.month) : a.supplierName.localeCompare(b.supplierName)));
+
+        supplierExportData = tableData.map((row) => ({
+          [t('orders.supplier')]: row.supplierName,
+          [t('orders.month')]: row.month,
+          [t('orders.totalAmount')]: `${row.totalAmount.toFixed(2)} €`,
+          [t('orders.orderCount')]: row.orderCount,
+        }));
+      } else {
+        const aggregatedData = new Map<string, { totalAmount: number; orderCount: number }>();
+
+        filteredSupplierAnalyticsData.forEach((supplier) => {
+          let totalAmount = 0;
+          let totalOrderCount = 0;
+          (supplier.monthlyData || []).forEach((monthData: { totalAmount: number; orderCount: number }) => {
+            totalAmount += Number(monthData.totalAmount || 0);
+            totalOrderCount += Number(monthData.orderCount || 0);
+          });
+          aggregatedData.set(supplier.supplierName, { totalAmount, orderCount: totalOrderCount });
+        });
+
+        const tableData = Array.from(aggregatedData.entries())
+          .map(([supplierName, data]) => ({ supplierName, ...data }))
+          .sort((a, b) => a.supplierName.localeCompare(b.supplierName));
+
+        supplierExportData = tableData.map((row) => ({
+          [t('orders.supplier')]: row.supplierName,
+          [t('orders.totalAmount')]: `${row.totalAmount.toFixed(2)} €`,
+          [t('orders.orderCount')]: row.orderCount,
+        }));
+      }
+
+      if (supplierExportData.length > 0) {
+        sheets.push({ name: t('orders.supplierAnalytics'), data: supplierExportData });
+      }
+
+      // Sheet 2: Pivot table (Month x Supplier) - Order Count
+      try {
+        const supplierNames = filteredSupplierAnalyticsData.map((s) => s.supplierName).sort((a, b) => a.localeCompare(b));
+
+        const months =
+          supplierAnalyticsMonth !== null
+            ? [`${supplierAnalyticsYear}-${String(supplierAnalyticsMonth).padStart(2, '0')}`]
+            : Array.from({ length: 12 }, (_, i) => `${supplierAnalyticsYear}-${String(i + 1).padStart(2, '0')}`);
+
+        // Build lookup: supplier -> (month -> orderCount)
+        const lookup = new Map<string, Map<string, number>>();
+        filteredSupplierAnalyticsData.forEach((s) => {
+          const m = new Map<string, number>();
+          (s.monthlyData || []).forEach((md: { month: string; orderCount: number }) => {
+            if (md?.month) m.set(md.month, Number(md.orderCount || 0));
+          });
+          lookup.set(s.supplierName, m);
+        });
+
+        const supplierTotals = new Map<string, number>();
+        supplierNames.forEach((n) => supplierTotals.set(n, 0));
+
+        const pivotRows: any[] = [];
+        let grandTotal = 0;
+
+        for (const month of months) {
+          let rowTotal = 0;
+          const row: Record<string, any> = {};
+
+          row[t('orders.monthSupplier')] = month;
+
+          for (const supplierName of supplierNames) {
+            const v = lookup.get(supplierName)?.get(month) ?? 0;
+            row[supplierName] = v;
+            rowTotal += v;
+            supplierTotals.set(supplierName, (supplierTotals.get(supplierName) || 0) + v);
+          }
+
+          row[t('orders.supplierTotal')] = rowTotal;
+          grandTotal += rowTotal;
+          pivotRows.push(row);
+        }
+
+        if (pivotRows.length > 0) {
+          const totalsRow: Record<string, any> = {};
+          totalsRow[t('orders.monthSupplier')] = t('orders.monthTotal');
+          for (const supplierName of supplierNames) {
+            totalsRow[supplierName] = supplierTotals.get(supplierName) || 0;
+          }
+          totalsRow[t('orders.supplierTotal')] = grandTotal;
+          pivotRows.push(totalsRow);
+
+          sheets.push({ name: t('orders.supplierMonthlyPivot'), data: pivotRows });
+        }
+      } catch (error) {
+        console.warn('Failed to build supplier monthly pivot export:', error);
+      }
+
+      if (sheets.length === 0) {
+        toast.error(t('orders.noSupplierAnalyticsToExport'));
+        return;
+      }
+
+      const monthStr = supplierAnalyticsMonth !== null ? `_${monthNames[supplierAnalyticsMonth - 1]}` : '';
+      const timestamp = new Date().toISOString().split('T')[0];
+      const filename = `analiticas_proveedores_${supplierAnalyticsYear}${monthStr}_${timestamp}`;
+
+      exportMultipleSheets(sheets, filename);
+      toast.success(t('orders.supplierAnalyticsExported'));
+    } catch (error: any) {
+      console.error('Failed to export supplier analytics:', error);
+      toast.error(error.response?.data?.error?.message || t('orders.exportFailed'));
+    }
+  };
 
   // Load filter data when filters panel opens
   useEffect(() => {
@@ -331,6 +495,17 @@ export default function OrdersPage() {
     return sortOrder === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
 
+  // Format date as DD/MM/YYYY HH:MM
+  const formatDateTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${day}/${month}/${year} ${hours}:${minutes}`;
+  };
+
   const hasActiveFilters = useMemo(() => {
     return !!(
       searchQuery.trim() ||
@@ -472,7 +647,7 @@ export default function OrdersPage() {
     const orderNumber = selectedOrder.orderNumber?.toString() || selectedOrder.id;
     const textToCopy = t('orders.copyOrderNumberText', { orderNumber });
     navigator.clipboard.writeText(textToCopy);
-    toast.success(t('common.copied'));
+    toast.success(textToCopy, { duration: 3000 });
   };
 
   const handleCopyPhone = () => {
@@ -802,7 +977,7 @@ export default function OrdersPage() {
                 className="filter-section-header"
                 onClick={() => toggleSection('amounts')}
               >
-                <DollarSign size={18} />
+                <Coins size={18} />
                 <span>{t('orders.amountsAndNumbers')}</span>
                 {expandedSections.amounts ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
               </button>
@@ -970,16 +1145,6 @@ export default function OrdersPage() {
                 <tr>
                   <th 
                     className="sortable-header"
-                    onClick={() => handleSort('status')}
-                    style={{ cursor: 'pointer', userSelect: 'none' }}
-                  >
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      {t('common.status')}
-                      {getSortIcon('status')}
-                    </div>
-                  </th>
-                  <th 
-                    className="sortable-header"
                     onClick={() => handleSort('orderNumber')}
                     style={{ cursor: 'pointer', userSelect: 'none' }}
                   >
@@ -996,6 +1161,16 @@ export default function OrdersPage() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       {t('orders.customerName')}
                       {getSortIcon('customerName')}
+                    </div>
+                  </th>
+                  <th 
+                    className="sortable-header"
+                    onClick={() => handleSort('status')}
+                    style={{ cursor: 'pointer', userSelect: 'none', textAlign: 'center' }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
+                      {t('common.status')}
+                      {getSortIcon('status')}
                     </div>
                   </th>
                   <th 
@@ -1053,21 +1228,13 @@ export default function OrdersPage() {
                 >
                   <td>
                     <span 
-                      className="status-badge status-custom"
-                      style={getStatusStyle(order.status)}
-                    >
-                      {getStatusLabel(order.status)}
-                    </span>
-                  </td>
-                  <td>
-                    <span 
                       className="order-id clickable-copy" 
                       onClick={(e) => {
                         e.stopPropagation();
                         const orderNumber = order.orderNumber?.toString() || order.id;
                         const textToCopy = t('orders.copyOrderNumberText', { orderNumber });
                         navigator.clipboard.writeText(textToCopy);
-                        toast.success(t('common.copied'));
+                        toast.success(textToCopy, { duration: 3000 });
                       }}
                       title={t('orders.clickToCopy')}
                       style={{ cursor: 'pointer', textDecoration: 'underline' }}
@@ -1076,6 +1243,14 @@ export default function OrdersPage() {
                     </span>
                   </td>
                   <td>{order.customerName || order.customer?.name || '-'}</td>
+                  <td style={{ textAlign: 'center' }}>
+                    <span 
+                      className="status-badge status-custom"
+                      style={getStatusStyle(order.status)}
+                    >
+                      {getStatusLabel(order.status)}
+                    </span>
+                  </td>
                   <td>
                     {(() => {
                       const phone = order.customerPhone || order.customer?.phone;
@@ -1106,16 +1281,8 @@ export default function OrdersPage() {
                   </td>
                   <td>{order.suppliers?.length || 0}</td>
                   <td>{order.createdBy?.username || '-'}</td>
-                  <td>{new Date(order.createdAt).toLocaleDateString()}</td>
-                  <td>
-                    {new Date(order.updatedAt).toLocaleString(undefined, {
-                      year: 'numeric',
-                      month: 'short',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit'
-                    })}
-                  </td>
+                  <td>{formatDateTime(order.createdAt)}</td>
+                  <td>{formatDateTime(order.updatedAt)}</td>
                   <td>{order.observations?.trim() ? t('common.yes') : t('common.no')}</td>
                   <td>
                     <button
@@ -1169,6 +1336,14 @@ export default function OrdersPage() {
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <h2 style={{ margin: 0 }}>{t('orders.supplierMonthlyAssessment')}</h2>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <button
+                className="btn-secondary"
+                onClick={handleExportSupplierAnalytics}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                <Download size={18} />
+                {t('orders.exportSupplierAnalytics')}
+              </button>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <label style={{ fontWeight: 500 }}>{t('orders.year')}:</label>
                 <select
@@ -1561,7 +1736,7 @@ export default function OrdersPage() {
                                   {row.month}
                                 </td>
                                 <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
-                                  €{row.totalAmount.toFixed(2)}
+                                  {row.totalAmount.toFixed(2)} €
                                 </td>
                                 <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
                                   {row.orderCount}
@@ -1627,7 +1802,7 @@ export default function OrdersPage() {
                                   {row.supplierName}
                                 </td>
                                 <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
-                                  €{row.totalAmount.toFixed(2)}
+                                  {row.totalAmount.toFixed(2)} €
                                 </td>
                                 <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
                                   {row.orderCount}
@@ -1669,3 +1844,4 @@ export default function OrdersPage() {
   );
 }
 
+                                       

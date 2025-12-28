@@ -50,6 +50,9 @@ function App() {
           i18n.changeLanguage(config.language);
         }
         
+        // Update document title based on current language
+        document.title = i18n.t('app.title');
+        
         // Update API base URL after config is loaded
         updateApiBaseUrl();
         

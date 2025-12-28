@@ -1,5 +1,5 @@
-import { Request, Response } from 'express';
-import { getConfigValue, updateConfigValue, getOrderStatusConfig, updateOrderStatusConfig, OrderStatusesConfig } from '../services/config.service';
+import { Request, Response, NextFunction } from 'express';
+import { getConfigValue, updateConfigValue, getOrderStatusConfig, updateOrderStatusConfig, OrderStatusesConfig, getOrderCounterConfig, resetOrderCounter, setOrderPrefix } from '../services/config.service';
 import { createSuccessResponse } from '../utils/response.util';
 import { createError } from '../utils/error.util';
 
@@ -72,5 +72,50 @@ export async function updateOrderStatusConfigController(req: Request, res: Respo
     res.status(200).json(createSuccessResponse(updatedConfig, 'Order status configuration updated successfully'));
   } catch (error) {
     throw error;
+  }
+}
+
+/**
+ * GET /api/v1/config/order-counter
+ * Get order counter configuration (counter and prefix)
+ */
+export async function getOrderCounterConfigController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const config = await getOrderCounterConfig();
+    res.status(200).json(createSuccessResponse(config));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * POST /api/v1/config/order-counter/reset
+ * Reset order counter to 0
+ */
+export async function resetOrderCounterController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const result = await resetOrderCounter();
+    res.status(200).json(createSuccessResponse(result, 'Order counter reset to 0'));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * PUT /api/v1/config/order-counter/prefix
+ * Set order prefix (e.g., "25" for series 25001, 25002, etc.)
+ */
+export async function setOrderPrefixController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const { prefix } = req.body;
+    
+    if (prefix !== undefined && typeof prefix !== 'string') {
+      throw createError('INVALID_PREFIX', 'Prefix must be a string', 400);
+    }
+
+    const result = await setOrderPrefix(prefix || '');
+    res.status(200).json(createSuccessResponse(result, prefix ? `Order prefix set to ${prefix}` : 'Order prefix removed'));
+  } catch (error) {
+    next(error);
   }
 }

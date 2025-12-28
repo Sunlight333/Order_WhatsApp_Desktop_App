@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import {
   listCustomers,
   getCustomerById,
@@ -6,6 +6,7 @@ import {
   findOrCreateCustomer,
   updateCustomer,
   deleteCustomer,
+  getCustomerAuditLogs,
   CreateCustomerInput,
   UpdateCustomerInput,
 } from '../services/customer.service';
@@ -15,7 +16,7 @@ import { createSuccessResponse } from '../utils/response.util';
  * GET /api/v1/customers/search
  * Search customers by name (for autocomplete/hint text)
  */
-export async function searchCustomersController(req: Request, res: Response): Promise<void> {
+export async function searchCustomersController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { q, limit } = req.query;
     const customers = await searchCustomers({
@@ -24,7 +25,7 @@ export async function searchCustomersController(req: Request, res: Response): Pr
     });
     res.status(200).json(createSuccessResponse(customers));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }
 
@@ -32,14 +33,16 @@ export async function searchCustomersController(req: Request, res: Response): Pr
  * GET /api/v1/customers
  * List all customers
  */
-export async function listCustomersController(req: Request, res: Response): Promise<void> {
+export async function listCustomersController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const sortBy = req.query.sortBy as string | undefined;
     const sortOrder = (req.query.sortOrder as 'asc' | 'desc') || 'asc';
-    const customers = await listCustomers(sortBy, sortOrder);
+    // Only SUPER_ADMIN can see user traceability info
+    const includeUserInfo = req.user?.role === 'SUPER_ADMIN';
+    const customers = await listCustomers(sortBy, sortOrder, includeUserInfo);
     res.status(200).json(createSuccessResponse(customers));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }
 
@@ -47,13 +50,15 @@ export async function listCustomersController(req: Request, res: Response): Prom
  * GET /api/v1/customers/:id
  * Get customer by ID
  */
-export async function getCustomerController(req: Request, res: Response): Promise<void> {
+export async function getCustomerController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
-    const customer = await getCustomerById(id);
+    // Only SUPER_ADMIN can see user traceability info
+    const includeUserInfo = req.user?.role === 'SUPER_ADMIN';
+    const customer = await getCustomerById(id, includeUserInfo);
     res.status(200).json(createSuccessResponse(customer));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }
 
@@ -61,7 +66,7 @@ export async function getCustomerController(req: Request, res: Response): Promis
  * POST /api/v1/customers
  * Create a new customer (or find existing)
  */
-export async function createCustomerController(req: Request, res: Response): Promise<void> {
+export async function createCustomerController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
       res.status(401).json({
@@ -92,10 +97,11 @@ export async function createCustomerController(req: Request, res: Response): Pro
       return;
     }
 
-    const customer = await findOrCreateCustomer(validatedData);
+    const userId = req.user?.userId;
+    const customer = await findOrCreateCustomer(validatedData, userId);
     res.status(201).json(createSuccessResponse(customer, 'Customer created successfully'));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }
 
@@ -103,7 +109,7 @@ export async function createCustomerController(req: Request, res: Response): Pro
  * PUT /api/v1/customers/:id
  * Update customer
  */
-export async function updateCustomerController(req: Request, res: Response): Promise<void> {
+export async function updateCustomerController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
       res.status(401).json({
@@ -117,6 +123,7 @@ export async function updateCustomerController(req: Request, res: Response): Pro
     }
 
     const { id } = req.params;
+    const userId = req.user?.userId;
     const validatedData: UpdateCustomerInput = {
       name: req.body.name?.trim(),
       phone: req.body.phone?.trim(),
@@ -124,10 +131,10 @@ export async function updateCustomerController(req: Request, res: Response): Pro
       description: req.body.description?.trim(),
     };
 
-    const customer = await updateCustomer(id, validatedData);
+    const customer = await updateCustomer(id, validatedData, userId);
     res.status(200).json(createSuccessResponse(customer, 'Customer updated successfully'));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }
 
@@ -135,7 +142,7 @@ export async function updateCustomerController(req: Request, res: Response): Pro
  * DELETE /api/v1/customers/:id
  * Delete customer
  */
-export async function deleteCustomerController(req: Request, res: Response): Promise<void> {
+export async function deleteCustomerController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
       res.status(401).json({
@@ -149,10 +156,49 @@ export async function deleteCustomerController(req: Request, res: Response): Pro
     }
 
     const { id } = req.params;
-    await deleteCustomer(id);
+    const userId = req.user?.userId;
+    const userRole = req.user?.role;
+    await deleteCustomer(id, userId, userRole);
     res.status(200).json(createSuccessResponse(null, 'Customer deleted successfully'));
   } catch (error) {
-    throw error;
+    next(error);
+  }
+}
+
+/**
+ * GET /api/v1/customers/:id/audit-logs
+ * Get customer audit logs (history) - Only SUPER_ADMIN
+ */
+export async function getCustomerAuditLogsController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+      });
+      return;
+    }
+
+    // Only SUPER_ADMIN can view audit logs
+    if (req.user.role !== 'SUPER_ADMIN') {
+      res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Only administrators can view audit logs',
+        },
+      });
+      return;
+    }
+
+    const { id } = req.params;
+    const auditLogs = await getCustomerAuditLogs(id);
+    res.status(200).json(createSuccessResponse(auditLogs));
+  } catch (error) {
+    next(error);
   }
 }
 

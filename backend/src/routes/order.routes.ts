@@ -5,9 +5,10 @@ import {
   createOrderController,
   updateOrderStatusController,
   updateOrderController,
+  deleteOrderController,
 } from '../controllers/order.controller';
 import { updateProductReceivedController } from '../controllers/order-product.controller';
-import { authenticate } from '../middleware/auth.middleware';
+import { authenticate, authorize } from '../middleware/auth.middleware';
 
 const router = Router();
 
@@ -52,6 +53,13 @@ router.patch('/:id/status', authenticate, updateOrderStatusController);
  * @access  Private
  */
 router.patch('/:orderId/products/:productId/received', authenticate, updateProductReceivedController);
+
+/**
+ * @route   DELETE /api/v1/orders/:id
+ * @desc    Delete order
+ * @access  Private (SUPER_ADMIN only)
+ */
+router.delete('/:id', authenticate, authorize('SUPER_ADMIN'), deleteOrderController);
 
 export default router;
 

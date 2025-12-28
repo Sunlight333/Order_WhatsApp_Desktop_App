@@ -210,6 +210,13 @@
   color: var(--text-primary);
 }
 
+/* Ensure status column cells properly contain badges */
+.orders-table tbody tr td:nth-child(3) {
+  text-align: center;
+  width: auto;
+  min-width: 120px;
+}
+
 .order-id {
   font-family: monospace;
   font-size: var(--text-xs);
@@ -225,6 +232,9 @@
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.5px;
+  white-space: nowrap;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .status-badge.status-custom {

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Save, Database, Server, Monitor, Loader2, CheckCircle, AlertCircle, RefreshCw, Wifi, ArrowLeft, MessageSquare, Download, Upload, HardDrive, User, Image as ImageIcon, X, Globe, Palette } from 'lucide-react';
+import { Save, Database, Server, Monitor, Loader2, CheckCircle, AlertCircle, RefreshCw, Wifi, ArrowLeft, MessageSquare, Download, Upload, HardDrive, User, Image as ImageIcon, X, Globe, Palette, Hash } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
@@ -64,6 +64,14 @@ export default function SettingsPage() {
   const [savingStatusConfig, setSavingStatusConfig] = useState(false);
   const [selectedStatus, setSelectedStatus] = useState<string>('PENDING');
   const [activeTab, setActiveTab] = useState<'system' | 'user'>('system');
+  const [orderCounter, setOrderCounter] = useState<number>(0);
+  const [orderPrefix, setOrderPrefix] = useState<string>('');
+  const [loadingOrderCounter, setLoadingOrderCounter] = useState(false);
+  const [resettingCounter, setResettingCounter] = useState(false);
+  const [savingPrefix, setSavingPrefix] = useState(false);
+  const [usersSeeOnlyOwnOrders, setUsersSeeOnlyOwnOrders] = useState<boolean>(false);
+  const [loadingUsersConfig, setLoadingUsersConfig] = useState(false);
+  const [savingUsersConfig, setSavingUsersConfig] = useState(false);
 
   useEffect(() => {
     loadSettings();
@@ -80,6 +88,8 @@ export default function SettingsPage() {
     // Load order status configuration if user is admin
     if (isAuthenticated && user?.role === 'SUPER_ADMIN') {
       loadOrderStatusConfig();
+      loadOrderCounterConfig();
+      loadUsersConfig();
     }
 
     return unsubscribe;
@@ -182,13 +192,13 @@ export default function SettingsPage() {
         const dbPath = config.database.path || config.database.url?.replace('file:', '');
         if (!dbPath || dbPath.trim().length === 0) {
           setConnectionStatus('error');
-          setConnectionMessage('Please provide a database path for SQLite');
+          setConnectionMessage(t('settings.databasePathRequired'));
           return;
         }
       } else {
         if (!config.database.url || config.database.url.trim().length === 0) {
           setConnectionStatus('error');
-          setConnectionMessage('Please provide a database connection URL');
+          setConnectionMessage(t('settings.databaseUrlRequired'));
           return;
         }
       }
@@ -204,12 +214,12 @@ export default function SettingsPage() {
 
       if (response.data.success) {
         setConnectionStatus('success');
-        const message = response.data.data?.message || 'Database connection successful!';
+        const message = response.data.data?.message || t('settings.databaseConnectionSuccessful');
         const initialized = response.data.data?.initialized || false;
         
         if (initialized) {
           toast.success(
-            `${message}\n\nDatabase schema has been created and initial data has been seeded.\nDefault admin credentials:\nUsername: admin\nPassword: admin123`,
+            `${message}\n\n${t('settings.databaseSchemaCreated')}`,
             { duration: 8000 }
           );
         } else {
@@ -218,7 +228,7 @@ export default function SettingsPage() {
         setConnectionMessage(message);
       } else {
         setConnectionStatus('error');
-        const errorMessage = response.data.error?.message || 'Failed to connect to database';
+        const errorMessage = response.data.error?.message || t('settings.failedToConnectDatabase');
         toast.error(errorMessage);
         setConnectionMessage(errorMessage);
       }
@@ -228,7 +238,7 @@ export default function SettingsPage() {
         error.response?.data?.error?.message || 
         error.response?.data?.message ||
         error.message || 
-        'Failed to connect to database';
+        t('settings.failedToConnectDatabase');
       setConnectionMessage(errorMessage);
     } finally {
       setTestingConnection(false);
@@ -245,12 +255,12 @@ export default function SettingsPage() {
 
       if (response.data.success) {
         setConnectionStatus('success');
-        const message = response.data.data?.message || 'Database schema upgraded successfully!';
+        const message = response.data.data?.message || t('settings.databaseUpgradeSuccess');
         const changes = response.data.data?.changes || [];
         
         if (changes.length > 0) {
           toast.success(
-            `${message}\n\nChanges applied:\n${changes.map((c: string) => `• ${c}`).join('\n')}`,
+            `${message}\n\n${t('common.changesApplied')}:\n${changes.map((c: string) => `• ${c}`).join('\n')}`,
             { duration: 6000 }
           );
         } else {
@@ -259,7 +269,7 @@ export default function SettingsPage() {
         setConnectionMessage(message);
       } else {
         setConnectionStatus('error');
-        const errorMessage = response.data.error?.message || 'Failed to upgrade database schema';
+        const errorMessage = response.data.error?.message || t('settings.failedToUpgradeSchema');
         toast.error(errorMessage);
         setConnectionMessage(errorMessage);
       }
@@ -269,7 +279,7 @@ export default function SettingsPage() {
         error.response?.data?.error?.message || 
         error.response?.data?.message ||
         error.message || 
-        'Failed to upgrade database schema';
+        t('settings.failedToUpgradeSchema');
       toast.error(errorMessage);
       setConnectionMessage(errorMessage);
     } finally {
@@ -308,13 +318,13 @@ export default function SettingsPage() {
       });
 
       if (response.data.success) {
-        const message = response.data.data?.message || 'Database initialized successfully!';
+        const message = response.data.data?.message || t('settings.databaseInitialized');
         
-        if (message.includes('already initialized')) {
+        if (message.includes('already initialized') || message.includes('ya inicializada')) {
           toast.success(message, { duration: 3000 });
         } else {
           toast.success(
-            `${message}\n\nDatabase schema has been created and initial data has been seeded.\nDefault admin credentials:\nUsername: admin\nPassword: admin123\n\nYou can now log in with these credentials.`,
+            `${message}\n\n${t('settings.databaseSchemaCreated')}\n\n${t('settings.youCanNowLogin')}`,
             { duration: 10000 }
           );
         }
@@ -323,7 +333,7 @@ export default function SettingsPage() {
         setConnectionStatus('success');
         setConnectionMessage(message);
       } else {
-        const errorMessage = response.data.error?.message || 'Failed to initialize database';
+        const errorMessage = response.data.error?.message || t('settings.failedToInitializeDatabase');
         toast.error(errorMessage);
         setConnectionStatus('error');
         setConnectionMessage(errorMessage);
@@ -333,7 +343,7 @@ export default function SettingsPage() {
         error.response?.data?.error?.message || 
         error.response?.data?.message ||
         error.message || 
-        'Failed to initialize database';
+        t('settings.failedToInitializeDatabase');
       toast.error(errorMessage);
       setConnectionStatus('error');
       setConnectionMessage(errorMessage);
@@ -444,29 +454,18 @@ export default function SettingsPage() {
 
       // Show success message based on whether server was restarted
       if (saveResult?.needsRestart) {
-        toast.success(
-          `Settings saved! Server port changed to ${saveResult.newPort}. Please restart the application for the change to take effect.`,
-          {
+        toast.success(t('settings.saveSuccessPortChanged', { port: saveResult.newPort }), {
             duration: 8000,
-          }
-        );
+        });
       } else if (saveResult?.newPort) {
-        toast.success(
-          `Settings saved! Server restarted on port ${saveResult.newPort}.`,
-          {
+        toast.success(t('settings.saveSuccessServerRestarted', { port: saveResult.newPort }), {
             duration: 5000,
-          }
-        );
+        });
       } else {
-        toast.success(
-          'Settings saved successfully!',
-          {
-            duration: 3000,
-          }
-        );
+        toast.success(t('settings.saveSuccess'), { duration: 3000 });
       }
     } catch (error: any) {
-      toast.error(error.message || 'Failed to save settings');
+      toast.error(error.message || t('settings.saveFailed'));
     } finally {
       setSaving(false);
     }
@@ -569,14 +568,92 @@ export default function SettingsPage() {
     }
   };
 
+  const loadOrderCounterConfig = async () => {
+    try {
+      setLoadingOrderCounter(true);
+      const response = await api.get('/config/order-counter');
+      if (response.data.success) {
+        setOrderCounter(response.data.data.counter || 0);
+        setOrderPrefix(response.data.data.prefix || '');
+      }
+    } catch (error) {
+      console.error('Failed to load order counter config:', error);
+    } finally {
+      setLoadingOrderCounter(false);
+    }
+  };
+
+  const loadUsersConfig = async () => {
+    try {
+      setLoadingUsersConfig(true);
+      const response = await api.get('/config/users_see_only_own_orders');
+      if (response.data.success) {
+        const value = response.data.data?.value || 'false';
+        setUsersSeeOnlyOwnOrders(value === 'true');
+      }
+    } catch (error) {
+      console.error('Failed to load users config:', error);
+      // Default to false if config doesn't exist
+      setUsersSeeOnlyOwnOrders(false);
+    } finally {
+      setLoadingUsersConfig(false);
+    }
+  };
+
+  const handleSaveUsersConfig = async () => {
+    try {
+      setSavingUsersConfig(true);
+      await api.put('/config/users_see_only_own_orders', {
+        value: usersSeeOnlyOwnOrders ? 'true' : 'false',
+      });
+      toast.success(t('settings.usersConfigSaved'));
+    } catch (error: any) {
+      console.error('Failed to save users config:', error);
+      toast.error(error.response?.data?.error?.message || t('settings.usersConfigSaveFailed'));
+    } finally {
+      setSavingUsersConfig(false);
+    }
+  };
+
+  const handleResetOrderCounter = async () => {
+    try {
+      setResettingCounter(true);
+      await api.post('/config/order-counter/reset');
+      toast.success(t('settings.orderCounterReset'));
+      await loadOrderCounterConfig();
+    } catch (error: any) {
+      console.error('Failed to reset order counter:', error);
+      toast.error(error.response?.data?.error?.message || t('settings.orderCounterResetFailed'));
+    } finally {
+      setResettingCounter(false);
+    }
+  };
+
+  const handleSaveOrderPrefix = async () => {
+    try {
+      setSavingPrefix(true);
+      await api.put('/config/order-counter/prefix', { prefix: orderPrefix });
+      toast.success(t('settings.orderPrefixSaved'));
+    } catch (error: any) {
+      console.error('Failed to save order prefix:', error);
+      toast.error(error.response?.data?.error?.message || t('settings.orderPrefixSaveFailed'));
+    } finally {
+      setSavingPrefix(false);
+    }
+  };
+
   const handleSaveOrderStatusConfig = async () => {
     try {
       setSavingStatusConfig(true);
       await api.put('/config/order-statuses', orderStatusConfig);
       clearStatusConfigCache(); // Clear cache so components reload the new config
-      toast.success(t('settings.orderStatusConfigSaved') || 'Order status configuration saved successfully');
+      toast.success(t('settings.orderStatusConfigSaved'));
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || error.message || 'Failed to save order status configuration');
+      toast.error(
+        error.response?.data?.error?.message ||
+          error.message ||
+          t('settings.orderStatusConfigSaveFailed')
+      );
     } finally {
       setSavingStatusConfig(false);
     }
@@ -676,7 +753,7 @@ export default function SettingsPage() {
       const defaultFileName = `database_backup_${timestamp}.omw`;
 
       const result = await window.electron.dialog.showSaveDialog({
-        title: 'Save Database Backup',
+        title: t('settings.saveDatabaseBackup'),
         defaultPath: defaultFileName,
         filters: [
           { name: t('settings.backupFiles'), extensions: ['omw'] },
@@ -758,7 +835,7 @@ export default function SettingsPage() {
 
       // Show success message
       toast.success(
-        `Database backup created successfully! (${size} MB)${encrypted ? ' (encrypted)' : ''}\nSaved to: ${filePath.split(/[/\\]/).pop()}`,
+        `${t('settings.databaseBackupCreated')} (${size} MB)${encrypted ? ` (${t('settings.encrypted')})` : ''}\n${t('settings.savedTo')}: ${filePath.split(/[/\\]/).pop()}`,
         { duration: 6000 }
       );
     } catch (error: any) {
@@ -795,7 +872,7 @@ export default function SettingsPage() {
       }
 
       const result = await window.electron.dialog.showOpenDialog({
-        title: 'Select Database Backup File',
+        title: t('settings.selectDatabaseBackupFile'),
         filters: [
           { name: t('settings.backupFiles'), extensions: ['omw', 'encrypted.omw'] },
           { name: t('settings.legacyFiles'), extensions: ['db', 'encrypted.db', 'sql', 'encrypted.sql'] },
@@ -860,14 +937,14 @@ export default function SettingsPage() {
       });
 
       toast.success(
-        'Database restored successfully! Please restart the application for changes to take effect.',
+        t('settings.databaseRestoredSuccessfully'),
         { duration: 6000 }
       );
       
       setRestoreFilePath('');
       setRestorePassword('');
     } catch (error: any) {
-      const errorMessage = error.response?.data?.error?.message || error.message || 'Failed to restore database';
+      const errorMessage = error.response?.data?.error?.message || error.message || t('settings.failedToRestoreDatabase');
       
       // If password was wrong, show password modal again
       if (errorMessage.includes('password') || errorMessage.includes('decrypt')) {
@@ -1222,9 +1299,9 @@ export default function SettingsPage() {
                 className="form-input"
               />
               <small className="form-hint">
-                {config.database.type === 'sqlite' && 'File path for SQLite database'}
-                {config.database.type === 'mysql' && 'MySQL connection string (mysql://user:password@host:port/database)'}
-                {config.database.type === 'postgresql' && 'PostgreSQL connection string (postgresql://user:password@host:port/database?schema=public)'}
+                {config.database.type === 'sqlite' && t('settings.sqlitePathHint')}
+                {config.database.type === 'mysql' && t('settings.mysqlUrlHint')}
+                {config.database.type === 'postgresql' && t('settings.postgresqlUrlHint')}
               </small>
             </div>
 
@@ -1238,12 +1315,12 @@ export default function SettingsPage() {
                 {testingConnection ? (
                   <>
                     <Loader2 className="spinner" size={16} />
-                    Testing...
+                    {t('settings.testingConnection')}
                   </>
                 ) : (
                   <>
                     <RefreshCw size={16} />
-                    Test Connection
+                    {t('settings.testConnection')}
                   </>
                 )}
               </button>
@@ -1256,12 +1333,12 @@ export default function SettingsPage() {
                 {upgradingDatabase ? (
                   <>
                     <Loader2 className="spinner" size={16} />
-                    Upgrading...
+                    {t('settings.upgradingDatabase')}
                   </>
                 ) : (
                   <>
                     <Database size={16} />
-                    Upgrade Database Schema
+                    {t('settings.upgradeDatabaseSchema')}
                   </>
                 )}
               </button>
@@ -1274,12 +1351,12 @@ export default function SettingsPage() {
                 {initializingDatabase ? (
                   <>
                     <Loader2 className="spinner" size={16} />
-                    Initializing...
+                    {t('settings.initializingDatabase')}
                   </>
                 ) : (
                   <>
                     <Database size={16} />
-                    Initialize Database
+                    {t('settings.initializeDatabase')}
                   </>
                 )}
               </button>
@@ -1299,7 +1376,7 @@ export default function SettingsPage() {
                 </div>
               )}
               <small className="form-hint" style={{ width: '100%', marginTop: '0.25rem' }}>
-                <strong>Upgrade Database Schema:</strong> Add missing columns and tables to existing database without losing data.
+                <strong>{t('settings.upgradeDatabaseSchema')}:</strong> {t('settings.upgradeDatabaseSchemaDesc')}
               </small>
               <small className="form-hint" style={{ width: '100%', marginTop: '0.25rem' }}>
                 <strong>{t('settings.initializeDatabase')}:</strong> {t('settings.initializeDatabaseDesc')}
@@ -1833,6 +1910,177 @@ export default function SettingsPage() {
           </section>
         )}
 
+        {/* Order Counter Management - Only visible to SUPER_ADMIN */}
+        {isAuthenticated && user?.role === 'SUPER_ADMIN' && (
+          <section className="settings-section">
+            <div className="section-header">
+              <Hash size={24} />
+              <h2>{t('settings.orderCounterManagement')}</h2>
+            </div>
+            <div className="settings-content">
+              {loadingOrderCounter ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '1rem' }}>
+                  <Loader2 className="spinner" size={16} />
+                  <span>{t('common.loading')}</span>
+                </div>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label>{t('settings.currentOrderCounter')}</label>
+                    <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '0.5rem' }}>
+                      {t('settings.currentOrderCounterHint')}
+                    </p>
+                    <div style={{ 
+                      padding: '1rem', 
+                      backgroundColor: 'var(--bg-secondary)', 
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-color)',
+                      fontSize: '1.25rem',
+                      fontWeight: '600',
+                      color: 'var(--text-primary)'
+                    }}>
+                      {orderPrefix ? `${orderPrefix}${String(orderCounter).padStart(3, '0')}` : orderCounter}
+                    </div>
+                  </div>
+
+                  <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                    <label>{t('settings.orderPrefix')}</label>
+                    <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '0.5rem' }}>
+                      {t('settings.orderPrefixHint')}
+                    </p>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        value={orderPrefix}
+                        onChange={(e) => {
+                          // Only allow numeric input
+                          const value = e.target.value.replace(/\D/g, '');
+                          setOrderPrefix(value);
+                        }}
+                        placeholder={t('settings.orderPrefixPlaceholder')}
+                        className="form-input"
+                        style={{ maxWidth: '200px' }}
+                      />
+                      <button
+                        className="btn-primary"
+                        onClick={handleSaveOrderPrefix}
+                        disabled={savingPrefix}
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                      >
+                        {savingPrefix ? (
+                          <>
+                            <Loader2 className="spinner" size={16} />
+                            {t('common.saving')}
+                          </>
+                        ) : (
+                          <>
+                            <Save size={16} />
+                            {t('settings.savePrefix')}
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    {orderPrefix && (
+                      <p className="form-hint" style={{ marginTop: '0.5rem', color: 'var(--text-secondary)' }}>
+                        {t('settings.orderPrefixExample', { prefix: orderPrefix, example: `${orderPrefix}001` })}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                    <label>{t('settings.resetOrderCounter')}</label>
+                    <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '0.5rem' }}>
+                      {t('settings.resetOrderCounterHint')}
+                    </p>
+                    <button
+                      className="btn-danger"
+                      onClick={handleResetOrderCounter}
+                      disabled={resettingCounter}
+                      style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        gap: '0.5rem',
+                        padding: '0.75rem 1.5rem',
+                        fontSize: '0.9375rem',
+                        fontWeight: '500',
+                        minWidth: '150px'
+                      }}
+                    >
+                      {resettingCounter ? (
+                        <>
+                          <Loader2 className="spinner" size={16} />
+                          {t('settings.resetting')}
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw size={16} />
+                          {t('settings.resetToZero')}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Users Configuration - Only visible to SUPER_ADMIN */}
+        {isAuthenticated && user?.role === 'SUPER_ADMIN' && (
+          <section className="settings-section">
+            <div className="section-header">
+              <User size={24} />
+              <h2>{t('settings.usersConfiguration')}</h2>
+            </div>
+            <div className="settings-content">
+              {loadingUsersConfig ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '1rem' }}>
+                  <Loader2 className="spinner" size={16} />
+                  <span>{t('common.loading')}</span>
+                </div>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={usersSeeOnlyOwnOrders}
+                        onChange={(e) => setUsersSeeOnlyOwnOrders(e.target.checked)}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                      />
+                      <span>{t('settings.usersSeeOnlyOwnOrders')}</span>
+                    </label>
+                    <p className="form-hint" style={{ marginTop: '0.5rem' }}>
+                      {t('settings.usersSeeOnlyOwnOrdersHint')}
+                    </p>
+                  </div>
+
+                  <div className="form-actions-inline" style={{ marginTop: '1.5rem' }}>
+                    <button
+                      className="btn-primary"
+                      onClick={handleSaveUsersConfig}
+                      disabled={savingUsersConfig}
+                    >
+                      {savingUsersConfig ? (
+                        <>
+                          <Loader2 className="spinner" size={16} />
+                          {t('common.saving')}
+                        </>
+                      ) : (
+                        <>
+                          <Save size={16} />
+                          {t('settings.saveUsersConfig')}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        )}
+
           {/* Database Backup & Restore - Only visible when authenticated as Super Admin or with password */}
           {isAuthenticated && (user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
             <section className="settings-section">
@@ -1929,19 +2177,19 @@ export default function SettingsPage() {
         title={t('settings.saveSettings')}
         message={
           <div>
-            <p>Are you sure you want to save these settings?</p>
+            <p>{t('settings.saveSettingsConfirm')}</p>
             {config.database.type !== 'sqlite' && (
               <p className="warning-text">
-                Changing database provider may require database migration. Make sure you have backups.
+                {t('settings.databaseMigrationWarning')}
               </p>
             )}
             {config.mode === 'client' && !config.serverAddress && (
               <p className="warning-text">
-                Please provide a server IP address for client mode.
+                {t('settings.clientModeServerAddressRequired')}
               </p>
             )}
             <p className="warning-text" style={{ marginTop: '1rem' }}>
-              <strong>Note:</strong> Some changes may require restarting the application.
+              <strong>{t('common.note')}:</strong> {t('settings.someChangesRequireRestart')}
             </p>
           </div>
         }

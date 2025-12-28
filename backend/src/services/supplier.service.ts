@@ -171,7 +171,7 @@ export async function updateSupplier(supplierId: string, input: UpdateSupplierIn
 /**
  * Delete supplier
  */
-export async function deleteSupplier(supplierId: string) {
+export async function deleteSupplier(supplierId: string, userRole?: 'SUPER_ADMIN' | 'USER') {
   // Check if supplier exists
   const supplier = await prisma.supplier.findUnique({
     where: { id: supplierId },
@@ -188,8 +188,8 @@ export async function deleteSupplier(supplierId: string) {
     throw createError('SUPPLIER_NOT_FOUND', 'Supplier not found', 404);
   }
 
-  // Check if supplier has orders (products can be deleted with cascade)
-  if (supplier._count.orderSuppliers > 0) {
+  // Only SUPER_ADMIN can delete suppliers with orders
+  if (supplier._count.orderSuppliers > 0 && userRole !== 'SUPER_ADMIN') {
     throw createError(
       'SUPPLIER_HAS_ORDERS',
       'Cannot delete supplier that has orders. Remove all orders first.',

@@ -13,13 +13,16 @@ import {
   PhoneCall,
   Loader2,
   Plus,
-  CheckCircle
+  Send,
+  CheckCircle,
+  Trash2
 } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { useOrderStatusConfig, getStatusConfig } from '../hooks/useOrderStatusConfig';
 import WhatsAppModal from '../components/WhatsAppModal';
+import { useAuthStore } from '../store/authStore';
 import '../styles/order-detail.css';
 
 interface Supplier {
@@ -80,7 +83,7 @@ interface Order {
   auditLogs?: AuditLog[];
 }
 
-type OrderStatus = 'PENDING' | 'RECEIVED' | 'NOTIFIED_CALL' | 'NOTIFIED_WHATSAPP' | 'CANCELLED' | 'INCOMPLETO' | 'DELIVERED_COUNTER';
+type OrderStatus = 'PENDING' | 'RECEIVED' | 'NOTIFIED_CALL' | 'NOTIFIED_WHATSAPP' | 'CANCELLED' | 'INCOMPLETO' | 'DELIVERED_COUNTER' | 'READY_TO_SEND';
 
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -96,6 +99,11 @@ export default function OrderDetailPage() {
   const [selectedStatus, setSelectedStatus] = useState<OrderStatus | null>(null);
   const [cancellationReason, setCancellationReason] = useState<string>('');
   const [updatingProducts, setUpdatingProducts] = useState<Set<string>>(new Set());
+  const [localReceivedQuantities, setLocalReceivedQuantities] = useState<Record<string, string>>({});
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'SUPER_ADMIN';
 
   useEffect(() => {
     if (id) {
@@ -127,6 +135,8 @@ export default function OrderDetailPage() {
         return <PhoneCall size={16} />;
       case 'NOTIFIED_WHATSAPP':
         return <MessageSquare size={16} />;
+      case 'READY_TO_SEND':
+        return <Send size={16} />;
       default:
         return <Clock size={16} />;
     }
@@ -155,6 +165,7 @@ export default function OrderDetailPage() {
       fontWeight: config.fontWeight || 'normal',
     };
   };
+
 
   const handleWhatsAppClick = async () => {
     if (!order) return;
@@ -341,6 +352,22 @@ export default function OrderDetailPage() {
     }
   };
 
+  const handleDeleteOrder = async () => {
+    if (!order || !id) return;
+
+    try {
+      setDeleting(true);
+      await api.delete(`/orders/${id}`);
+      toast.success(t('orderDetail.deleteSuccess'));
+      navigate('/orders');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || t('orderDetail.deleteFailed'));
+      setShowDeleteModal(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   const updateOrderStatus = async (newStatus: OrderStatus, reason?: string) => {
     if (!order || !id) return;
 
@@ -390,11 +417,23 @@ export default function OrderDetailPage() {
 
       if (isNaN(received)) {
         toast.error(t('orderDetail.invalidQuantity') || 'Invalid quantity entered');
+        // Reset local value on error
+        setLocalReceivedQuantities((prev) => {
+          const newState = { ...prev };
+          delete newState[productId];
+          return newState;
+        });
         return;
       }
 
       if (received < 0) {
         toast.error(t('orderDetail.negativeQuantity') || 'Received quantity cannot be negative');
+        // Reset local value on error
+        setLocalReceivedQuantities((prev) => {
+          const newState = { ...prev };
+          delete newState[productId];
+          return newState;
+        });
         return;
       }
 
@@ -403,6 +442,12 @@ export default function OrderDetailPage() {
           t('orderDetail.quantityExceeded') || 
           `Received quantity (${received}) cannot exceed ordered quantity (${ordered})`
         );
+        // Reset local value on error
+        setLocalReceivedQuantities((prev) => {
+          const newState = { ...prev };
+          delete newState[productId];
+          return newState;
+        });
         return;
       }
     }
@@ -414,6 +459,13 @@ export default function OrderDetailPage() {
         receivedQuantity: receivedQuantity || null,
       });
 
+      // Clear local value after successful update
+      setLocalReceivedQuantities((prev) => {
+        const newState = { ...prev };
+        delete newState[productId];
+        return newState;
+      });
+
       // Refresh order data
       if (id) {
         await fetchOrder(id);
@@ -423,6 +475,12 @@ export default function OrderDetailPage() {
       console.error('Failed to update received quantity:', error);
       const errorMessage = error.response?.data?.error?.message || t('orderDetail.updateFailed');
       toast.error(errorMessage);
+      // Reset local value on error
+      setLocalReceivedQuantities((prev) => {
+        const newState = { ...prev };
+        delete newState[productId];
+        return newState;
+      });
     } finally {
       setUpdatingProducts((prev) => {
         const newSet = new Set(prev);
@@ -483,8 +541,22 @@ export default function OrderDetailPage() {
       'totalAmount': t('orderDetail.totalAmount'),
       'receivedQuantity': t('orderDetail.receivedQuantity'),
       'price': t('orderDetail.price'),
+      // Audit log custom fields from backend
+      'supplier': t('orderDetail.supplier'),
+      'product': t('orderDetail.productRef'),
+      'quantity': t('orderDetail.quantity'),
     };
     return fieldTranslations[fieldName] || fieldName;
+  };
+
+  const translateStatusValue = (statusValue: string) => {
+    // If it's a status code, translate it using getStatusLabel
+    // Common status codes that need translation
+    const statusCodes = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO', 'DELIVERED_COUNTER', 'READY_TO_SEND'];
+    if (statusCodes.includes(statusValue)) {
+      return getStatusLabel(statusValue);
+    }
+    return statusValue;
   };
 
   if (loading) {
@@ -526,7 +598,16 @@ export default function OrderDetailPage() {
           <h1>{t('orderDetail.title')}</h1>
           <p className="page-subtitle">{t('orderDetail.orderNumber')}: {order.orderNumber || '-'}</p>
         </div>
-        <div className="header-actions">
+        <div className="header-actions" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {isAdmin && (
+            <button
+              className="btn-secondary"
+              onClick={() => setShowDeleteModal(true)}
+            >
+              <Trash2 size={18} />
+              {t('orderDetail.deleteOrder')}
+            </button>
+          )}
           <button
             className="btn-secondary"
             onClick={() => navigate(`/orders/${id}/edit`)}
@@ -577,7 +658,7 @@ export default function OrderDetailPage() {
             )}
             <div className="detail-row">
               <span className="detail-label">{t('orderDetail.totalAmount')}</span>
-              <span className="detail-value total-amount">€{order.totalAmount}</span>
+              <span className="detail-value total-amount">{order.totalAmount} €</span>
             </div>
           </div>
         </section>
@@ -602,10 +683,14 @@ export default function OrderDetailPage() {
                   const fullPhone = `${countryCode} ${phone}`;
                   return (
                     <button
-                      onClick={handlePhoneCallClick}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(fullPhone);
+                        toast.success(t('common.copied'));
+                      }}
                       className="phone-link"
                       style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
-                      title={t('orderDetail.callCustomer')}
+                      title={t('orders.clickToCopy')}
                     >
                       <Phone size={16} />
                       {fullPhone}
@@ -617,7 +702,7 @@ export default function OrderDetailPage() {
                   onClick={handleWhatsAppClick}
                   title={t('orderDetail.sendWhatsApp')}
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#25D366">
                     <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .96 4.534.96 10.09c0 1.79.463 3.47 1.27 4.94L0 24l9.218-2.38a11.807 11.807 0 005.832 1.53h.005c5.554 0 10.09-4.535 10.09-10.09 0-2.76-1.12-5.26-2.933-7.075"/>
                   </svg>
                 </button>
@@ -645,66 +730,86 @@ export default function OrderDetailPage() {
           <h2>{t('orderDetail.updateStatus')}</h2>
           <div className="status-actions">
             {/* Show all status options, allowing users to change to any status */}
-            <button
-              className={`status-action-btn ${order.status === 'PENDING' ? 'active' : ''}`}
-              onClick={() => handleStatusUpdate('PENDING')}
-              disabled={updating || order.status === 'PENDING'}
-              title={order.status === 'PENDING' ? t('orderDetail.currentStatus') : t('orderDetail.setToPending')}
-            >
-              <Clock size={20} />
-              {t('orders.statusPending')}
-            </button>
-            
-            <button
-              className={`status-action-btn green ${order.status === 'RECEIVED' ? 'active' : ''}`}
-              onClick={() => handleStatusUpdate('RECEIVED')}
-              disabled={updating || order.status === 'RECEIVED'}
-              title={order.status === 'RECEIVED' ? t('orderDetail.currentStatus') : t('orderDetail.markAsReceived')}
-            >
-              <Package size={20} />
-              {t('orderDetail.markAsReceived')}
-            </button>
-            
-            <button
-              className={`status-action-btn green ${order.status === 'DELIVERED_COUNTER' ? 'active' : ''}`}
-              onClick={() => handleStatusUpdate('DELIVERED_COUNTER')}
-              disabled={updating || order.status === 'DELIVERED_COUNTER'}
-              title={order.status === 'DELIVERED_COUNTER' ? t('orderDetail.currentStatus') : t('orderDetail.markAsDeliveredCounter')}
-            >
-              <Package size={20} />
-              {t('orderDetail.markAsDeliveredCounter')}
-            </button>
-            
-            <button
-              className={`status-action-btn green ${order.status === 'NOTIFIED_CALL' ? 'active' : ''}`}
-              onClick={() => handleStatusUpdate('NOTIFIED_CALL')}
-              disabled={updating || order.status === 'NOTIFIED_CALL'}
-              title={order.status === 'NOTIFIED_CALL' ? t('orderDetail.currentStatus') : t('orderDetail.notifiedByCall')}
-            >
-              <PhoneCall size={20} />
-              {t('orderDetail.notifiedByCall')}
-            </button>
-            
-            <button
-              className={`status-action-btn green ${order.status === 'NOTIFIED_WHATSAPP' ? 'active' : ''}`}
-              onClick={handleWhatsAppClick}
-              disabled={updating || order.status === 'NOTIFIED_WHATSAPP'}
-              title={order.status === 'NOTIFIED_WHATSAPP' ? t('orderDetail.currentStatus') : t('orderDetail.sendWhatsApp')}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style={{ marginRight: '0.5rem' }}>
+            {(['PENDING', 'RECEIVED', 'READY_TO_SEND', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'DELIVERED_COUNTER', 'CANCELLED', 'INCOMPLETO'] as OrderStatus[]).map((status) => {
+              const isActive = order.status === status;
+              
+              // Block changing to PENDING if order is already completed
+              // Completed states: RECEIVED, NOTIFIED_CALL, NOTIFIED_WHATSAPP, DELIVERED_COUNTER
+              const completedStates: OrderStatus[] = ['RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'DELIVERED_COUNTER'];
+              const isOrderCompleted = completedStates.includes(order.status as OrderStatus);
+              const isBlockedToPending = status === 'PENDING' && isOrderCompleted;
+              
+              const isDisabled = updating || isActive || isBlockedToPending;
+              const statusConfigData = getStatusConfig(status, statusConfig);
+              
+              // Get icon for each status
+              let statusIcon;
+              switch (status) {
+                case 'PENDING':
+                  statusIcon = <Clock size={20} />;
+                  break;
+                case 'RECEIVED':
+                case 'DELIVERED_COUNTER':
+                  statusIcon = <Package size={20} />;
+                  break;
+                case 'NOTIFIED_CALL':
+                  statusIcon = <PhoneCall size={20} />;
+                  break;
+                case 'NOTIFIED_WHATSAPP':
+                  statusIcon = (
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="#25D366">
                 <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .96 4.534.96 10.09c0 1.79.463 3.47 1.27 4.94L0 24l9.218-2.38a11.807 11.807 0 005.832 1.53h.005c5.554 0 10.09-4.535 10.09-10.09 0-2.76-1.12-5.26-2.933-7.075"/>
               </svg>
-              {t('orderDetail.sendWhatsApp')}
-            </button>
-            
+                  );
+                  break;
+                case 'READY_TO_SEND':
+                  statusIcon = <Send size={20} />;
+                  break;
+                default:
+                  statusIcon = <Clock size={20} />;
+              }
+
+              // Use the exact same style values as the status badge
+              const statusStyle = getStatusStyle(status);
+              
+              return (
             <button
-              className={`status-action-btn red ${order.status === 'CANCELLED' ? 'active' : ''}`}
-              disabled={updating || order.status === 'CANCELLED'}
-              title={order.status === 'CANCELLED' ? t('orderDetail.currentStatus') : t('orderDetail.cancelOrder')}
-              onClick={() => handleStatusUpdate('CANCELLED')}
-            >
-              {t('orderDetail.cancelOrder')}
+                  key={status}
+                  className="status-action-btn"
+                  style={{
+                    // Keep button-specific styles (border, etc.)
+                    borderColor: isActive ? 'var(--primary-color)' : statusConfigData.color || '#6b7280',
+                    // Use exact same colors as status badge
+                    color: isActive ? 'var(--primary-color)' : statusStyle.color,
+                    backgroundColor: isActive ? 'var(--primary-light)' : statusStyle.backgroundColor,
+                    // Use exact same font styles as status badge
+                    fontFamily: statusStyle.fontFamily,
+                    fontSize: statusStyle.fontSize,
+                    fontWeight: statusStyle.fontWeight,
+                    // Keep button behavior
+                    cursor: isActive ? 'default' : 'pointer',
+                  }}
+                  onClick={() => status === 'NOTIFIED_WHATSAPP' ? handleWhatsAppClick() : handleStatusUpdate(status)}
+                  disabled={isDisabled}
+                  title={isActive ? t('orderDetail.currentStatus') : getStatusLabel(status)}
+                  onMouseEnter={(e) => {
+                    if (!isDisabled && !isActive) {
+                      e.currentTarget.style.background = statusConfigData.color || '#6b7280';
+                      e.currentTarget.style.color = '#ffffff';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isDisabled && !isActive) {
+                      e.currentTarget.style.background = statusStyle.backgroundColor;
+                      e.currentTarget.style.color = statusStyle.color;
+                    }
+                  }}
+                >
+                  {statusIcon}
+                  {getStatusLabel(status)}
             </button>
+              );
+            })}
           </div>
         </section>
 
@@ -740,28 +845,40 @@ export default function OrderDetailPage() {
                     >
                       <td>{product.supplier.name}</td>
                       <td>{product.productRef}</td>
-                      <td>{product.quantity}</td>
+                      <td>{Math.round(parseFloat(product.quantity) || 0)}</td>
                       <td>
                         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                           <input
                             type="number"
                             min="0"
                             max={quantity}
-                            step="0.01"
-                            value={received || ''}
+                            step="1"
+                            value={localReceivedQuantities[product.id] !== undefined ? localReceivedQuantities[product.id] : (received || '')}
                             onChange={(e) => {
                               const value = e.target.value;
-                              // Update immediately for better UX
-                              handleUpdateReceivedQuantity(product.id, value || null);
+                              // Update local state only, don't call API yet
+                              setLocalReceivedQuantities((prev) => ({
+                                ...prev,
+                                [product.id]: value
+                              }));
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.currentTarget.blur(); // This will trigger onBlur which will update
+                              }
                             }}
                             onBlur={(e) => {
-                              // Validate on blur as well
                               const value = e.target.value;
-                              if (value && parseFloat(value) > quantity) {
-                                toast.error(
-                                  t('orderDetail.quantityExceeded') || 
-                                  `Received quantity cannot exceed ordered quantity (${quantity})`
-                                );
+                              // Update when focus is lost or Enter is pressed
+                              if (value !== (product.receivedQuantity || '')) {
+                                handleUpdateReceivedQuantity(product.id, value || null);
+                              } else {
+                                // Clear local value if unchanged
+                                setLocalReceivedQuantities((prev) => {
+                                  const newState = { ...prev };
+                                  delete newState[product.id];
+                                  return newState;
+                                });
                               }
                             }}
                             placeholder="0"
@@ -774,13 +891,13 @@ export default function OrderDetailPage() {
                               backgroundColor: isReceived ? 'var(--success-light)' : 'var(--input-bg)',
                             }}
                           />
-                          {isReceived && (
+                          {isFullyReceived && (
                             <CheckCircle size={16} style={{ color: 'var(--success)' }} />
                           )}
                         </div>
                       </td>
-                      <td>€{product.price}</td>
-                      <td>€{subtotal.toFixed(2)}</td>
+                      <td>{product.price} €</td>
+                      <td>{subtotal.toFixed(2)} €</td>
                     </tr>
                   );
                 })}
@@ -788,7 +905,7 @@ export default function OrderDetailPage() {
               <tfoot>
                 <tr>
                   <td colSpan={5} className="text-right">{t('orderDetail.total')}:</td>
-                  <td className="total-amount">€{order.totalAmount}</td>
+                  <td className="total-amount">{order.totalAmount} €</td>
                 </tr>
               </tfoot>
             </table>
@@ -831,13 +948,15 @@ export default function OrderDetailPage() {
                           <span className="field-name">{getFieldLabel(log.fieldChanged)}:</span>
                           {log.oldValue && (
                             <span className="old-value">
-                              {log.fieldChanged === 'price' ? '€' : ''}{log.oldValue}
+                              {log.fieldChanged === 'price' ? '€' : ''}
+                              {log.fieldChanged === 'status' ? translateStatusValue(log.oldValue) : log.oldValue}
                             </span>
                           )}
                           {log.oldValue && log.newValue && <span> → </span>}
                           {log.newValue && (
                             <span className="new-value">
-                              {log.fieldChanged === 'price' ? '€' : ''}{log.newValue}
+                              {log.fieldChanged === 'price' ? '€' : ''}
+                              {log.fieldChanged === 'status' ? translateStatusValue(log.newValue) : log.newValue}
                             </span>
                           )}
                         </div>
@@ -947,6 +1066,21 @@ export default function OrderDetailPage() {
         cancelText={t('common.cancel')}
         type="info"
       />
+
+      {/* Delete Order Modal */}
+      {isAdmin && (
+        <ConfirmModal
+          isOpen={showDeleteModal}
+          onClose={() => setShowDeleteModal(false)}
+          onConfirm={handleDeleteOrder}
+          title={t('orderDetail.deleteOrder')}
+          message={t('orderDetail.deleteConfirm')}
+          confirmText={t('orderDetail.deleteOrder')}
+          cancelText={t('common.cancel')}
+          type="danger"
+          loading={deleting}
+        />
+      )}
     </div>
   );
 }

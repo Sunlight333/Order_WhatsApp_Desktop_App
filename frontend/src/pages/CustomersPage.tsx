@@ -1,12 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Edit2, Trash2, UserCircle, Loader2, Search, X, Copy, Phone, ArrowUp, ArrowDown, ChevronUp } from 'lucide-react';
+import { Plus, Edit2, Trash2, UserCircle, Loader2, Search, X, Copy, Phone, ArrowUp, ArrowDown, ChevronUp, History, CheckCircle, AlertCircle, Download } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { useContextMenu } from '../hooks/useContextMenu';
 import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
+import { exportToExcel } from '../utils/excelExport';
+import { useAuthStore } from '../store/authStore';
 import '../styles/customers.css';
+import '../styles/order-detail.css';
 
 interface Customer {
   id: string;
@@ -17,6 +20,14 @@ interface Customer {
   createdAt: string;
   updatedAt: string;
   ordersCount: number;
+  createdBy?: {
+    id: string;
+    username: string;
+  } | null;
+  updatedBy?: {
+    id: string;
+    username: string;
+  } | null;
 }
 
 interface CustomerFormData {
@@ -26,8 +37,24 @@ interface CustomerFormData {
   description: string;
 }
 
+interface CustomerAuditLog {
+  id: string;
+  customerId: string;
+  userId: string;
+  user: {
+    id: string;
+    username: string;
+  };
+  action: string;
+  fieldChanged?: string;
+  oldValue?: string;
+  newValue?: string;
+  timestamp: string;
+  metadata?: Record<string, any> | null;
+}
+
 export default function CustomersPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -37,6 +64,9 @@ export default function CustomersPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showUpdateConfirmModal, setShowUpdateConfirmModal] = useState(false);
   const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [auditLogs, setAuditLogs] = useState<CustomerAuditLog[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [formData, setFormData] = useState<CustomerFormData>({
     name: '',
@@ -67,6 +97,40 @@ export default function CustomersPage() {
   };
 
   const isSuperAdmin = currentUser?.role === 'SUPER_ADMIN';
+  const { user } = useAuthStore();
+
+  const handleExportCustomers = () => {
+    if (!isSuperAdmin) {
+      toast.error(t('common.unauthorized'));
+      return;
+    }
+
+    try {
+      if (customers.length === 0) {
+        toast.error(t('customers.noCustomersToExport'));
+        return;
+      }
+
+      const locale = i18n.language === 'es' ? 'es-ES' : 'en-US';
+      const exportData = customers.map((customer) => ({
+        [t('customers.name')]: customer.name,
+        [t('common.phone')]: customer.phone ? `${customer.countryCode || '+34'} ${customer.phone}` : '-',
+        [t('customers.description')]: customer.description || '-',
+        [t('customers.ordersCount')]: customer.ordersCount || 0,
+        [t('customers.createdBy')]: customer.createdBy?.username || '-',
+        [t('customers.updatedBy')]: customer.updatedBy?.username || '-',
+        [t('customers.createdAt')]: new Date(customer.createdAt).toLocaleString(locale),
+        [t('customers.updatedAt')]: new Date(customer.updatedAt).toLocaleString(locale),
+      }));
+
+      const timestamp = new Date().toISOString().split('T')[0];
+      exportToExcel(exportData, `clientes_${timestamp}`, t('customers.customersList'));
+      toast.success(t('customers.customersExported'));
+    } catch (error: any) {
+      console.error('Failed to export customers:', error);
+      toast.error(t('customers.exportFailed'));
+    }
+  };
 
   const fetchCustomers = async () => {
     try {
@@ -249,25 +313,76 @@ export default function CustomersPage() {
     toast.success(t('common.copied'));
   };
 
+  const handleViewHistory = async (customer: Customer) => {
+    setSelectedCustomer(customer);
+    setShowHistoryModal(true);
+    setLoadingHistory(true);
+    
+    try {
+      const response = await api.get<{ success: true; data: CustomerAuditLog[] }>(`/customers/${customer.id}/audit-logs`);
+      setAuditLogs(response.data.data || []);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || t('customers.historyLoadFailed'));
+      setShowHistoryModal(false);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  const getActionIcon = (action: string) => {
+    switch (action) {
+      case 'CREATE':
+        return <Plus size={14} />;
+      case 'UPDATE':
+        return <Edit2 size={14} />;
+      case 'DELETE':
+        return <Trash2 size={14} />;
+      default:
+        return <AlertCircle size={14} />;
+    }
+  };
+
+  const getActionLabel = (action: string) => {
+    switch (action) {
+      case 'CREATE':
+        return t('customers.actionCreate');
+      case 'UPDATE':
+        return t('customers.actionUpdate');
+      case 'DELETE':
+        return t('customers.actionDelete');
+      default:
+        return action;
+    }
+  };
+
+  const getFieldLabel = (fieldName: string) => {
+    const fieldTranslations: Record<string, string> = {
+      'name': t('common.name'),
+      'phone': t('common.phone'),
+      'countryCode': t('common.countryCode'),
+      'description': t('common.description'),
+    };
+    return fieldTranslations[fieldName] || fieldName;
+  };
+
   const getContextMenuItems = (customer: Customer): ContextMenuItem[] => {
     const items: ContextMenuItem[] = [];
 
-    if (isSuperAdmin) {
-      items.push({
-        label: t('customers.editCustomer'),
-        icon: <Edit2 size={16} />,
-        action: () => {
-          setSelectedCustomer(customer);
-          setFormData({
-            name: customer.name,
-            phone: customer.phone || '',
-            countryCode: customer.countryCode || '+34',
-            description: customer.description || '',
-          });
-          setShowEditModal(true);
-        },
-      });
-    }
+    // Edit is available to all users
+    items.push({
+      label: t('customers.editCustomer'),
+      icon: <Edit2 size={16} />,
+      action: () => {
+        setSelectedCustomer(customer);
+        setFormData({
+          name: customer.name,
+          phone: customer.phone || '',
+          countryCode: customer.countryCode || '+34',
+          description: customer.description || '',
+        });
+        setShowEditModal(true);
+      },
+    });
 
     items.push(
       {
@@ -289,8 +404,14 @@ export default function CustomersPage() {
       }
     );
 
+    // History and Delete are only available to SUPER_ADMIN
     if (isSuperAdmin) {
       items.push({ divider: true });
+      items.push({
+        label: t('customers.viewHistory'),
+        icon: <History size={16} />,
+        action: () => handleViewHistory(customer),
+      });
       items.push({
         label: t('customers.deleteCustomer'),
         icon: <Trash2 size={16} />,
@@ -299,7 +420,6 @@ export default function CustomersPage() {
           setShowDeleteModal(true);
         },
         danger: true,
-        disabled: customer.ordersCount > 0,
       });
     }
 
@@ -319,17 +439,27 @@ export default function CustomersPage() {
 
   return (
     <div className="page-container">
-      <div className="page-header">
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1>{t('customers.title')}</h1>
           <p className="page-subtitle">{t('customers.manageCustomers')}</p>
         </div>
-        {isSuperAdmin && (
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {isSuperAdmin && (
+            <button
+              className="btn-secondary"
+              onClick={handleExportCustomers}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <Download size={18} />
+              {t('customers.exportToExcel')}
+            </button>
+          )}
           <button className="btn-primary" onClick={handleCreate}>
             <Plus size={20} />
             {t('customers.createCustomer')}
           </button>
-        )}
+        </div>
       </div>
 
       <div className="customers-toolbar">
@@ -358,12 +488,10 @@ export default function CustomersPage() {
         <div className="empty-state">
           <UserCircle size={48} />
           <p>{t('customers.noCustomers')}</p>
-          {isSuperAdmin && (
-            <button className="btn-primary" onClick={handleCreate}>
-              <Plus size={20} />
-              {t('customers.createFirstCustomer')}
-            </button>
-          )}
+          <button className="btn-primary" onClick={handleCreate}>
+            <Plus size={20} />
+            {t('customers.createFirstCustomer')}
+          </button>
         </div>
       ) : (
         <div className="customers-list-container">
@@ -411,7 +539,9 @@ export default function CustomersPage() {
                     {getSortIcon('createdAt')}
                   </div>
                 </th>
-                {isSuperAdmin && <th>{t('common.actions')}</th>}
+                {isSuperAdmin && <th>{t('customers.createdBy')}</th>}
+                {isSuperAdmin && <th>{t('customers.updatedBy')}</th>}
+                <th>{t('common.actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -440,25 +570,38 @@ export default function CustomersPage() {
                   <td>{formatDate(customer.createdAt)}</td>
                   {isSuperAdmin && (
                     <td>
-                      <div className="action-buttons">
-                        <button
-                          className="btn-icon btn-edit"
-                          onClick={() => handleEdit(customer)}
-                          title={t('customers.editCustomer')}
-                        >
-                          <Edit2 size={16} />
-                        </button>
+                      <div className="customer-user-info">
+                        {customer.createdBy ? customer.createdBy.username : '-'}
+                      </div>
+                    </td>
+                  )}
+                  {isSuperAdmin && (
+                    <td>
+                      <div className="customer-user-info">
+                        {customer.updatedBy ? customer.updatedBy.username : '-'}
+                      </div>
+                    </td>
+                  )}
+                  <td>
+                    <div className="action-buttons">
+                      <button
+                        className="btn-icon btn-edit"
+                        onClick={() => handleEdit(customer)}
+                        title={t('customers.editCustomer')}
+                      >
+                        <Edit2 size={16} />
+                      </button>
+                      {isSuperAdmin && (
                         <button
                           className="btn-icon btn-delete"
                           onClick={() => handleDelete(customer)}
                           title={t('customers.deleteCustomer')}
-                          disabled={customer.ordersCount > 0}
                         >
                           <Trash2 size={16} />
                         </button>
-                      </div>
-                    </td>
-                  )}
+                      )}
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -467,9 +610,7 @@ export default function CustomersPage() {
       )}
 
       {/* Create Customer Modal */}
-      {isSuperAdmin && (
-        <>
-          <ConfirmModal
+      <ConfirmModal
             isOpen={showCreateModal}
             onClose={() => setShowCreateModal(false)}
             onConfirm={handleCreateSubmit}
@@ -597,35 +738,37 @@ export default function CustomersPage() {
             loading={submitting}
           />
 
-          {/* Delete Customer Modal */}
-          <ConfirmModal
-            isOpen={showDeleteModal}
-            onClose={() => {
-              setShowDeleteModal(false);
-              setSelectedCustomer(null);
-            }}
-            onConfirm={handleDeleteConfirm}
-            title={t('customers.deleteCustomer')}
-            message={
-              <div>
-                <p>
-                  {t('customers.deleteConfirm', { name: selectedCustomer?.name })}
-                </p>
-                {selectedCustomer && selectedCustomer.ordersCount > 0 && (
-                  <p className="warning-text">
-                    {t('customers.hasOrdersWarning', { count: selectedCustomer.ordersCount })}
+          {/* Delete Customer Modal - Only visible to SUPER_ADMIN */}
+          {isSuperAdmin && (
+            <ConfirmModal
+              isOpen={showDeleteModal}
+              onClose={() => {
+                setShowDeleteModal(false);
+                setSelectedCustomer(null);
+              }}
+              onConfirm={handleDeleteConfirm}
+              title={t('customers.deleteCustomer')}
+              message={
+                <div>
+                  <p>
+                    {t('customers.deleteConfirm', { name: selectedCustomer?.name })}
                   </p>
-                )}
-                <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                  {t('customers.deleteWarning')}
-                </p>
-              </div>
-            }
-            confirmText={t('customers.deleteCustomer')}
-            cancelText={t('common.cancel')}
-            type="danger"
-            loading={deleteLoading}
-          />
+                  {selectedCustomer && selectedCustomer.ordersCount > 0 && (
+                    <p className="warning-text">
+                      {t('customers.hasOrdersWarning', { count: selectedCustomer.ordersCount })}
+                    </p>
+                  )}
+                  <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                    {t('customers.deleteWarning')}
+                  </p>
+                </div>
+              }
+              confirmText={t('customers.deleteCustomer')}
+              cancelText={t('common.cancel')}
+              type="danger"
+              loading={deleteLoading}
+            />
+          )}
 
           {/* Update Confirmation Modal */}
           <ConfirmModal
@@ -646,7 +789,90 @@ export default function CustomersPage() {
             type="info"
             loading={submitting}
           />
-        </>
+
+      {/* Customer History Modal - Only for SUPER_ADMIN */}
+      {isSuperAdmin && (
+        <ConfirmModal
+          isOpen={showHistoryModal}
+          onClose={() => {
+            setShowHistoryModal(false);
+            setAuditLogs([]);
+          }}
+          onConfirm={() => {
+            setShowHistoryModal(false);
+            setAuditLogs([]);
+          }}
+          title={t('customers.customerHistory', { name: selectedCustomer?.name })}
+          message={
+            <div style={{ maxHeight: '60vh', overflowY: 'auto' }}>
+              {loadingHistory ? (
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem' }}>
+                  <Loader2 className="spinner" size={24} />
+                  <span style={{ marginLeft: '1rem' }}>{t('customers.loadingHistory')}</span>
+                </div>
+              ) : auditLogs.length === 0 ? (
+                <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+                  {t('customers.noHistory')}
+                </div>
+              ) : (
+                <div className="audit-timeline">
+                  {auditLogs.map((log) => (
+                    <div key={log.id} className="audit-entry">
+                      <div className="audit-icon">
+                        {getActionIcon(log.action)}
+                      </div>
+                      <div className="audit-content">
+                        <div className="audit-header">
+                          <span className="audit-action">{getActionLabel(log.action)}</span>
+                          <span className="audit-user">{t('customers.by')} {log.user.username}</span>
+                          <span className="audit-time">{formatDate(log.timestamp)}</span>
+                        </div>
+                        {log.fieldChanged && (
+                          <div className="audit-details">
+                            <div>
+                              <span className="field-name">{getFieldLabel(log.fieldChanged)}:</span>
+                              {log.oldValue && (
+                                <span className="old-value">
+                                  {log.oldValue}
+                                </span>
+                              )}
+                              {log.oldValue && log.newValue && <span> → </span>}
+                              {log.newValue && (
+                                <span className="new-value">
+                                  {log.newValue}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+                        {log.action === 'CREATE' && log.metadata && (
+                          <div className="audit-details" style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                            {t('customers.createdWith', {
+                              name: log.metadata.name || '',
+                              phone: log.metadata.phone || '-',
+                            })}
+                          </div>
+                        )}
+                        {log.action === 'DELETE' && log.metadata && (
+                          <div className="audit-details" style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                            {t('customers.deletedWith', {
+                              name: log.metadata.name || '',
+                              phone: log.metadata.phone || '-',
+                            })}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          }
+          confirmText={t('common.close')}
+          cancelText=""
+          type="info"
+          hideCancel={true}
+        />
       )}
 
       {/* Context Menu */}

@@ -8,12 +8,16 @@
     "dev:backend": "cd backend && npm run dev",
     "dev:frontend": "cd frontend && npm run dev",
     "dev:electron": "wait-on http://localhost:5173 http://localhost:3000/api/v1/health && cross-env NODE_ENV=development electron .",
-    "build": "npm run build:backend && npm run build:frontend && npm run build:electron:dir",
+    "build": "npm run build:backend && npm run build:frontend && npm run build:electron:all",
     "build:backend": "cd backend && npm run build",
     "build:frontend": "cd frontend && npm run build",
-    "prebuild:electron": "node -e \"const fs=require('fs'),path=require('path');function delDB(dir){try{const files=fs.readdirSync(dir);files.forEach(f=>{const p=path.join(dir,f);const stat=fs.statSync(p);if(stat.isDirectory())delDB(p);else if(/database\\.db/.test(f))try{fs.unlinkSync(p);console.log('Deleted:',p)}catch(e){}})}catch(e){}};['node_modules','backend/prisma'].forEach(d=>{if(fs.existsSync(d))delDB(d)});\"",
+    "prebuild:electron": "node -e \"const fs=require('fs'),path=require('path');function delDB(dir){try{const files=fs.readdirSync(dir);files.forEach(f=>{const p=path.join(dir,f);const stat=fs.statSync(p);if(stat.isDirectory())delDB(p);else if(/database\\\\.db/.test(f))try{fs.unlinkSync(p);console.log('Deleted:',p)}catch(e){}})}catch(e){}};['node_modules','backend/prisma','build-electron'].forEach(d=>{if(fs.existsSync(d))delDB(d)});\" && node scripts/generate-icon.js",
     "build:electron": "electron-builder",
     "build:electron:dir": "electron-builder --dir",
+    "build:electron:setup": "electron-builder --win nsis",
+    "build:electron:zip": "electron-builder --win zip",
+    "build:electron:all": "electron-builder --win nsis zip",
+    "clear-icon-cache": "powershell -ExecutionPolicy Bypass -File scripts/clear-windows-icon-cache.ps1",
     "prisma:generate": "cd backend && npx prisma generate",
     "prisma:migrate": "cd backend && npx prisma migrate dev",
     "prisma:studio": "cd backend && npx prisma studio"
@@ -43,7 +47,8 @@
     "appId": "com.orderwhatsapp.desktop",
     "productName": "Order WhatsApp Desktop",
     "directories": {
-      "output": "build-electron"
+      "output": "build-electron",
+      "buildResources": "build"
     },
     "files": [
       "electron/dist/**/*",
@@ -67,19 +72,17 @@
         "to": "node_modules",
         "filter": [
           "**/*",
-          "!**/prisma/**/*.db",
-          "!**/prisma/**/*.db-shm",
-          "!**/prisma/**/*.db-wal",
-          "!**/prisma/**/*.db-journal",
-          "!**/order-app-backend/prisma/**/*.db",
-          "!**/order-app-backend/prisma/**/*.db-shm",
-          "!**/order-app-backend/prisma/**/*.db-wal",
-          "!**/order-app-backend/prisma/**/*.db-journal",
-          "!**/order-app-backend/prisma/database.db",
-          "!**/order-app-backend/prisma/database.db-shm",
-          "!**/order-app-backend/prisma/database.db-wal",
-          "!**/order-app-backend/prisma/database.db-journal"
+          "!**/*.db*",
+          "!**/*.db-shm",
+          "!**/*.db-wal",
+          "!**/*.db-journal",
+          "!**/prisma/**",
+          "!**/order-app-backend/prisma/**"
         ]
+      },
+      {
+        "from": "frontend/public/assets/images/logo.png",
+        "to": "assets/images/logo.png"
       }
     ],
     "asarUnpack": [
@@ -87,26 +90,35 @@
       "backend/prisma/**"
     ],
     "win": {
-      "icon": "frontend/public/assets/images/logo.png",
+      "icon": "build/icon.png",
       "target": [
         {
           "target": "nsis",
           "arch": ["x64"]
+        },
+        {
+          "target": "zip",
+          "arch": ["x64"]
         }
-      ]
+      ],
+      "requestedExecutionLevel": "asInvoker"
     },
     "mac": {
-      "icon": "frontend/public/assets/images/logo.png",
+      "icon": "build/icon.png",
       "category": "public.app-category.business"
     },
     "linux": {
-      "icon": "frontend/public/assets/images/logo.png",
+      "icon": "build/icon.png",
       "target": ["AppImage", "deb"]
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+      "allowToChangeInstallationDirectory": true,
+      "include": "build/installer-password.nsh"
+    },
+    "beforePack": "scripts/beforePack.js",
+    "afterPack": "scripts/afterPack.js",
+    "afterSign": "scripts/afterSign.js"
   }
 }
 

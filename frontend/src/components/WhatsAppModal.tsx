@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { X, MessageSquare } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import '../styles/modal.css';
 
 interface WhatsAppModalProps {
@@ -19,6 +20,7 @@ export default function WhatsAppModal({
   initialMessage,
   loading = false,
 }: WhatsAppModalProps) {
+  const { t } = useTranslation();
   const [message, setMessage] = useState(initialMessage);
 
   // Update message when initialMessage changes
@@ -38,7 +40,7 @@ export default function WhatsAppModal({
         <div className="modal-header">
           <div className="modal-title-group">
             <MessageSquare size={24} className="modal-icon info" />
-            <h3>Send WhatsApp Message</h3>
+            <h3>{t('orderDetail.sendWhatsAppTitle')}</h3>
           </div>
           <button
             className="btn-icon"
@@ -50,7 +52,7 @@ export default function WhatsAppModal({
         </div>
         <div className="modal-body">
           <div className="modal-message">
-            <p>Do you want to open WhatsApp to send a message to <strong>{phoneNumber}</strong>?</p>
+            <p dangerouslySetInnerHTML={{ __html: t('orderDetail.sendWhatsAppQuestion', { phoneNumber }) }} />
             
             <div style={{ marginTop: '1rem' }}>
               <label style={{ 
@@ -60,12 +62,12 @@ export default function WhatsAppModal({
                 fontWeight: '500',
                 color: 'var(--text-primary)'
               }}>
-                Message:
+                {t('orderDetail.message')}
               </label>
               <textarea
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
-                placeholder="Enter your message..."
+                placeholder={t('orderDetail.enterYourMessage')}
                 className="form-input form-textarea"
                 rows={4}
                 style={{
@@ -90,13 +92,11 @@ export default function WhatsAppModal({
                 fontSize: '0.75rem', 
                 color: 'var(--text-secondary)' 
               }}>
-                You can edit this message before sending.
+                {t('orderDetail.editMessageBeforeSending')}
               </small>
             </div>
             
-            <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-              After opening WhatsApp, the order status will automatically update to <strong>"Notified (WhatsApp)"</strong>.
-            </p>
+            <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }} dangerouslySetInnerHTML={{ __html: t('orderDetail.whatsAppStatusUpdate') }} />
           </div>
         </div>
         <div className="modal-actions">
@@ -105,7 +105,7 @@ export default function WhatsAppModal({
             onClick={onClose}
             disabled={loading}
           >
-            Cancel
+            {t('common.cancel')}
           </button>
           <button
             className="btn btn-primary"
@@ -115,10 +115,10 @@ export default function WhatsAppModal({
             {loading ? (
               <span className="btn-loading">
                 <span className="spinner-small"></span>
-                Processing...
+                {t('orderDetail.processing')}
               </span>
             ) : (
-              'Open WhatsApp'
+              t('orderDetail.openWhatsApp')
             )}
           </button>
         </div>

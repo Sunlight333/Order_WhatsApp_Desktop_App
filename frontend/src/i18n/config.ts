@@ -36,19 +36,26 @@ i18n
       escapeValue: false, // React already escapes values
     },
     detection: {
-      order: ['localStorage', 'navigator'],
+      order: ['localStorage', 'querystring', 'htmlTag'],
       caches: ['localStorage'],
       lookupLocalStorage: 'app_language',
     },
   });
 
-// Listen for language changes and update localStorage
+// Listen for language changes and update localStorage and document title
 i18n.on('languageChanged', (lng) => {
   try {
     localStorage.setItem('app_language', lng);
+    // Update document title when language changes
+    document.title = i18n.t('app.title');
   } catch (error) {
     // Ignore localStorage errors
   }
+});
+
+// Set initial document title
+i18n.on('initialized', () => {
+  document.title = i18n.t('app.title');
 });
 
 export default i18n;

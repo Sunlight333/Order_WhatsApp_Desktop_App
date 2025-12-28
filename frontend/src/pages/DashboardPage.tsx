@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Package, ShoppingCart, Clock, CheckCircle, TrendingUp, ArrowRight, BarChart3, Users, Star } from 'lucide-react';
+import { Package, ShoppingCart, Clock, CheckCircle, TrendingUp, ArrowRight, BarChart3, Users, Star, Download } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../store/authStore';
+import { exportMultipleSheets } from '../utils/excelExport';
 import '../styles/dashboard.css';
 
 interface DashboardStats {
@@ -14,6 +15,7 @@ interface DashboardStats {
   notifiedOrders: number;
   recentOrders: Array<{
     id: string;
+    orderNumber?: number;
     customerName?: string;
     customerPhone: string;
     status: string;
@@ -63,13 +65,19 @@ export default function DashboardPage() {
   const fetchDashboardData = async () => {
     try {
       setLoading(true);
+
+      // For the "Notified" card we want a daily counter (resets every day).
+      // Send date-only strings so the backend can parse them as local day boundaries.
+      const now = new Date();
+      const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       
       // Fetch orders with filters to calculate stats
       const [allOrdersRes, pendingRes, receivedRes, notifiedRes, recentRes] = await Promise.all([
         api.get('/orders', { params: { limit: 1 } }),
         api.get('/orders', { params: { status: 'PENDING', limit: 1 } }),
         api.get('/orders', { params: { status: 'RECEIVED', limit: 1 } }),
-        api.get('/orders', { params: { status: 'NOTIFIED', limit: 1 } }),
+        // Backend supports comma-separated status filter; notified orders are NOTIFIED_CALL or NOTIFIED_WHATSAPP
+        api.get('/orders', { params: { status: 'NOTIFIED_CALL,NOTIFIED_WHATSAPP', notifiedDateFrom: todayStr, notifiedDateTo: todayStr, limit: 1 } }),
         api.get('/orders', { params: { limit: 5, sortBy: 'createdAt', sortOrder: 'desc' } }),
       ]);
 
@@ -94,6 +102,18 @@ export default function DashboardPage() {
       setLoading(false);
     }
   };
+
+  // If the app stays open across midnight, refresh the dashboard shortly after the day changes
+  // so the "Notified" daily counter resets automatically.
+  useEffect(() => {
+    const now = new Date();
+    const nextMidnight = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 5, 0); // +5s buffer
+    const msUntil = nextMidnight.getTime() - now.getTime();
+    const timer = window.setTimeout(() => {
+      fetchDashboardData();
+    }, Math.max(msUntil, 1000));
+    return () => window.clearTimeout(timer);
+  }, [isAdmin]);
 
   const getStatusBadgeClass = (status: string) => {
     switch (status) {
@@ -163,6 +183,60 @@ export default function DashboardPage() {
     }).format(date);
   };
 
+  const handleExportAnalytics = () => {
+    try {
+      const sheets = [];
+      
+      // Add statistics sheet
+      sheets.push({
+        name: t('dashboard.statistics'),
+        data: [
+          { [t('dashboard.pending')]: stats.pendingOrders },
+          { [t('dashboard.received')]: stats.receivedOrders },
+          { [t('dashboard.notified')]: stats.notifiedOrders },
+          { [t('dashboard.totalOrders')]: stats.totalOrders },
+        ],
+      });
+
+      // Add top products sheet
+      if (topProducts.length > 0) {
+        sheets.push({
+          name: t('dashboard.topProducts'),
+          data: topProducts.map((product) => ({
+            [t('products.reference')]: product.reference,
+            [t('products.supplier')]: product.supplierName,
+            [t('dashboard.totalQuantity')]: product.totalQuantity,
+            [t('dashboard.orderCount')]: product.orderCount,
+          })),
+        });
+      }
+
+      // Add top customers sheet
+      if (topCustomers.length > 0) {
+        sheets.push({
+          name: t('dashboard.topCustomers'),
+          data: topCustomers.map((customer) => ({
+            [t('orders.customerName')]: customer.customerName,
+            [t('dashboard.orderCount')]: customer.orderCount,
+            [t('dashboard.totalAmount')]: customer.totalAmount,
+          })),
+        });
+      }
+
+      if (sheets.length === 0) {
+        toast.error(t('dashboard.noDataToExport'));
+        return;
+      }
+
+      const timestamp = new Date().toISOString().split('T')[0];
+      exportMultipleSheets(sheets, `analytics_${timestamp}`);
+      toast.success(t('dashboard.analyticsExported'));
+    } catch (error: any) {
+      console.error('Failed to export analytics:', error);
+      toast.error(t('dashboard.exportFailed'));
+    }
+  };
+
   const formatMonth = (monthString: string) => {
     const [year, month] = monthString.split('-');
     const date = new Date(parseInt(year), parseInt(month) - 1);
@@ -194,7 +268,11 @@ export default function DashboardPage() {
       {/* Statistics Cards */}
       <div className="dashboard-stats-grid">
         {/* Total Orders card removed per requirements - not necessary to see number of orders */}
-        <div className="stat-card stat-card-warning">
+        <div 
+          className="stat-card stat-card-warning"
+          onClick={() => navigate('/orders?status=PENDING')}
+          style={{ cursor: 'pointer' }}
+        >
           <div className="stat-card-icon">
             <Clock size={32} />
           </div>
@@ -204,7 +282,11 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="stat-card stat-card-info">
+        <div 
+          className="stat-card stat-card-info"
+          onClick={() => navigate('/orders?status=RECEIVED')}
+          style={{ cursor: 'pointer' }}
+        >
           <div className="stat-card-icon">
             <ShoppingCart size={32} />
           </div>
@@ -214,7 +296,11 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        <div className="stat-card stat-card-success">
+        <div 
+          className="stat-card stat-card-success"
+          onClick={() => navigate('/orders?status=NOTIFIED_CALL,NOTIFIED_WHATSAPP')}
+          style={{ cursor: 'pointer' }}
+        >
           <div className="stat-card-icon">
             <CheckCircle size={32} />
           </div>
@@ -258,7 +344,7 @@ export default function DashboardPage() {
               >
                 <div className="recent-order-main">
                   <div className="recent-order-info">
-                    <span className="recent-order-id">#{order.id.slice(0, 8)}</span>
+                    <span className="recent-order-id">{order.orderNumber || `#${order.id.slice(0, 8)}`}</span>
                     <span className="recent-order-customer">
                       {order.customerName || order.customerPhone}
                     </span>
@@ -318,6 +404,14 @@ export default function DashboardPage() {
               <BarChart3 size={24} style={{ marginRight: '0.5rem', display: 'inline-block' }} />
               {t('dashboard.analytics')}
             </h2>
+            <button
+              className="btn-secondary"
+              onClick={handleExportAnalytics}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <Download size={16} />
+              {t('dashboard.exportAnalytics')}
+            </button>
           </div>
 
           {analyticsLoading ? (
@@ -358,7 +452,7 @@ export default function DashboardPage() {
                               </td>
                               <td>{product.supplierName}</td>
                               <td style={{ fontFamily: 'monospace', fontWeight: 600 }}>
-                                {safeTotalQuantity.toFixed(2)}
+                                {Math.round(safeTotalQuantity)}
                               </td>
                               <td style={{ textAlign: 'center' }}>
                                 <span style={{ 
@@ -424,7 +518,7 @@ export default function DashboardPage() {
                                 </span>
                               </td>
                               <td style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--success)' }}>
-                                €{safeTotalAmount.toFixed(2)}
+                                {safeTotalAmount.toFixed(2)} €
                               </td>
                             </tr>
                           );

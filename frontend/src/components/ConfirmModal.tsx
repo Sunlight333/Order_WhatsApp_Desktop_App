@@ -1,4 +1,5 @@
 import { ReactNode } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, AlertTriangle, Info, CheckCircle } from 'lucide-react';
 import '../styles/modal.css';
 
@@ -22,14 +23,18 @@ export default function ConfirmModal({
   onConfirm,
   title,
   message,
-  confirmText = 'Confirm',
-  cancelText = 'Cancel',
+  confirmText,
+  cancelText,
   type = 'warning',
   loading = false,
   hideCancel = false,
   customContent,
 }: ConfirmModalProps) {
   if (!isOpen) return null;
+
+  const { t } = useTranslation();
+  const resolvedConfirmText = confirmText ?? t('common.confirm');
+  const resolvedCancelText = cancelText ?? t('common.cancel');
 
   const getIcon = () => {
     switch (type) {
@@ -89,7 +94,7 @@ export default function ConfirmModal({
               onClick={onClose}
               disabled={loading}
             >
-              {cancelText}
+              {resolvedCancelText}
             </button>
           )}
           <button
@@ -100,10 +105,10 @@ export default function ConfirmModal({
             {loading ? (
               <span className="btn-loading">
                 <span className="spinner-small"></span>
-                Processing...
+                {t('common.processing')}
               </span>
             ) : (
-              confirmText
+              resolvedConfirmText
             )}
           </button>
         </div>

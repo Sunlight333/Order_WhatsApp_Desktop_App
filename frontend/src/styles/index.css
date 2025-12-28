@@ -5,6 +5,7 @@
 @import './layout.css';
 @import './orders.css';
 @import './dashboard.css';
+@import './autocomplete.css';
 
 * {
   margin: 0;
@@ -37,6 +38,11 @@ body {
 
 button {
   font-family: inherit;
+}
+
+/* Global style to increase font size for all inputs with datalist (autocomplete) */
+input[list] {
+  font-size: 1.125rem !important; /* Increased from default 0.9375rem to 1.125rem (18px) for better readability of predicted text */
 }
 
 :root {
@@ -148,6 +154,18 @@ button {
   --hover-bg: var(--bg-hover);
   --border-color: var(--border-primary);
   --border-light: var(--border-secondary);
+
+  /* Placeholder (light mode): make placeholders a bit darker for readability */
+  --placeholder-color: rgba(7, 89, 133, 0.65); /* based on --text-secondary (#075985) */
+}
+
+/* Global placeholder styling (light mode only) */
+:root[data-theme="light"] input::placeholder,
+:root[data-theme="light"] textarea::placeholder,
+:root:not([data-theme]) input::placeholder,
+:root:not([data-theme]) textarea::placeholder {
+  color: var(--placeholder-color);
+  opacity: 1;
 }
 
 /* Button Base Styles */

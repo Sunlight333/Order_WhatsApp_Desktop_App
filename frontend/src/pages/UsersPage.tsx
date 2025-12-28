@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Edit2, Trash2, Shield, User as UserIcon, Loader2, Search, X, Upload, Image as ImageIcon, Copy, ArrowUp, ArrowDown, ChevronUp } from 'lucide-react';
+import { Plus, Edit2, Trash2, Shield, User as UserIcon, Loader2, Search, X, Upload, Image as ImageIcon, Copy, ArrowUp, ArrowDown, ChevronUp, Download } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { useContextMenu } from '../hooks/useContextMenu';
 import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
 import { configService } from '../services/config.service';
+import { exportToExcel } from '../utils/excelExport';
+import { useAuthStore } from '../store/authStore';
 import '../styles/users.css';
 
 // Helper function to get full avatar URL
@@ -57,6 +59,36 @@ export default function UsersPage() {
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const editAvatarInputRef = useRef<HTMLInputElement>(null);
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'SUPER_ADMIN';
+
+  const handleExportUsers = () => {
+    if (!isAdmin) {
+      toast.error(t('common.unauthorized'));
+      return;
+    }
+
+    try {
+      if (users.length === 0) {
+        toast.error(t('users.noUsersToExport'));
+        return;
+      }
+
+      const exportData = users.map((user) => ({
+        [t('users.username')]: user.username,
+        [t('users.role')]: user.role === 'SUPER_ADMIN' ? t('users.superAdmin') : t('users.userRole'),
+        [t('users.createdAt')]: new Date(user.createdAt).toLocaleString(),
+        [t('users.updatedAt')]: new Date(user.updatedAt).toLocaleString(),
+      }));
+
+      const timestamp = new Date().toISOString().split('T')[0];
+      exportToExcel(exportData, `usuarios_${timestamp}`, t('users.usersList'));
+      toast.success(t('users.usersExported'));
+    } catch (error: any) {
+      console.error('Failed to export users:', error);
+      toast.error(t('users.exportFailed'));
+    }
+  };
 
   useEffect(() => {
     fetchUsers();
@@ -363,15 +395,27 @@ export default function UsersPage() {
 
   return (
     <div className="page-container">
-      <div className="page-header">
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1>{t('users.userManagement')}</h1>
           <p className="page-subtitle">{t('users.manageUsers')}</p>
         </div>
-        <button className="btn-primary" onClick={handleCreate}>
-          <Plus size={20} />
-          {t('users.createUser')}
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {isAdmin && (
+            <button
+              className="btn-secondary"
+              onClick={handleExportUsers}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <Download size={18} />
+              {t('users.exportToExcel')}
+            </button>
+          )}
+          <button className="btn-primary" onClick={handleCreate}>
+            <Plus size={20} />
+            {t('users.createUser')}
+          </button>
+        </div>
       </div>
 
       <div className="users-toolbar">
@@ -521,7 +565,7 @@ export default function UsersPage() {
               <div className="avatar-upload-container">
                 {formData.avatarPreview ? (
                   <div className="avatar-preview">
-                    <img src={formData.avatarPreview} alt="Avatar preview" />
+                    <img src={formData.avatarPreview} alt={t('users.avatarPreview')} />
                     <button
                       type="button"
                       className="btn-remove-avatar"
@@ -564,7 +608,7 @@ export default function UsersPage() {
                 type="text"
                 value={formData.username}
                 onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-                placeholder="Enter username"
+                placeholder={t('users.enterUsername')}
                 className="form-input"
                 required
               />
@@ -718,7 +762,7 @@ export default function UsersPage() {
           </div>
         }
         confirmText={t('users.deleteUser')}
-        cancelText="Cancel"
+        cancelText={t('common.cancel')}
         type="danger"
         loading={deleteLoading}
       />
@@ -738,7 +782,7 @@ export default function UsersPage() {
           </div>
         }
         confirmText={t('users.updateUser')}
-        cancelText="Cancel"
+        cancelText={t('common.cancel')}
         type="info"
         loading={submitting}
       />

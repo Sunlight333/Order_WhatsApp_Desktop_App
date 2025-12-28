@@ -61,11 +61,30 @@ export async function updateProductReceivedQuantity(
 
   // Update order status if it changed
   if (newStatus !== order.status) {
-    await prisma.order.update({
+    await prisma.$transaction(async (tx) => {
+      // Update order status
+      await tx.order.update({
       where: { id: order.id },
       data: {
         status: newStatus,
       },
+      });
+
+      // Create audit log for automatic status change
+      await tx.auditLog.create({
+        data: {
+          orderId: order.id,
+          userId,
+          action: 'STATUS_CHANGE',
+          fieldChanged: 'status',
+          oldValue: order.status,
+          newValue: newStatus,
+          metadata: JSON.stringify({
+            automatic: true,
+            reason: 'Received quantity updated - status recalculated based on received quantities',
+          }),
+        },
+      });
     });
   }
 

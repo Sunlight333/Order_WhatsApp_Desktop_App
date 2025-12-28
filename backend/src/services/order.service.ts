@@ -1,6 +1,9 @@
 import { getPrismaClient } from '../config/database';
 import { createError } from '../utils/error.util';
 import { findOrCreateCustomer, CreateCustomerInput } from './customer.service';
+import { getConfigValue, updateConfigValue } from './config.service';
+import { calculateOrderStatus } from './order-status-calculator';
+import { isOrderStatus, type OrderStatus } from '../constants/order-status';
 
 const prisma = getPrismaClient();
 
@@ -46,6 +49,30 @@ export interface UpdateOrderInput {
  * Create a new order
  */
 export async function createOrder(userId: string, input: CreateOrderInput) {
+  // Get order counter and prefix from config before transaction
+  const counterConfig = await getConfigValue('orderCounter');
+  const prefixConfig = await getConfigValue('orderPrefix');
+  
+  let counter = 0;
+  if (counterConfig?.value) {
+    counter = parseInt(counterConfig.value, 10) || 0;
+  }
+  
+  const prefix = prefixConfig?.value || '';
+  
+  // Increment counter
+  counter++;
+  
+  // Generate order number: if prefix exists, combine prefix + counter (e.g., 25001)
+  // Otherwise, use counter directly (e.g., 1, 2, 3...)
+  let orderNumber: number;
+  if (prefix) {
+    // Combine prefix with counter (e.g., prefix "25" + counter 1 = 25001)
+    orderNumber = parseInt(`${prefix}${String(counter).padStart(3, '0')}`, 10);
+  } else {
+    orderNumber = counter;
+  }
+  
   // Execute transaction to create order and related data
   const orderId = await prisma.$transaction(async (tx) => {
     // Helper functions for transaction context
@@ -123,25 +150,130 @@ export async function createOrder(userId: string, input: CreateOrderInput) {
       }
 
       if (!customer) {
-        // Create new customer
-        customer = await tx.customer.create({
-          data: {
-            name: trimmedName,
-            phone: trimmedPhone || null,
-            countryCode: customerInput.countryCode || '+34',
-          },
-        });
-      } else {
-        // Update phone/countryCode if provided and different
-        if (trimmedPhone && customer.phone !== trimmedPhone) {
-          customer = await tx.customer.update({
-            where: { id: customer.id },
-            data: {
+        // Before creating new customer, check if phone is already assigned to another customer
+        if (trimmedPhone) {
+          const customersWithPhone = await tx.customer.findMany({
+            where: {
               phone: trimmedPhone,
-              countryCode: customerInput.countryCode || customer.countryCode || '+34',
-              updatedAt: new Date(),
             },
           });
+          
+          if (customersWithPhone.length > 0) {
+            // Phone is already assigned to another customer
+            const customerWithPhone = customersWithPhone[0];
+            throw createError(
+              'PHONE_ALREADY_ASSIGNED',
+              `El número de teléfono ${trimmedPhone} ya está asignado al cliente "${customerWithPhone.name}". No se puede crear un pedido con un número de teléfono que ya está en uso por otro cliente.`,
+              409
+            );
+          }
+        }
+        
+        // Create new customer
+        const createData: any = {
+          name: trimmedName,
+          phone: trimmedPhone || null,
+          countryCode: customerInput.countryCode || '+34',
+        };
+        
+        // Track who created the customer
+        if (userId) {
+          createData.createdById = userId;
+          createData.updatedById = userId; // Set updatedById on creation too
+        }
+        
+        customer = await tx.customer.create({
+          data: createData,
+        });
+        
+        // Create audit log for customer creation (from order creation)
+        if (userId) {
+          try {
+            await tx.customerAuditLog.create({
+              data: {
+                customerId: customer.id,
+                userId,
+                action: 'CREATE',
+                metadata: JSON.stringify({
+                  name: customer.name,
+                  phone: customer.phone,
+                  countryCode: customer.countryCode,
+                  createdFrom: 'order_creation',
+                }),
+              },
+            });
+            console.log(`✅ Created audit log for customer ${customer.id} (CREATE from order)`);
+          } catch (auditError: any) {
+            console.error('❌ Error creating customer audit log:', auditError.message);
+            console.error('   Customer ID:', customer.id);
+            console.error('   User ID:', userId);
+            // Don't throw - allow order creation to succeed even if audit log fails
+          }
+        }
+      } else {
+        // Update phone/countryCode if provided and different
+        const fieldChanges: Array<{ field: string; oldValue: string | null; newValue: string | null }> = [];
+        
+        if (trimmedPhone && customer.phone !== trimmedPhone) {
+          fieldChanges.push({
+            field: 'phone',
+            oldValue: customer.phone,
+            newValue: trimmedPhone,
+          });
+        }
+        
+        if (customerInput.countryCode && customer.countryCode !== customerInput.countryCode) {
+          fieldChanges.push({
+            field: 'countryCode',
+            oldValue: customer.countryCode,
+            newValue: customerInput.countryCode,
+          });
+        }
+        
+        if (fieldChanges.length > 0) {
+          const updateData: any = {
+            phone: trimmedPhone || customer.phone,
+            countryCode: customerInput.countryCode || customer.countryCode || '+34',
+            updatedAt: new Date(),
+          };
+          
+          // Track who updated the customer
+          if (userId) {
+            updateData.updatedById = userId;
+          }
+          
+          customer = await tx.customer.update({
+            where: { id: customer.id },
+            data: updateData,
+          });
+          
+          // Create audit logs for each field change (from order creation)
+          if (userId && fieldChanges.length > 0) {
+            for (const change of fieldChanges) {
+              try {
+                await tx.customerAuditLog.create({
+                  data: {
+                    customerId: customer.id,
+                    userId,
+                    action: 'UPDATE',
+                    fieldChanged: change.field,
+                    oldValue: change.oldValue,
+                    newValue: change.newValue,
+                    metadata: JSON.stringify({
+                      updatedFrom: 'order_creation',
+                    }),
+                  },
+                });
+                console.log(`✅ Created audit log for customer ${customer.id} (UPDATE: ${change.field} from order)`);
+              } catch (auditError: any) {
+                console.error('❌ Error creating customer audit log:', auditError.message);
+                console.error('   Customer ID:', customer.id);
+                console.error('   User ID:', userId);
+                console.error('   Field:', change.field);
+                // Don't throw - allow order creation to succeed even if audit log fails
+              }
+            }
+          }
         }
       }
 
@@ -164,29 +296,26 @@ export async function createOrder(userId: string, input: CreateOrderInput) {
       finalCustomerPhone = input.customerPhone.trim();
     }
 
-    // Generate orderNumber (auto-incremental, starting from 1)
-    // Get the maximum orderNumber from existing orders
-    const maxOrder = await tx.order.findFirst({
-      orderBy: { orderNumber: 'desc' },
-      select: { orderNumber: true },
-    });
-    
-    // Calculate next order number (start from 1 if no orders exist)
-    let orderNumber = 1;
-    if (maxOrder?.orderNumber) {
-      orderNumber = maxOrder.orderNumber + 1;
-    }
-    
     // Ensure uniqueness (in case of race condition)
     let attempts = 0;
-    while (await tx.order.findUnique({ where: { orderNumber } }) && attempts < 100) {
-      orderNumber++;
+    let finalOrderNumber = orderNumber;
+    let finalCounter = counter;
+    
+    while (await tx.order.findUnique({ where: { orderNumber: finalOrderNumber } }) && attempts < 100) {
+      finalCounter++;
+      if (prefix) {
+        finalOrderNumber = parseInt(`${prefix}${String(finalCounter).padStart(3, '0')}`, 10);
+      } else {
+        finalOrderNumber = finalCounter;
+      }
       attempts++;
     }
     
     if (attempts >= 100) {
       throw createError('ORDER_NUMBER_GENERATION_FAILED', 'Failed to generate unique order number', 500);
     }
+    
+    orderNumber = finalOrderNumber;
     
     // Create order
     const order = await tx.order.create({
@@ -281,6 +410,33 @@ export async function createOrder(userId: string, input: CreateOrderInput) {
     return order.id;
   });
 
+  // Update counter in config after transaction commits
+  // Get the actual orderNumber that was used
+  const createdOrder = await prisma.order.findUnique({
+    where: { id: orderId },
+    select: { orderNumber: true },
+  });
+  
+  if (createdOrder?.orderNumber) {
+    // Extract counter from orderNumber if prefix exists
+    let finalCounter = counter;
+    if (prefix) {
+      const orderNumberStr = String(createdOrder.orderNumber);
+      if (orderNumberStr.startsWith(prefix)) {
+        const counterPart = orderNumberStr.substring(prefix.length);
+        finalCounter = parseInt(counterPart, 10) || counter;
+      }
+    } else {
+      finalCounter = createdOrder.orderNumber;
+    }
+    
+    // Update counter to the value used
+    await updateConfigValue('orderCounter', String(finalCounter));
+  } else {
+    // Fallback: update with the counter we calculated
+    await updateConfigValue('orderCounter', String(counter));
+  }
+
   // Fetch complete order with relations after transaction commits
   return getOrderById(orderId);
 }
@@ -291,13 +447,12 @@ export async function createOrder(userId: string, input: CreateOrderInput) {
 export async function updateOrderStatus(
   orderId: string,
   userId: string,
-  status: string,
+  status: OrderStatus,
   notificationMethod?: string,
   cancellationReason?: string
 ) {
-  const validStatuses = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO', 'DELIVERED_COUNTER'];
-  
-  if (!validStatuses.includes(status)) {
+  // Extra safety: callers should already validate, but keep a runtime guard.
+  if (!isOrderStatus(status)) {
     throw createError('INVALID_STATUS', 'Invalid order status', 400);
   }
 
@@ -437,6 +592,8 @@ export async function listOrders(options: {
   dateTo?: string;
   updatedDateFrom?: string;
   updatedDateTo?: string;
+  notifiedDateFrom?: string;
+  notifiedDateTo?: string;
   supplierIds?: string;
   customerId?: string;
   createdById?: string;
@@ -453,17 +610,34 @@ export async function listOrders(options: {
   const skip = (page - 1) * limit;
 
   const where: any = {};
+
+  const parseDateParam = (value: string, endOfDay: boolean): Date => {
+    // If value is a date-only string (YYYY-MM-DD), parse it as local time to avoid timezone shifts.
+    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+    if (isDateOnly) {
+      const [y, m, d] = value.split('-').map((n) => parseInt(n, 10));
+      const date = new Date(y, m - 1, d, 0, 0, 0, 0);
+      if (endOfDay) {
+        date.setHours(23, 59, 59, 999);
+      }
+      return date;
+    }
+    // Otherwise assume a full date-time string (ISO or Date.parse compatible)
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      throw createError('INVALID_DATE', `Invalid date: ${value}`, 400);
+    }
+    return date;
+  };
   
   // Created date filters
   if (options.dateFrom || options.dateTo) {
     where.createdAt = {};
     if (options.dateFrom) {
-      where.createdAt.gte = new Date(options.dateFrom);
+      where.createdAt.gte = parseDateParam(options.dateFrom, false);
     }
     if (options.dateTo) {
-      const endDate = new Date(options.dateTo);
-      endDate.setHours(23, 59, 59, 999);
-      where.createdAt.lte = endDate;
+      where.createdAt.lte = parseDateParam(options.dateTo, true);
     }
   }
 
@@ -471,12 +645,21 @@ export async function listOrders(options: {
   if (options.updatedDateFrom || options.updatedDateTo) {
     where.updatedAt = {};
     if (options.updatedDateFrom) {
-      where.updatedAt.gte = new Date(options.updatedDateFrom);
+      where.updatedAt.gte = parseDateParam(options.updatedDateFrom, false);
     }
     if (options.updatedDateTo) {
-      const endDate = new Date(options.updatedDateTo);
-      endDate.setHours(23, 59, 59, 999);
-      where.updatedAt.lte = endDate;
+      where.updatedAt.lte = parseDateParam(options.updatedDateTo, true);
+    }
+  }
+
+  // Notified date filters (based on notifiedAt timestamp)
+  if (options.notifiedDateFrom || options.notifiedDateTo) {
+    where.notifiedAt = {};
+    if (options.notifiedDateFrom) {
+      where.notifiedAt.gte = parseDateParam(options.notifiedDateFrom, false);
+    }
+    if (options.notifiedDateTo) {
+      where.notifiedAt.lte = parseDateParam(options.notifiedDateTo, true);
     }
   }
 
@@ -788,25 +971,130 @@ export async function updateOrder(orderId: string, userId: string, input: Update
       }
 
       if (!customer) {
-        // Create new customer
-        customer = await tx.customer.create({
-          data: {
-            name: trimmedName,
-            phone: trimmedPhone || null,
-            countryCode: input.countryCode || '+34',
-          },
-        });
-      } else {
-        // Update phone/countryCode if provided and different
-        if (trimmedPhone && customer.phone !== trimmedPhone) {
-          customer = await tx.customer.update({
-            where: { id: customer.id },
-            data: {
+        // Before creating new customer, check if phone is already assigned to another customer
+        if (trimmedPhone) {
+          const customersWithPhone = await tx.customer.findMany({
+            where: {
               phone: trimmedPhone,
-              countryCode: input.countryCode || customer.countryCode || '+34',
-              updatedAt: new Date(),
             },
           });
+          
+          if (customersWithPhone.length > 0) {
+            // Phone is already assigned to another customer
+            const customerWithPhone = customersWithPhone[0];
+            throw createError(
+              'PHONE_ALREADY_ASSIGNED',
+              `El número de teléfono ${trimmedPhone} ya está asignado al cliente "${customerWithPhone.name}". No se puede actualizar el pedido con un número de teléfono que ya está en uso por otro cliente.`,
+              409
+            );
+          }
+        }
+        
+        // Create new customer
+        const createData: any = {
+          name: trimmedName,
+          phone: trimmedPhone || null,
+          countryCode: input.countryCode || '+34',
+        };
+        
+        // Track who created the customer
+        if (userId) {
+          createData.createdById = userId;
+          createData.updatedById = userId; // Set updatedById on creation too
+        }
+        
+        customer = await tx.customer.create({
+          data: createData,
+        });
+        
+        // Create audit log for customer creation (from order update)
+        if (userId) {
+          try {
+            await tx.customerAuditLog.create({
+              data: {
+                customerId: customer.id,
+                userId,
+                action: 'CREATE',
+                metadata: JSON.stringify({
+                  name: customer.name,
+                  phone: customer.phone,
+                  countryCode: customer.countryCode,
+                  createdFrom: 'order_update',
+                }),
+              },
+            });
+            console.log(`✅ Created audit log for customer ${customer.id} (CREATE from order update)`);
+          } catch (auditError: any) {
+            console.error('❌ Error creating customer audit log:', auditError.message);
+            console.error('   Customer ID:', customer.id);
+            console.error('   User ID:', userId);
+            // Don't throw - allow order update to succeed even if audit log fails
+          }
+        }
+      } else {
+        // Update phone/countryCode if provided and different
+        const fieldChanges: Array<{ field: string; oldValue: string | null; newValue: string | null }> = [];
+        
+        if (trimmedPhone && customer.phone !== trimmedPhone) {
+          fieldChanges.push({
+            field: 'phone',
+            oldValue: customer.phone,
+            newValue: trimmedPhone,
+          });
+        }
+        
+        if (input.countryCode && customer.countryCode !== input.countryCode) {
+          fieldChanges.push({
+            field: 'countryCode',
+            oldValue: customer.countryCode,
+            newValue: input.countryCode,
+          });
+        }
+        
+        if (fieldChanges.length > 0) {
+          const updateData: any = {
+            phone: trimmedPhone || customer.phone,
+            countryCode: input.countryCode || customer.countryCode || '+34',
+            updatedAt: new Date(),
+          };
+          
+          // Track who updated the customer
+          if (userId) {
+            updateData.updatedById = userId;
+          }
+          
+          customer = await tx.customer.update({
+            where: { id: customer.id },
+            data: updateData,
+          });
+          
+          // Create audit logs for each field change (from order update)
+          if (userId && fieldChanges.length > 0) {
+            for (const change of fieldChanges) {
+              try {
+                await tx.customerAuditLog.create({
+                  data: {
+                    customerId: customer.id,
+                    userId,
+                    action: 'UPDATE',
+                    fieldChanged: change.field,
+                    oldValue: change.oldValue,
+                    newValue: change.newValue,
+                    metadata: JSON.stringify({
+                      updatedFrom: 'order_update',
+                    }),
+                  },
+                });
+                console.log(`✅ Created audit log for customer ${customer.id} (UPDATE: ${change.field} from order update)`);
+              } catch (auditError: any) {
+                console.error('❌ Error creating customer audit log:', auditError.message);
+                console.error('   Customer ID:', customer.id);
+                console.error('   User ID:', userId);
+                console.error('   Field:', change.field);
+                // Don't throw - allow order update to succeed even if audit log fails
+              }
+            }
+          }
         }
       }
 
@@ -1166,8 +1454,67 @@ export async function updateOrder(orderId: string, userId: string, input: Update
         data: orderProducts,
       });
     }
+
+    // Recalculate order status based on received quantities
+    const orderWithProducts = await tx.order.findUnique({
+      where: { id: orderId },
+      include: {
+        products: true,
+      },
+    });
+
+    if (orderWithProducts) {
+      const newStatus = calculateOrderStatus(orderWithProducts.products);
+      
+      // Update order status if it changed
+      if (newStatus !== orderWithProducts.status) {
+        await tx.order.update({
+          where: { id: orderId },
+          data: {
+            status: newStatus,
+          },
+        });
+
+        // Create audit log for automatic status change
+        await tx.auditLog.create({
+          data: {
+            orderId,
+            userId,
+            action: 'STATUS_CHANGE',
+            fieldChanged: 'status',
+            oldValue: orderWithProducts.status,
+            newValue: newStatus,
+            metadata: JSON.stringify({
+              automatic: true,
+              reason: 'Order products updated - status recalculated based on received quantities',
+            }),
+          },
+        });
+      }
+    }
   });
 
   // Return updated order
   return getOrderById(orderId);
+}
+
+/**
+ * Delete order
+ * Only SUPER_ADMIN can delete orders
+ */
+export async function deleteOrder(orderId: string, userId?: string) {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+  });
+
+  if (!order) {
+    throw createError('ORDER_NOT_FOUND', 'Order not found', 404);
+  }
+
+  // Delete order (cascade will handle related records)
+  await prisma.order.delete({
+    where: { id: orderId },
+  });
+
+  return { success: true };
 }

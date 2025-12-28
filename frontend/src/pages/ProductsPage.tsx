@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Edit2, Trash2, Package, Loader2, Search, X, Filter, Copy, ArrowUp, ArrowDown, ChevronUp } from 'lucide-react';
+import { Plus, Edit2, Trash2, Package, Loader2, Search, X, Filter, Copy, ArrowUp, ArrowDown, ChevronUp, Download } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { useContextMenu } from '../hooks/useContextMenu';
 import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
+import { exportToExcel } from '../utils/excelExport';
+import { useAuthStore } from '../store/authStore';
 import '../styles/products.css';
 
 interface Supplier {
@@ -56,6 +58,8 @@ export default function ProductsPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'SUPER_ADMIN';
 
   useEffect(() => {
     checkUserRole();
@@ -227,6 +231,34 @@ export default function ProductsPage() {
     }
   };
 
+  const handleExportProducts = () => {
+    if (!isAdmin) {
+      toast.error(t('common.unauthorized'));
+      return;
+    }
+
+    try {
+      if (products.length === 0) {
+        toast.error(t('products.noProductsToExport'));
+        return;
+      }
+
+      const exportData = products.map((product) => ({
+        [t('products.reference')]: product.reference,
+        [t('products.supplier')]: product.supplier?.name || '-',
+        [t('products.description')]: product.description || '-',
+        [t('products.defaultPrice')]: product.defaultPrice ? `${product.defaultPrice} €` : '-',
+      }));
+
+      const timestamp = new Date().toISOString().split('T')[0];
+      exportToExcel(exportData, `productos_${timestamp}`, t('products.productsList'));
+      toast.success(t('products.productsExported'));
+    } catch (error: any) {
+      console.error('Failed to export products:', error);
+      toast.error(t('products.exportFailed'));
+    }
+  };
+
   const filteredProducts = products.filter((product) => {
     if (!searchQuery.trim()) return true;
     const query = searchQuery.toLowerCase();
@@ -319,17 +351,29 @@ export default function ProductsPage() {
 
   return (
     <div className="page-container">
-      <div className="page-header">
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1>{t('products.title')}</h1>
           <p className="page-subtitle">{t('products.manageProducts')}</p>
         </div>
-        {isSuperAdmin && (
-          <button className="btn-primary" onClick={handleCreate}>
-            <Plus size={20} />
-            {t('products.createProduct')}
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {isAdmin && (
+            <button
+              className="btn-secondary"
+              onClick={handleExportProducts}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <Download size={18} />
+              {t('products.exportToExcel')}
+            </button>
+          )}
+          {isSuperAdmin && (
+            <button className="btn-primary" onClick={handleCreate}>
+              <Plus size={20} />
+              {t('products.createProduct')}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="products-toolbar">

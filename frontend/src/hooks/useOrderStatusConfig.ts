@@ -18,12 +18,12 @@ const defaultConfig: OrderStatusesConfig = {
   PENDING: {
     color: '#f59e0b',
     backgroundColor: '#fef3c7',
-    text: 'Pendiente',
+    text: 'Pendiente de Recibir',
   },
   RECEIVED: {
     color: '#16a34a',
     backgroundColor: '#dcfce7',
-    text: 'Recibido',
+    text: 'Pendiente de avisar',
   },
   NOTIFIED_CALL: {
     color: '#16a34a',
@@ -50,10 +50,16 @@ const defaultConfig: OrderStatusesConfig = {
     backgroundColor: '#dcfce7',
     text: 'Entregado en Mostrador',
   },
+  READY_TO_SEND: {
+    color: '#3b82f6',
+    backgroundColor: '#dbeafe',
+    text: 'Preparado para enviar',
+  },
 };
 
 let cachedConfig: OrderStatusesConfig | null = null;
 let configPromise: Promise<OrderStatusesConfig> | null = null;
+let cacheVersion = 0; // Version counter to force reloads
 
 /**
  * Hook to get order status configuration
@@ -62,8 +68,10 @@ let configPromise: Promise<OrderStatusesConfig> | null = null;
 export function useOrderStatusConfig() {
   const [config, setConfig] = useState<OrderStatusesConfig>(defaultConfig);
   const [loading, setLoading] = useState(true);
+  const [version, setVersion] = useState(cacheVersion);
 
   useEffect(() => {
+    const loadConfig = () => {
     // If we have cached config, use it immediately
     if (cachedConfig) {
       setConfig(cachedConfig);
@@ -101,8 +109,28 @@ export function useOrderStatusConfig() {
     configPromise.then((loadedConfig) => {
       setConfig(loadedConfig);
       setLoading(false);
-    });
-  }, []);
+        configPromise = null; // Clear promise after use
+      });
+    };
+
+    loadConfig();
+  }, [version]); // Re-run when version changes
+
+  // Listen for cache clear events
+  useEffect(() => {
+    const handleCacheClear = () => {
+      setVersion(cacheVersion);
+    };
+
+    // Check version periodically (every 2 seconds) to detect cache clears
+    const interval = setInterval(() => {
+      if (cacheVersion !== version) {
+        setVersion(cacheVersion);
+      }
+    }, 2000);
+
+    return () => clearInterval(interval);
+  }, [version]);
 
   return { config, loading };
 }
@@ -124,5 +152,6 @@ export function getStatusConfig(status: string, config: OrderStatusesConfig): Or
 export function clearStatusConfigCache() {
   cachedConfig = null;
   configPromise = null;
+  cacheVersion++; // Increment version to trigger reloads
 }
 

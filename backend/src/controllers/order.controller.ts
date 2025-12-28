@@ -1,8 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
 import { createOrderSchema, updateOrderSchema, CreateOrderInput, UpdateOrderInput } from '../validators/order.validator';
-import { createOrder, getOrderById, listOrders, updateOrderStatus, updateOrder } from '../services/order.service';
+import { createOrder, getOrderById, listOrders, updateOrderStatus, updateOrder, deleteOrder } from '../services/order.service';
 import { createSuccessResponse } from '../utils/response.util';
+import { authorize } from '../middleware/auth.middleware';
+import { getConfigValue } from '../services/config.service';
 import { z } from 'zod';
+import { ORDER_STATUS_VALUES } from '../constants/order-status';
 
 /**
  * GET /api/v1/orders
@@ -18,9 +21,11 @@ export async function listOrdersController(req: Request, res: Response, next: Ne
     const dateTo = req.query.dateTo as string;
     const updatedDateFrom = req.query.updatedDateFrom as string;
     const updatedDateTo = req.query.updatedDateTo as string;
+    const notifiedDateFrom = req.query.notifiedDateFrom as string;
+    const notifiedDateTo = req.query.notifiedDateTo as string;
     const supplierIds = req.query.supplierIds as string;
     const customerId = req.query.customerId as string;
-    const createdById = req.query.createdById as string;
+    let createdById = req.query.createdById as string;
     const minAmount = req.query.minAmount as string;
     const maxAmount = req.query.maxAmount as string;
     const minOrderNumber = req.query.minOrderNumber as string;
@@ -28,6 +33,22 @@ export async function listOrdersController(req: Request, res: Response, next: Ne
     const hasObservations = req.query.hasObservations as string;
     const sortBy = req.query.sortBy as string;
     const sortOrder = (req.query.sortOrder as 'asc' | 'desc') || 'desc';
+
+    // If user is not SUPER_ADMIN, check if they should only see their own orders
+    if (req.user && req.user.role !== 'SUPER_ADMIN') {
+      try {
+        const config = await getConfigValue('users_see_only_own_orders');
+        const usersSeeOnlyOwnOrders = config?.value === 'true';
+        
+        // If the setting is enabled, force filter by current user's ID
+        if (usersSeeOnlyOwnOrders) {
+          createdById = req.user.userId;
+        }
+      } catch (error) {
+        // If config doesn't exist or error, default to showing all orders (backward compatibility)
+        console.warn('Failed to check users_see_only_own_orders config:', error);
+      }
+    }
 
     const result = await listOrders({
       page,
@@ -38,6 +59,8 @@ export async function listOrdersController(req: Request, res: Response, next: Ne
       dateTo,
       updatedDateFrom,
       updatedDateTo,
+      notifiedDateFrom,
+      notifiedDateTo,
       supplierIds,
       customerId,
       createdById,
@@ -121,7 +144,7 @@ export async function updateOrderStatusController(req: Request, res: Response, n
     
     // Validate input
     const statusSchema = z.object({
-      status: z.enum(['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'DELIVERED_COUNTER']),
+      status: z.enum(ORDER_STATUS_VALUES),
       notificationMethod: z.enum(['CALL', 'WHATSAPP']).optional(),
       cancellationReason: z.string().min(1, 'Cancellation reason is required').optional(),
     });
@@ -163,6 +186,44 @@ export async function updateOrderController(req: Request, res: Response, next: N
     const order = await updateOrder(id, req.user.userId, validatedData);
 
     res.status(200).json(createSuccessResponse(order, 'Order updated successfully'));
+  } catch (error) {
+    next(error);
+  }
+}
+
+/**
+ * DELETE /api/v1/orders/:id
+ * Delete order - Only SUPER_ADMIN
+ */
+export async function deleteOrderController(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+      });
+      return;
+    }
+
+    // Only SUPER_ADMIN can delete orders
+    if (req.user.role !== 'SUPER_ADMIN') {
+      res.status(403).json({
+        success: false,
+        error: {
+          code: 'FORBIDDEN',
+          message: 'Only SUPER_ADMIN can delete orders',
+        },
+      });
+      return;
+    }
+
+    const { id } = req.params;
+    const userId = req.user?.userId;
+    await deleteOrder(id, userId);
+    res.status(200).json(createSuccessResponse(null, 'Order deleted successfully'));
   } catch (error) {
     next(error);
   }

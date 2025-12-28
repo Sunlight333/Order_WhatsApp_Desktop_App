@@ -1,11 +1,13 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Plus, Edit2, Trash2, Package, Loader2, Search, X, Copy, ArrowUp, ArrowDown, ChevronUp } from 'lucide-react';
+import { Plus, Edit2, Trash2, Package, Loader2, Search, X, Copy, ArrowUp, ArrowDown, ChevronUp, Download } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { useContextMenu } from '../hooks/useContextMenu';
 import ContextMenu, { ContextMenuItem } from '../components/ContextMenu';
+import { exportToExcel } from '../utils/excelExport';
+import { useAuthStore } from '../store/authStore';
 import '../styles/suppliers.css';
 
 interface Supplier {
@@ -24,7 +26,7 @@ interface SupplierFormData {
 }
 
 export default function SuppliersPage() {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
@@ -43,6 +45,8 @@ export default function SuppliersPage() {
   const [deleteLoading, setDeleteLoading] = useState(false);
   const [currentUser, setCurrentUser] = useState<any>(null);
   const { contextMenu, showContextMenu, hideContextMenu } = useContextMenu();
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'SUPER_ADMIN';
 
   useEffect(() => {
     checkUserRole();
@@ -188,6 +192,37 @@ export default function SuppliersPage() {
     }
   };
 
+  const handleExportSuppliers = () => {
+    if (!isAdmin) {
+      toast.error(t('common.unauthorized'));
+      return;
+    }
+
+    try {
+      if (suppliers.length === 0) {
+        toast.error(t('suppliers.noSuppliersToExport'));
+        return;
+      }
+
+      const locale = i18n.language === 'es' ? 'es-ES' : 'en-US';
+      const exportData = suppliers.map((supplier) => ({
+        [t('suppliers.name')]: supplier.name,
+        [t('suppliers.description')]: supplier.description || '-',
+        [t('suppliers.productsCount')]: supplier.productsCount || 0,
+        [t('suppliers.ordersCount')]: supplier.ordersCount || 0,
+        [t('suppliers.createdAt')]: new Date(supplier.createdAt).toLocaleString(locale),
+        [t('suppliers.updatedAt')]: new Date(supplier.updatedAt).toLocaleString(locale),
+      }));
+
+      const timestamp = new Date().toISOString().split('T')[0];
+      exportToExcel(exportData, `proveedores_${timestamp}`, t('suppliers.suppliersList'));
+      toast.success(t('suppliers.suppliersExported'));
+    } catch (error: any) {
+      console.error('Failed to export suppliers:', error);
+      toast.error(t('suppliers.exportFailed'));
+    }
+  };
+
   const filteredSuppliers = suppliers.filter((supplier) => {
     if (!searchQuery.trim()) return true;
     const query = searchQuery.toLowerCase();
@@ -262,7 +297,6 @@ export default function SuppliersPage() {
           setShowDeleteModal(true);
         },
         danger: true,
-        disabled: supplier.ordersCount > 0,
       });
     }
 
@@ -282,17 +316,29 @@ export default function SuppliersPage() {
 
   return (
     <div className="page-container">
-      <div className="page-header">
+      <div className="page-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div>
           <h1>{t('suppliers.title')}</h1>
           <p className="page-subtitle">{t('suppliers.manageSuppliers')}</p>
         </div>
-        {isSuperAdmin && (
-          <button className="btn-primary" onClick={handleCreate}>
-            <Plus size={20} />
-            {t('suppliers.createSupplier')}
-          </button>
-        )}
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {isAdmin && (
+            <button
+              className="btn-secondary"
+              onClick={handleExportSuppliers}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+            >
+              <Download size={18} />
+              {t('suppliers.exportToExcel')}
+            </button>
+          )}
+          {isSuperAdmin && (
+            <button className="btn-primary" onClick={handleCreate}>
+              <Plus size={20} />
+              {t('suppliers.createSupplier')}
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="suppliers-toolbar">
@@ -413,7 +459,6 @@ export default function SuppliersPage() {
                           className="btn-icon btn-delete"
                           onClick={() => handleDelete(supplier)}
                           title={t('suppliers.deleteSupplier')}
-                          disabled={supplier.ordersCount > 0}
                         >
                           <Trash2 size={16} />
                         </button>

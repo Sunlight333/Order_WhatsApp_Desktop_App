@@ -116,7 +116,8 @@ export async function deleteSupplierController(req: Request, res: Response): Pro
     }
 
     const { id } = req.params;
-    await deleteSupplier(id);
+    const userRole = req.user?.role;
+    await deleteSupplier(id, userRole);
 
     res.status(200).json(createSuccessResponse(null, 'Supplier deleted successfully'));
   } catch (error) {

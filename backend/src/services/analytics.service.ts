@@ -191,10 +191,11 @@ export async function getOrderStatistics(): Promise<OrderStatistics> {
     }),
     prisma.$queryRaw<Array<{ month: string; count: bigint }>>`
       SELECT 
-        strftime('%Y-%m', createdAt) as month,
+        strftime('%Y-%m', datetime(createdAt / 1000, 'unixepoch')) as month,
         COUNT(*) as count
       FROM orders
-      WHERE createdAt >= datetime('now', '-12 months')
+      WHERE createdAt IS NOT NULL
+        AND createdAt >= (strftime('%s', datetime('now', '-12 months')) * 1000)
       GROUP BY month
       ORDER BY month DESC
     `,
@@ -369,5 +370,113 @@ export async function getSupplierMonthlyData(
   }).filter((data) => data.monthlyData.length > 0); // Only include suppliers with data
 
   return result;
+}
+
+/**
+ * Get orders count by month
+ * Returns statistics of orders grouped by month
+ */
+export interface OrdersByMonth {
+  month: string; // "YYYY-MM"
+  count: number;
+  year: number;
+  monthNumber: number;
+  monthName: string; // Localized month name
+}
+
+export async function getOrdersByMonth(
+  months?: number // Number of months to include (default: all months with orders)
+): Promise<OrdersByMonth[]> {
+  let result: Array<{ month: string | null; count: bigint }>;
+
+  if (months && months > 0) {
+    // Get last N months - use SQLite datetime function with validated parameter
+    // Validate and sanitize months value
+    const monthsValue = Math.max(1, Math.min(Math.floor(months), 120)); // Limit to 1-120 months for safety
+    
+    // Use $queryRawUnsafe with validated parameter (safe because monthsValue is a number, not user input)
+    const query = `
+      SELECT 
+        strftime('%Y-%m', datetime(createdAt / 1000, 'unixepoch')) as month,
+        COUNT(*) as count
+      FROM orders
+      WHERE createdAt IS NOT NULL
+        AND createdAt >= (strftime('%s', datetime('now', '-' || ${monthsValue} || ' months')) * 1000)
+      GROUP BY month
+      ORDER BY month DESC
+    `;
+    
+    try {
+      result = await prisma.$queryRawUnsafe<Array<{ month: string | null; count: bigint }>>(query);
+    } catch (error) {
+      console.error('Error executing orders-by-month query:', error);
+      throw error;
+    }
+  } else {
+    // Get all months with orders
+    try {
+      result = await prisma.$queryRaw<Array<{ month: string | null; count: bigint }>>`
+        SELECT 
+          strftime('%Y-%m', datetime(createdAt / 1000, 'unixepoch')) as month,
+          COUNT(*) as count
+        FROM orders
+        WHERE createdAt IS NOT NULL
+        GROUP BY month
+        ORDER BY month DESC
+      `;
+    } catch (error) {
+      console.error('Error executing orders-by-month query (all months):', error);
+      throw error;
+    }
+  }
+
+  // Format the result with year, month number, and localized month name
+  // Filter out null values and format the data
+  if (!result || result.length === 0) {
+    return [];
+  }
+
+  return result
+    .filter(
+      (item): item is { month: string; count: bigint } =>
+        !!item &&
+        item.month !== null &&
+        typeof item.month === 'string' &&
+        item.month.includes('-')
+    )
+    .map((item) => {
+      try {
+        const [year, month] = item.month.split('-');
+        
+        // Validate year and month are valid numbers
+        const yearNum = parseInt(year, 10);
+        const monthNum = parseInt(month, 10);
+        
+        if (isNaN(yearNum) || isNaN(monthNum) || monthNum < 1 || monthNum > 12) {
+          console.warn(`Invalid month format: ${item.month}`);
+          return null;
+        }
+        
+        const date = new Date(yearNum, monthNum - 1);
+        
+        // Validate date is valid
+        if (isNaN(date.getTime())) {
+          console.warn(`Invalid date created from: ${item.month}`);
+          return null;
+        }
+        
+        return {
+          month: item.month,
+          count: Number(item.count),
+          year: yearNum,
+          monthNumber: monthNum,
+          monthName: date.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' }),
+        };
+      } catch (error) {
+        console.error(`Error processing month data: ${item.month}`, error);
+        return null;
+      }
+    })
+    .filter((item) => item !== null) as OrdersByMonth[];
 }
 

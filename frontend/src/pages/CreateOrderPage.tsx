@@ -4,6 +4,7 @@ import { useTranslation } from 'react-i18next';
 import { Plus, X, Save, Loader2, ArrowLeft } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
+import AutocompleteInput from '../components/AutocompleteInput';
 import '../styles/create-order.css';
 
 interface Supplier {
@@ -141,6 +142,26 @@ export default function CreateOrderPage() {
     if (matchingCustomer) {
       setCustomerId(matchingCustomer.id);
       setCustomerPhone(matchingCustomer.phone || '');
+    }
+  };
+
+  const handleCustomerPhoneChange = (value: string) => {
+    setCustomerPhone(value);
+    
+    // If phone is entered and we have customers loaded, try to find matching customer
+    if (value.trim() && customersList.length > 0) {
+      // Normalize phone numbers (remove spaces, dashes, etc.) for comparison
+      const normalizePhone = (phone: string) => phone.replace(/[\s\-\(\)]/g, '');
+      const normalizedInput = normalizePhone(value.trim());
+      
+      const matchingCustomer = customersList.find(
+        (c) => c.phone && normalizePhone(c.phone.trim()) === normalizedInput
+      );
+      
+      if (matchingCustomer) {
+        setCustomerName(matchingCustomer.name);
+        setCustomerId(matchingCustomer.id);
+      }
     }
   };
 
@@ -352,20 +373,15 @@ export default function CreateOrderPage() {
           <div className="form-grid">
             <div className="form-group">
               <label htmlFor="customerName">{t('createOrder.customerNameOptional')}</label>
-              <input
+              <AutocompleteInput
                 id="customerName"
-                type="text"
-                list="customer-hints"
                 value={customerName}
-                onChange={(e) => handleCustomerNameChange(e.target.value)}
+                onChange={(next) => handleCustomerNameChange(next)}
+                items={customersList.map((c) => ({ key: c.id, value: c.name, meta: c }))}
+                onSelect={(item) => handleCustomerNameChange(item.value)}
                 placeholder={t('createOrder.enterCustomerName')}
-                className="form-input"
+                inputClassName="form-input"
               />
-              <datalist id="customer-hints">
-                {customersList.map((customer) => (
-                  <option key={customer.id} value={customer.name} />
-                ))}
-              </datalist>
             </div>
             <div className="form-group">
               <label htmlFor="customerPhone">
@@ -383,15 +399,24 @@ export default function CreateOrderPage() {
                 }}>
                   +34
                 </span>
-                <input
-                  id="customerPhone"
-                  type="tel"
-                  value={customerPhone}
-                  onChange={(e) => setCustomerPhone(e.target.value)}
-                  placeholder={t('createOrder.enterCustomerPhone')}
-                  className="form-input"
-                  style={{ flex: 1 }}
-                />
+                <div style={{ flex: 1, position: 'relative' }}>
+                  <AutocompleteInput
+                    id="customerPhone"
+                    value={customerPhone}
+                    onChange={(next) => handleCustomerPhoneChange(next)}
+                    items={customersList
+                      .filter((c) => c.phone && c.phone.trim())
+                      .map((c) => ({ key: c.id, value: c.phone || '', meta: c }))}
+                    onSelect={(item) => {
+                      if (item.meta) {
+                        handleCustomerPhoneChange(item.value);
+                      }
+                    }}
+                    placeholder={t('createOrder.enterCustomerPhone')}
+                    inputClassName="form-input"
+                    maxItems={10}
+                  />
+                </div>
               </div>
             </div>
           </div>
@@ -451,20 +476,15 @@ export default function CreateOrderPage() {
                   <label>
                     {t('createOrder.supplierName')} <span className="required">*</span>
                   </label>
-                  <input
-                    type="text"
-                    list={`supplier-hints-${supplier.id}`}
+                  <AutocompleteInput
                     value={supplier.name}
-                    onChange={(e) => updateSupplierName(supplier.id, e.target.value)}
+                    onChange={(next) => updateSupplierName(supplier.id, next)}
+                    items={getSupplierHints(supplier.name).map((s) => ({ key: s.id, value: s.name }))}
+                    onSelect={(item) => updateSupplierName(supplier.id, item.value)}
                     placeholder={t('createOrder.enterSupplierName')}
-                    className="form-input"
+                    inputClassName="form-input"
                     required
                   />
-                  <datalist id={`supplier-hints-${supplier.id}`}>
-                    {getSupplierHints(supplier.name).map((s) => (
-                      <option key={s.id} value={s.name} />
-                    ))}
-                  </datalist>
                 </div>
               </div>
 
@@ -495,6 +515,10 @@ export default function CreateOrderPage() {
                         }
                         placeholder={t('createOrder.enterProductRef')}
                         className="form-input"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
                         required
                       />
                     </div>

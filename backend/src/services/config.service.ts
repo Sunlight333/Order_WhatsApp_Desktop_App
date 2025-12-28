@@ -1,4 +1,5 @@
 import { getPrismaClient } from '../config/database';
+import { createError } from '../utils/error.util';
 
 const prisma = getPrismaClient();
 
@@ -7,6 +8,7 @@ const prisma = getPrismaClient();
  */
 const DEFAULT_CONFIGS: Record<string, string> = {
   whatsapp_default_message: 'Hola, tu pedido está listo para recoger.',
+  users_see_only_own_orders: 'false', // Default: users can see all orders
 };
 
 /**
@@ -70,7 +72,8 @@ const DEFAULT_ORDER_STATUSES: OrderStatusesConfig = {
     fontFamily: 'inherit',
     fontSize: 'inherit',
     fontWeight: 'normal',
-    text: 'Pendiente',
+    // Creating an order sets status = PENDING (meaning: pending to receive merchandise)
+    text: 'Pendiente de Recibir',
   },
   RECEIVED: {
     color: '#16a34a',
@@ -78,7 +81,7 @@ const DEFAULT_ORDER_STATUSES: OrderStatusesConfig = {
     fontFamily: 'inherit',
     fontSize: 'inherit',
     fontWeight: 'normal',
-    text: 'Recibido',
+    text: 'Pendiente de avisar',
   },
   NOTIFIED_CALL: {
     color: '#16a34a',
@@ -120,6 +123,14 @@ const DEFAULT_ORDER_STATUSES: OrderStatusesConfig = {
     fontWeight: 'normal',
     text: 'Entregado en Mostrador',
   },
+  READY_TO_SEND: {
+    color: '#3b82f6',
+    backgroundColor: '#dbeafe',
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+    fontWeight: 'normal',
+    text: 'Preparado para enviar',
+  },
 };
 
 /**
@@ -137,7 +148,32 @@ export async function getOrderStatusConfig(): Promise<OrderStatusesConfig> {
   try {
     const parsed = JSON.parse(config.value) as OrderStatusesConfig;
     // Merge with defaults to ensure all statuses are present
-    return { ...DEFAULT_ORDER_STATUSES, ...parsed };
+    const merged = { ...DEFAULT_ORDER_STATUSES, ...parsed };
+
+    // Backward-compat: older installs may have PENDING mislabeled (e.g. "Pendiente", "Pendiente de avisar",
+    // different casing, or extra spaces). Since order creation always uses status=PENDING, its label must mean
+    // "pending receipt".
+    const pendingText = String(merged?.PENDING?.text ?? '').trim();
+    const pendingTextLower = pendingText.toLowerCase();
+    const shouldUpgradePending =
+      pendingTextLower === 'pendiente' ||
+      pendingTextLower === 'pendiente de avisar' ||
+      pendingTextLower.includes('avisar') ||
+      pendingTextLower.includes('notificar');
+
+    if (pendingText && shouldUpgradePending && pendingText !== DEFAULT_ORDER_STATUSES.PENDING.text) {
+      merged.PENDING = { ...merged.PENDING, text: DEFAULT_ORDER_STATUSES.PENDING.text };
+      await updateConfigValue('order_statuses_config', JSON.stringify(merged));
+    }
+
+    // Auto-upgrade: Ensure READY_TO_SEND status exists in stored config
+    // This handles cases where the config was created before READY_TO_SEND was added
+    if (!merged.READY_TO_SEND || merged.READY_TO_SEND.text !== DEFAULT_ORDER_STATUSES.READY_TO_SEND.text) {
+      merged.READY_TO_SEND = DEFAULT_ORDER_STATUSES.READY_TO_SEND;
+      await updateConfigValue('order_statuses_config', JSON.stringify(merged));
+    }
+
+    return merged;
   } catch (error) {
     console.error('Failed to parse order status config:', error);
     return DEFAULT_ORDER_STATUSES;
@@ -149,7 +185,7 @@ export async function getOrderStatusConfig(): Promise<OrderStatusesConfig> {
  */
 export async function updateOrderStatusConfig(config: OrderStatusesConfig): Promise<OrderStatusesConfig> {
   // Validate that all required statuses are present
-  const validStatuses = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO', 'DELIVERED_COUNTER'];
+  const validStatuses = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO', 'DELIVERED_COUNTER', 'READY_TO_SEND'];
   const mergedConfig: OrderStatusesConfig = { ...DEFAULT_ORDER_STATUSES };
 
   // Only update statuses that are valid
@@ -164,4 +200,38 @@ export async function updateOrderStatusConfig(config: OrderStatusesConfig): Prom
 
   await updateConfigValue('order_statuses_config', JSON.stringify(mergedConfig));
   return mergedConfig;
+}
+
+/**
+ * Get order counter configuration
+ */
+export async function getOrderCounterConfig() {
+  const counterConfig = await getConfigValue('orderCounter');
+  const prefixConfig = await getConfigValue('orderPrefix');
+  
+  return {
+    counter: counterConfig?.value ? parseInt(counterConfig.value, 10) || 0 : 0,
+    prefix: prefixConfig?.value || '',
+  };
+}
+
+/**
+ * Reset order counter to 0
+ */
+export async function resetOrderCounter() {
+  await updateConfigValue('orderCounter', '0');
+  return { counter: 0 };
+}
+
+/**
+ * Set order prefix
+ */
+export async function setOrderPrefix(prefix: string) {
+  // Validate prefix: should be numeric and not empty
+  if (prefix && !/^\d+$/.test(prefix)) {
+    throw createError('INVALID_PREFIX', 'Order prefix must be numeric', 400);
+  }
+  
+  await updateConfigValue('orderPrefix', prefix || '');
+  return { prefix: prefix || '' };
 }

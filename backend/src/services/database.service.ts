@@ -71,8 +71,12 @@ async function createDatabaseSchema(prismaClient: PrismaClient, dbType: string =
       "phone" TEXT,
       "countryCode" TEXT DEFAULT '+34',
       "description" TEXT,
+      "createdById" TEXT,
+      "updatedById" TEXT,
       "createdAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP
+      "updatedAt" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY ("createdById") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE,
+      FOREIGN KEY ("updatedById") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE
     );
 
     -- Create orders table
@@ -151,6 +155,27 @@ async function createDatabaseSchema(prismaClient: PrismaClient, dbType: string =
     CREATE INDEX IF NOT EXISTS "auditLogs_userId_idx" ON "auditLogs"("userId");
     CREATE INDEX IF NOT EXISTS "auditLogs_timestamp_idx" ON "auditLogs"("timestamp");
 
+    -- Create customerAuditLogs table
+    -- customerId is nullable to preserve history even if customer is deleted
+    CREATE TABLE IF NOT EXISTS "customerAuditLogs" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "customerId" TEXT,
+      "userId" TEXT NOT NULL,
+      "action" TEXT NOT NULL,
+      "fieldChanged" TEXT,
+      "oldValue" TEXT,
+      "newValue" TEXT,
+      "timestamp" ${datetimeType} NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      "metadata" TEXT,
+      FOREIGN KEY ("customerId") REFERENCES "customers"("id") ON DELETE SET NULL ON UPDATE CASCADE,
+      FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE RESTRICT ON UPDATE CASCADE
+    );
+
+    -- Create indexes on customerAuditLogs
+    CREATE INDEX IF NOT EXISTS "customerAuditLogs_customerId_idx" ON "customerAuditLogs"("customerId");
+    CREATE INDEX IF NOT EXISTS "customerAuditLogs_userId_idx" ON "customerAuditLogs"("userId");
+    CREATE INDEX IF NOT EXISTS "customerAuditLogs_timestamp_idx" ON "customerAuditLogs"("timestamp");
+
     -- Create config table
     CREATE TABLE IF NOT EXISTS "config" (
       "id" TEXT NOT NULL PRIMARY KEY,
@@ -164,19 +189,20 @@ async function createDatabaseSchema(prismaClient: PrismaClient, dbType: string =
 }
 
 /**
- * Seed initial data (admin user, default config)
+ * Seed initial data (admin user + default configs).
+ * NOTE: This is used by the Desktop app "Initialize DB" flow and must stay in sync with the UI expectations.
  */
 async function seedInitialData(prismaClient: PrismaClient): Promise<void> {
   try {
-    // Check if admin user exists
+    // 1) Ensure admin user exists
     const adminUser = await prismaClient.user.findUnique({
       where: { username: 'admin' },
     });
-    
+
     if (!adminUser) {
       const bcrypt = require('bcrypt');
       const hashedPassword = await bcrypt.hash('admin123', 10);
-      
+
       await prismaClient.user.create({
         data: {
           username: 'admin',
@@ -184,20 +210,129 @@ async function seedInitialData(prismaClient: PrismaClient): Promise<void> {
           role: 'SUPER_ADMIN',
         },
       });
-      
-      // Create default config
+    }
+
+    // 2) Ensure default configs exist (independent of admin user existence)
+    await prismaClient.config.upsert({
+      where: { key: 'whatsapp_default_message' },
+      update: {},
+      create: {
+        key: 'whatsapp_default_message',
+        value: 'Hola, tu pedido está listo para recoger.',
+      },
+    });
+
+    await prismaClient.config.upsert({
+      where: { key: 'users_see_only_own_orders' },
+      update: {},
+      create: {
+        key: 'users_see_only_own_orders',
+        value: 'false', // Default: users can see all orders
+      },
+    });
+
+    // IMPORTANT: PENDING means "pending receipt" (not "pending to notify")
+    const defaultOrderStatusesConfig = {
+      PENDING: {
+        color: '#f59e0b',
+        backgroundColor: '#fef3c7',
+        fontFamily: 'inherit',
+        fontSize: 'inherit',
+        fontWeight: 'normal',
+        text: 'Pendiente de Recibir',
+      },
+      RECEIVED: {
+        color: '#16a34a',
+        backgroundColor: '#dcfce7',
+        fontFamily: 'inherit',
+        fontSize: 'inherit',
+        fontWeight: 'normal',
+        text: 'Pendiente de avisar',
+      },
+      NOTIFIED_CALL: {
+        color: '#16a34a',
+        backgroundColor: '#dcfce7',
+        fontFamily: 'inherit',
+        fontSize: 'inherit',
+        fontWeight: 'normal',
+        text: 'Avisado (Llamada)',
+      },
+      NOTIFIED_WHATSAPP: {
+        color: '#16a34a',
+        backgroundColor: '#dcfce7',
+        fontFamily: 'inherit',
+        fontSize: 'inherit',
+        fontWeight: 'normal',
+        text: 'Avisado (WhatsApp)',
+      },
+      CANCELLED: {
+        color: '#dc2626',
+        backgroundColor: '#fee2e2',
+        fontFamily: 'inherit',
+        fontSize: 'inherit',
+        fontWeight: 'normal',
+        text: 'Cancelado',
+      },
+      INCOMPLETO: {
+        color: '#dc2626',
+        backgroundColor: '#fee2e2',
+        fontFamily: 'inherit',
+        fontSize: 'inherit',
+        fontWeight: 'normal',
+        text: 'Incompleto',
+      },
+      DELIVERED_COUNTER: {
+        color: '#16a34a',
+        backgroundColor: '#dcfce7',
+        fontFamily: 'inherit',
+        fontSize: 'inherit',
+        fontWeight: 'normal',
+        text: 'Entregado en Mostrador',
+      },
+      READY_TO_SEND: {
+        color: '#3b82f6',
+        backgroundColor: '#dbeafe',
+        fontFamily: 'inherit',
+        fontSize: 'inherit',
+        fontWeight: 'normal',
+        text: 'Preparado para enviar',
+      },
+    };
+
+    // Upsert order_statuses_config - if it exists, merge with defaults to add any missing statuses
+    const existingStatusConfig = await prismaClient.config.findUnique({
+      where: { key: 'order_statuses_config' },
+    });
+
+    if (existingStatusConfig && existingStatusConfig.value) {
       try {
-        await prismaClient.config.upsert({
-          where: { key: 'whatsapp_default_message' },
-          update: {},
-          create: {
-            key: 'whatsapp_default_message',
-            value: 'Hola, tu pedido está listo para recoger.',
-          },
+        const existing = JSON.parse(existingStatusConfig.value);
+        // Merge with defaults to ensure all statuses (including READY_TO_SEND) are present
+        const merged = { ...defaultOrderStatusesConfig, ...existing };
+        // Ensure READY_TO_SEND is present with correct default
+        if (!merged.READY_TO_SEND || merged.READY_TO_SEND.text !== defaultOrderStatusesConfig.READY_TO_SEND.text) {
+          merged.READY_TO_SEND = defaultOrderStatusesConfig.READY_TO_SEND;
+        }
+        await prismaClient.config.update({
+          where: { key: 'order_statuses_config' },
+          data: { value: JSON.stringify(merged) },
         });
-      } catch (configError) {
-        // Config might already exist, that's okay
+      } catch (error) {
+        // If parsing fails, replace with defaults
+        await prismaClient.config.update({
+          where: { key: 'order_statuses_config' },
+          data: { value: JSON.stringify(defaultOrderStatusesConfig) },
+        });
       }
+    } else {
+      await prismaClient.config.upsert({
+        where: { key: 'order_statuses_config' },
+        update: {},
+        create: {
+          key: 'order_statuses_config',
+          value: JSON.stringify(defaultOrderStatusesConfig),
+        },
+      });
     }
   } catch (error: any) {
     console.warn('⚠️  Could not seed initial data:', error.message);
@@ -216,6 +351,7 @@ const REQUIRED_TABLES = [
   'orderSuppliers',
   'orderProducts',
   'auditLogs',
+  'customerAuditLogs',
   'config',
 ];
 
@@ -272,6 +408,24 @@ async function isSchemaComplete(prismaClient: PrismaClient, dbType: string): Pro
         if (!orderProductColumnNames.includes('receivedQuantity')) {
           console.log('🛠️ Adding missing column orderProducts.receivedQuantity');
           await prismaClient.$executeRawUnsafe(`ALTER TABLE "orderProducts" ADD COLUMN "receivedQuantity" TEXT;`);
+        }
+
+        // Ensure new columns on customers table for traceability
+        const customerColumns = await prismaClient.$queryRaw<Array<{ name: string }>>`
+          PRAGMA table_info("customers");
+        `;
+        const customerColumnNames = customerColumns.map(c => c.name.toLowerCase());
+
+        if (!customerColumnNames.includes('createdbyid')) {
+          console.log('🛠️ Adding missing column customers.createdById');
+          await prismaClient.$executeRawUnsafe(`ALTER TABLE "customers" ADD COLUMN "createdById" TEXT;`);
+          await prismaClient.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "customers_createdById_idx" ON "customers"("createdById");`);
+        }
+
+        if (!customerColumnNames.includes('updatedbyid')) {
+          console.log('🛠️ Adding missing column customers.updatedById');
+          await prismaClient.$executeRawUnsafe(`ALTER TABLE "customers" ADD COLUMN "updatedById" TEXT;`);
+          await prismaClient.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "customers_updatedById_idx" ON "customers"("updatedById");`);
         }
       } catch (columnError: any) {
         console.warn('⚠️  Error while ensuring new columns exist:', columnError.message);

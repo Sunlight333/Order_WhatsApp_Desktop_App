@@ -1,5 +1,5 @@
 // All imports - environment variables are already loaded in electron-main.js
-import { app, BrowserWindow, ipcMain, shell, dialog, protocol } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, dialog, protocol, nativeImage } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import util from 'util';
@@ -57,10 +57,15 @@ function setupLogging() {
     const originalError = console.error.bind(console);
     const originalDebug = console.debug ? console.debug.bind(console) : console.log.bind(console);
     
+    // In production, suppress console output to prevent console window from appearing
+    // Only write to log file
     const wrapConsole = (level: string, original: (...data: any[]) => void) => {
       return (...args: any[]) => {
         appendLogEntry(level, args);
-        original(...args);
+        // Only output to console in development mode
+        if (isDev) {
+          original(...args);
+        }
       };
     };
     
@@ -70,9 +75,18 @@ function setupLogging() {
     console.error = wrapConsole('ERROR', originalError);
     console.debug = wrapConsole('DEBUG', originalDebug);
     
-    originalLog(`📝 Logging initialized. Log file: ${logFilePath}`);
+    // Only show initialization message in development
+    if (isDev) {
+      originalLog(`📝 Logging initialized. Log file: ${logFilePath}`);
+    } else {
+      // In production, just write to log file silently
+      appendLogEntry('INFO', [`📝 Logging initialized. Log file: ${logFilePath}`]);
+    }
   } catch (error) {
-    process.stderr.write(`Failed to set up logging: ${(error as Error).message}\n`);
+    // In production, don't write to stderr (which would show console)
+    if (isDev) {
+      process.stderr.write(`Failed to set up logging: ${(error as Error).message}\n`);
+    }
   }
 }
 
@@ -243,6 +257,16 @@ function setupDatabaseFromConfig(config: AppConfig): void {
 async function runDatabaseMigrations(): Promise<void> {
   try {
     console.log('🔄 Running database migrations...');
+
+    // In packaged builds we primarily use SQLite (stored in userData). The backend already:
+    // - creates the schema if missing
+    // - upgrades missing columns/tables on startup
+    // Running Prisma CLI via `npx` in production is fragile (not always available) and can produce noisy errors.
+    const provider = process.env.DATABASE_PROVIDER || 'sqlite';
+    if (app.isPackaged && provider === 'sqlite') {
+      console.log('ℹ️  Skipping Prisma CLI migrations in packaged SQLite mode (backend will self-migrate on startup)');
+      return;
+    }
     
     const { execSync } = require('child_process');
     const backendDistPath = getBackendDistPath();
@@ -288,6 +312,24 @@ async function runDatabaseMigrations(): Promise<void> {
       });
       
       console.log('✅ Database migrations completed successfully');
+
+      // Run seed after migrations so the packaged app has required default configs (e.g. order_statuses_config)
+      // This is idempotent (seed.ts checks existence).
+      try {
+        const seedCommand = 'npx tsx prisma/seed.ts';
+        console.log(`🌱 Executing: ${seedCommand}`);
+        execSync(seedCommand, {
+          cwd: backendPath,
+          stdio: 'inherit',
+          env: {
+            ...process.env,
+            DATABASE_URL: process.env.DATABASE_URL,
+          },
+        });
+        console.log('✅ Database seed completed successfully');
+      } catch (seedError: any) {
+        console.warn('⚠️  Seed command failed (continuing):', seedError?.message || seedError);
+      }
     } catch (error: any) {
       // If migrate deploy fails, try to continue anyway
       // The database might already be up to date or migrations might have been applied manually
@@ -479,25 +521,75 @@ function getPreloadPath() {
   return preloadPath;
 }
 
-function getIconPath() {
+function getIconPath(): string | null {
   if (isDev) {
     // In development, use the icon from frontend/public
-    return path.join(__dirname, '../frontend/public/assets/images/logo.png');
+    const devPath = path.join(__dirname, '../frontend/public/assets/images/logo.png');
+    if (fs.existsSync(devPath)) {
+      return devPath;
+    }
+    return null;
   } else {
-    // In production, icon should be in the resources folder
-    return path.join(process.resourcesPath, 'assets/images/logo.png');
+    // In production, try multiple possible locations for the icon
+    // First try: resources folder (extraResources)
+    const resourcesPath = path.join(process.resourcesPath, 'assets/images/logo.png');
+    if (fs.existsSync(resourcesPath)) {
+      return resourcesPath;
+    }
+    // Second try: app.asar.unpacked (if unpacked)
+    const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'assets/images/logo.png');
+    if (fs.existsSync(unpackedPath)) {
+      return unpackedPath;
+    }
+    // Third try: build directory icon (electron-builder generated)
+    const buildIconPath = path.join(process.resourcesPath, '..', 'build', 'icon.png');
+    if (fs.existsSync(buildIconPath)) {
+      return buildIconPath;
+    }
+    // Fallback: use the icon from build directory if available
+    const fallbackPath = path.join(__dirname, '../../build/icon.png');
+    if (fs.existsSync(fallbackPath)) {
+      return fallbackPath;
+    }
+    // Last resort: try to find icon.ico in build directory (Windows)
+    const icoPath = path.join(process.resourcesPath, '..', 'build', 'icon.ico');
+    if (fs.existsSync(icoPath)) {
+      return icoPath;
+    }
+    return null;
+  }
+}
+
+function getIcon() {
+  const iconPath = getIconPath();
+  if (!iconPath) {
+    console.warn('No icon path found');
+    return undefined;
+  }
+  try {
+    // Use nativeImage to load the icon, which handles different formats better
+    const icon = nativeImage.createFromPath(iconPath);
+    if (icon.isEmpty()) {
+      console.warn(`Icon at ${iconPath} is empty or invalid`);
+      return undefined;
+    }
+    console.log(`Icon loaded successfully from: ${iconPath}`);
+    return icon;
+  } catch (error) {
+    console.error(`Error loading icon from ${iconPath}:`, error);
+    return undefined;
   }
 }
 
 function createWindow() {
-  const iconPath = getIconPath();
+  const icon = getIcon();
   
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1024,
     minHeight: 768,
-    icon: iconPath,
+    icon: icon,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -515,6 +607,8 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:5173');
     mainWindow.webContents.openDevTools();
   } else {
+    // Ensure DevTools are closed in production
+    mainWindow.webContents.closeDevTools();
     // In production, use app:// protocol for proper path resolution
     if (app.isPackaged) {
       // Use custom protocol which handles relative paths correctly
@@ -531,6 +625,20 @@ function createWindow() {
   }
 
   mainWindow.once('ready-to-show', () => {
+    // Ensure icon is set (Windows sometimes needs this)
+    // Windows caches icons aggressively, so we set it multiple times
+    const icon = getIcon();
+    if (icon) {
+      mainWindow?.setIcon(icon);
+      // Force icon update on Windows by setting it again after a short delay
+      if (process.platform === 'win32') {
+        setTimeout(() => {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            mainWindow.setIcon(icon);
+          }
+        }, 100);
+      }
+    }
     mainWindow?.show();
     mainWindow?.focus();
   });
@@ -790,8 +898,10 @@ app.whenReady().then(async () => {
   registerProtocolHandler();
   
   // Set app user model ID for Windows (helps with taskbar icon)
+  // This must be called before creating any windows
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.orderwhatsapp.desktop');
+    console.log('✅ Set AppUserModelId for Windows taskbar icon');
   }
   
   // Load config first to determine mode
