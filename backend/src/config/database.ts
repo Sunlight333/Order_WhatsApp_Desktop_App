@@ -791,8 +791,8 @@ export async function upgradeDatabaseSchema(): Promise<{ success: boolean; messa
 
 
     const message = changes.length > 0 
-      ? `Schema upgraded successfully. ${changes.length} change(s) applied.`
-      : 'Database schema is up to date. No changes needed.';
+      ? `Esquema actualizado exitosamente. ${changes.length} cambio(s) aplicado(s).`
+      : 'El esquema de la base de datos está actualizado. No se necesitan cambios.';
 
     return {
       success: true,

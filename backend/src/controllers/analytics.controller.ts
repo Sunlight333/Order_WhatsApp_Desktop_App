@@ -5,6 +5,7 @@ import {
   getOrderStatistics,
   getSupplierMonthlyData,
   getOrdersByMonth,
+  getQuantityByReference,
 } from '../services/analytics.service';
 import { createSuccessResponse } from '../utils/response.util';
 
@@ -90,6 +91,19 @@ export async function getOrdersByMonthController(req: Request, res: Response): P
   } catch (error: any) {
     console.error('Error in getOrdersByMonthController:', error);
     // Don't throw - let error middleware handle it, but ensure we don't crash
+    throw error;
+  }
+}
+
+/**
+ * GET /api/v1/analytics/quantity-by-reference
+ * Get total quantity ordered by product reference
+ */
+export async function getQuantityByReferenceController(req: Request, res: Response): Promise<void> {
+  try {
+    const data = await getQuantityByReference();
+    res.status(200).json(createSuccessResponse(data));
+  } catch (error) {
     throw error;
   }
 }

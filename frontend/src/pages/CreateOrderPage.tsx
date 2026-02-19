@@ -381,6 +381,7 @@ export default function CreateOrderPage() {
                 onSelect={(item) => handleCustomerNameChange(item.value)}
                 placeholder={t('createOrder.enterCustomerName')}
                 inputClassName="form-input"
+                minChars={3}
               />
             </div>
             <div className="form-group">
@@ -415,6 +416,7 @@ export default function CreateOrderPage() {
                     placeholder={t('createOrder.enterCustomerPhone')}
                     inputClassName="form-input"
                     maxItems={10}
+                    minChars={3}
                   />
                 </div>
               </div>

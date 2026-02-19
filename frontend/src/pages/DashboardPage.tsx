@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Package, ShoppingCart, Clock, CheckCircle, TrendingUp, ArrowRight, BarChart3, Users, Star, Download } from 'lucide-react';
+import { Package, ShoppingCart, Clock, CheckCircle, TrendingUp, ArrowRight, BarChart3, Users, Star, Download, Send } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../store/authStore';
 import { exportMultipleSheets } from '../utils/excelExport';
+import { useOrderStatusConfig, getStatusConfig } from '../hooks/useOrderStatusConfig';
 import '../styles/dashboard.css';
 
 interface DashboardStats {
@@ -13,6 +14,7 @@ interface DashboardStats {
   pendingOrders: number;
   receivedOrders: number;
   notifiedOrders: number;
+  readyToSendOrders: number;
   recentOrders: Array<{
     id: string;
     orderNumber?: number;
@@ -49,11 +51,13 @@ export default function DashboardPage() {
     pendingOrders: 0,
     receivedOrders: 0,
     notifiedOrders: 0,
+    readyToSendOrders: 0,
     recentOrders: [],
   });
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
   const [topProducts, setTopProducts] = useState<TopProduct[]>([]);
   const [topCustomers, setTopCustomers] = useState<TopCustomer[]>([]);
+  const { config: statusConfig } = useOrderStatusConfig();
 
   useEffect(() => {
     fetchDashboardData();
@@ -72,12 +76,17 @@ export default function DashboardPage() {
       const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
       
       // Fetch orders with filters to calculate stats
-      const [allOrdersRes, pendingRes, receivedRes, notifiedRes, recentRes] = await Promise.all([
+      // Only "Notified" uses daily counter (resets every day), others show total count
+      const [allOrdersRes, pendingRes, receivedRes, notifiedRes, readyToSendRes, recentRes] = await Promise.all([
         api.get('/orders', { params: { limit: 1 } }),
+        // Pending: total count (no date filter)
         api.get('/orders', { params: { status: 'PENDING', limit: 1 } }),
+        // Received: total count (no date filter)
         api.get('/orders', { params: { status: 'RECEIVED', limit: 1 } }),
-        // Backend supports comma-separated status filter; notified orders are NOTIFIED_CALL or NOTIFIED_WHATSAPP
+        // Notified: filter by status and notification date (today) - daily reset
         api.get('/orders', { params: { status: 'NOTIFIED_CALL,NOTIFIED_WHATSAPP', notifiedDateFrom: todayStr, notifiedDateTo: todayStr, limit: 1 } }),
+        // Ready to Send: total count (no date filter)
+        api.get('/orders', { params: { status: 'READY_TO_SEND', limit: 1 } }),
         api.get('/orders', { params: { limit: 5, sortBy: 'createdAt', sortOrder: 'desc' } }),
       ]);
 
@@ -86,6 +95,7 @@ export default function DashboardPage() {
       const pendingOrders = pendingRes.data?.data?.pagination?.total || 0;
       const receivedOrders = receivedRes.data?.data?.pagination?.total || 0;
       const notifiedOrders = notifiedRes.data?.data?.pagination?.total || 0;
+      const readyToSendOrders = readyToSendRes.data?.data?.pagination?.total || 0;
       const recentOrders = recentRes.data?.data?.orders || [];
 
       setStats({
@@ -93,6 +103,7 @@ export default function DashboardPage() {
         pendingOrders,
         receivedOrders,
         notifiedOrders,
+        readyToSendOrders,
         recentOrders,
       });
     } catch (error: any) {
@@ -115,25 +126,12 @@ export default function DashboardPage() {
     return () => window.clearTimeout(timer);
   }, [isAdmin]);
 
-  const getStatusBadgeClass = (status: string) => {
-    switch (status) {
-      case 'PENDING':
-        return 'status-badge status-pending';
-      case 'RECEIVED':
-        return 'status-badge status-received';
-      case 'NOTIFIED_CALL':
-      case 'NOTIFIED_WHATSAPP':
-        return 'status-badge status-notified';
-      case 'CANCELLED':
-      case 'INCOMPLETO':
-        return 'status-badge status-red';
-      default:
-        return 'status-badge';
-    }
-  };
-
   const getStatusLabel = (status: string) => {
-    switch (status) {
+    // Normalize status to uppercase to handle any case variations
+    const normalizedStatus = status.toUpperCase().trim();
+    
+    // Always use translations for labels to support i18n
+    switch (normalizedStatus) {
       case 'PENDING':
         return t('orders.statusPending');
       case 'RECEIVED':
@@ -142,13 +140,36 @@ export default function DashboardPage() {
         return t('orders.statusNotifiedCall');
       case 'NOTIFIED_WHATSAPP':
         return t('orders.statusNotifiedWhatsApp');
+      case 'READY_TO_SEND':
+        return t('orders.statusReadyToSend');
+      case 'SENT':
+        return t('orders.statusSent');
+      case 'DELIVERED_COUNTER':
+        return t('orders.statusDeliveredCounter');
       case 'CANCELLED':
         return t('orders.statusCancelled');
       case 'INCOMPLETO':
         return t('orders.statusIncompleto');
       default:
-        return status;
+        // Fallback: try to translate if it's a known status key
+        const statusKey = `orders.status${normalizedStatus.charAt(0) + normalizedStatus.slice(1).toLowerCase().replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())}`;
+        const translated = t(statusKey, { defaultValue: normalizedStatus });
+        // Only return the original status if translation truly failed (same as key)
+        return translated !== statusKey ? translated : normalizedStatus;
     }
+  };
+
+  const getStatusStyle = (status: string) => {
+    // Normalize status to uppercase to match config keys
+    const normalizedStatus = status.toUpperCase().trim();
+    const config = getStatusConfig(normalizedStatus, statusConfig);
+    return {
+      color: config.color || '#6b7280',
+      backgroundColor: config.backgroundColor || '#f3f4f6',
+      fontFamily: config.fontFamily || 'inherit',
+      fontSize: config.fontSize || 'inherit',
+      fontWeight: config.fontWeight || '600',
+    };
   };
 
   const fetchAnalytics = async () => {
@@ -173,17 +194,15 @@ export default function DashboardPage() {
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString);
-    const locale = i18n.language === 'es' ? 'es-ES' : 'en-US';
-    return new Intl.DateTimeFormat(locale, {
-      month: 'short',
-      day: 'numeric',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(date);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${day}/${month}/${year} ${hours}:${minutes}`;
   };
 
-  const handleExportAnalytics = () => {
+  const handleExportAnalytics = async () => {
     try {
       const sheets = [];
       
@@ -191,10 +210,12 @@ export default function DashboardPage() {
       sheets.push({
         name: t('dashboard.statistics'),
         data: [
-          { [t('dashboard.pending')]: stats.pendingOrders },
-          { [t('dashboard.received')]: stats.receivedOrders },
-          { [t('dashboard.notified')]: stats.notifiedOrders },
-          { [t('dashboard.totalOrders')]: stats.totalOrders },
+          {
+            [t('dashboard.pending')]: stats.pendingOrders,
+            [t('dashboard.received')]: stats.receivedOrders,
+            [t('dashboard.notified')]: stats.notifiedOrders,
+            [t('dashboard.totalOrders')]: stats.totalOrders,
+          },
         ],
       });
 
@@ -220,6 +241,100 @@ export default function DashboardPage() {
             [t('dashboard.orderCount')]: customer.orderCount,
             [t('dashboard.totalAmount')]: customer.totalAmount,
           })),
+        });
+      }
+
+      // Fetch and add orders by month sheet
+      let ordersByMonthAdded = false;
+      try {
+        const ordersByMonthRes = await api.get('/analytics/orders-by-month');
+        if (ordersByMonthRes.data?.success) {
+          const ordersData = ordersByMonthRes.data.data || [];
+          if (ordersData.length > 0) {
+            sheets.push({
+              name: t('dashboard.ordersByMonth'),
+              data: ordersData.map((item: any) => ({
+                [t('dashboard.month')]: item.monthName || item.month,
+                [t('dashboard.orderCount')]: item.count,
+              })),
+            });
+            ordersByMonthAdded = true;
+            toast.success(`${t('dashboard.ordersByMonth')}: ${ordersData.length} ${t('dashboard.month')}s`);
+          } else {
+            // Add empty sheet with headers
+            sheets.push({
+              name: t('dashboard.ordersByMonth'),
+              data: [{
+                [t('dashboard.month')]: '',
+                [t('dashboard.orderCount')]: '',
+              }],
+            });
+            ordersByMonthAdded = true;
+            toast(`${t('dashboard.ordersByMonth')}: ${t('dashboard.noData')}`, { icon: 'ℹ️' });
+          }
+        } else {
+          toast.error(`${t('dashboard.ordersByMonth')}: ${t('dashboard.exportFailed')}`);
+        }
+      } catch (error: any) {
+        const errorMsg = error.response?.data?.error?.message || error.message || 'Unknown error';
+        toast.error(`${t('dashboard.ordersByMonth')}: ${errorMsg}`);
+        // Still add empty sheet so user knows it was attempted
+        sheets.push({
+          name: t('dashboard.ordersByMonth'),
+          data: [{
+            [t('dashboard.month')]: '',
+            [t('dashboard.orderCount')]: '',
+          }],
+        });
+      }
+
+      // Fetch and add quantity by reference sheet
+      let quantityByRefAdded = false;
+      try {
+        const quantityByRefRes = await api.get('/analytics/quantity-by-reference');
+        if (quantityByRefRes.data?.success) {
+          const quantityData = quantityByRefRes.data.data || [];
+          if (quantityData.length > 0) {
+            sheets.push({
+              name: t('dashboard.quantityByReference'),
+              data: quantityData.map((item: any) => ({
+                [t('products.reference')]: item.reference,
+                [t('products.supplier')]: item.supplierName,
+                [t('dashboard.totalQuantity')]: item.totalQuantity,
+                [t('dashboard.orderCount')]: item.orderCount,
+              })),
+            });
+            quantityByRefAdded = true;
+            toast.success(`${t('dashboard.quantityByReference')}: ${quantityData.length} ${t('products.reference')}s`);
+          } else {
+            // Add empty sheet with headers
+            sheets.push({
+              name: t('dashboard.quantityByReference'),
+              data: [{
+                [t('products.reference')]: '',
+                [t('products.supplier')]: '',
+                [t('dashboard.totalQuantity')]: '',
+                [t('dashboard.orderCount')]: '',
+              }],
+            });
+            quantityByRefAdded = true;
+            toast(`${t('dashboard.quantityByReference')}: ${t('dashboard.noData')}`, { icon: 'ℹ️' });
+          }
+        } else {
+          toast.error(`${t('dashboard.quantityByReference')}: ${t('dashboard.exportFailed')}`);
+        }
+      } catch (error: any) {
+        const errorMsg = error.response?.data?.error?.message || error.message || 'Unknown error';
+        toast.error(`${t('dashboard.quantityByReference')}: ${errorMsg}`);
+        // Still add empty sheet so user knows it was attempted
+        sheets.push({
+          name: t('dashboard.quantityByReference'),
+          data: [{
+            [t('products.reference')]: '',
+            [t('products.supplier')]: '',
+            [t('dashboard.totalQuantity')]: '',
+            [t('dashboard.orderCount')]: '',
+          }],
         });
       }
 
@@ -270,7 +385,9 @@ export default function DashboardPage() {
         {/* Total Orders card removed per requirements - not necessary to see number of orders */}
         <div 
           className="stat-card stat-card-warning"
-          onClick={() => navigate('/orders?status=PENDING')}
+          onClick={() => {
+            navigate(`/orders?status=PENDING`);
+          }}
           style={{ cursor: 'pointer' }}
         >
           <div className="stat-card-icon">
@@ -284,7 +401,9 @@ export default function DashboardPage() {
 
         <div 
           className="stat-card stat-card-info"
-          onClick={() => navigate('/orders?status=RECEIVED')}
+          onClick={() => {
+            navigate(`/orders?status=RECEIVED`);
+          }}
           style={{ cursor: 'pointer' }}
         >
           <div className="stat-card-icon">
@@ -298,7 +417,10 @@ export default function DashboardPage() {
 
         <div 
           className="stat-card stat-card-success"
-          onClick={() => navigate('/orders?status=NOTIFIED_CALL,NOTIFIED_WHATSAPP')}
+          onClick={() => {
+            const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+            navigate(`/orders?status=NOTIFIED_CALL,NOTIFIED_WHATSAPP&notifiedDateFrom=${today}&notifiedDateTo=${today}`);
+          }}
           style={{ cursor: 'pointer' }}
         >
           <div className="stat-card-icon">
@@ -307,6 +429,22 @@ export default function DashboardPage() {
           <div className="stat-card-content">
             <div className="stat-card-label">{t('dashboard.notified')}</div>
             <div className="stat-card-value">{stats.notifiedOrders}</div>
+          </div>
+        </div>
+
+        <div 
+          className="stat-card stat-card-info"
+          onClick={() => {
+            navigate(`/orders?status=READY_TO_SEND`);
+          }}
+          style={{ cursor: 'pointer' }}
+        >
+          <div className="stat-card-icon">
+            <Send size={32} />
+          </div>
+          <div className="stat-card-content">
+            <div className="stat-card-label">{t('dashboard.readyToSend')}</div>
+            <div className="stat-card-value">{stats.readyToSendOrders}</div>
           </div>
         </div>
       </div>
@@ -349,7 +487,10 @@ export default function DashboardPage() {
                       {order.customerName || order.customerPhone}
                     </span>
                   </div>
-                  <span className={getStatusBadgeClass(order.status)}>
+                  <span 
+                    className="status-badge status-custom"
+                    style={getStatusStyle(order.status)}
+                  >
                     {getStatusLabel(order.status)}
                   </span>
                 </div>

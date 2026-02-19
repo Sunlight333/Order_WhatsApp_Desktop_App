@@ -30,9 +30,8 @@ export default function ConfirmModal({
   hideCancel = false,
   customContent,
 }: ConfirmModalProps) {
-  if (!isOpen) return null;
-
   const { t } = useTranslation();
+  if (!isOpen) return null;
   const resolvedConfirmText = confirmText ?? t('common.confirm');
   const resolvedCancelText = cancelText ?? t('common.cancel');
 

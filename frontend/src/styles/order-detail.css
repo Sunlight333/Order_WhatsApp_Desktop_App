@@ -101,6 +101,20 @@
   background: #25D366;
   border-color: #25D366;
   color: white;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px;
+  overflow: visible;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+.btn-whatsapp svg {
+  display: block;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
 }
 
 .btn-whatsapp:hover {

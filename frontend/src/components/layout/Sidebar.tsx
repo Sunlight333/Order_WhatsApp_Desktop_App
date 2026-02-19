@@ -40,7 +40,6 @@ const navItems: NavItem[] = [
     path: '/products',
     labelKey: 'sidebar.products',
     icon: <Box size={20} />,
-    adminOnly: true,
   },
   {
     path: '/customers',

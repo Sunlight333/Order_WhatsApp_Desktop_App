@@ -480,3 +480,76 @@ export async function getOrdersByMonth(
     .filter((item) => item !== null) as OrdersByMonth[];
 }
 
+/**
+ * Get total quantity ordered by product reference
+ * Returns aggregated quantities for each product reference across all orders
+ */
+export interface QuantityByReference {
+  reference: string;
+  totalQuantity: number;
+  orderCount: number;
+  supplierName: string;
+}
+
+export async function getQuantityByReference(): Promise<QuantityByReference[]> {
+  // Get all order products
+  const orderProducts = await prisma.orderProduct.findMany({
+    select: {
+      productRef: true,
+      supplierId: true,
+      quantity: true,
+      orderId: true,
+    },
+  });
+
+  // Group by productRef and supplierId, sum quantities
+  const productMap = new Map<string, { quantity: number; orderIds: Set<string>; supplierId: string }>();
+
+  for (const op of orderProducts) {
+    const key = `${op.productRef}|${op.supplierId}`;
+    if (!productMap.has(key)) {
+      productMap.set(key, {
+        quantity: 0,
+        orderIds: new Set(),
+        supplierId: op.supplierId,
+      });
+    }
+    const product = productMap.get(key)!;
+    product.quantity += parseFloat(op.quantity || '0');
+    product.orderIds.add(op.orderId);
+  }
+
+  // Convert to array
+  const products = Array.from(productMap.entries())
+    .map(([key, data]) => ({
+      productRef: key.split('|')[0],
+      supplierId: data.supplierId,
+      totalQuantity: data.quantity,
+      orderCount: data.orderIds.size,
+    }))
+    .sort((a, b) => b.totalQuantity - a.totalQuantity); // Sort by total quantity descending
+
+  // Get supplier names
+  const supplierIds = [...new Set(products.map((p) => p.supplierId))];
+  const suppliers = await prisma.supplier.findMany({
+    where: {
+      id: {
+        in: supplierIds,
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+    },
+  });
+
+  const supplierMap = new Map(suppliers.map((s) => [s.id, s.name]));
+
+  return products.map((p) => ({
+    reference: p.productRef,
+    totalQuantity: p.totalQuantity,
+    orderCount: p.orderCount,
+    supplierName: supplierMap.get(p.supplierId) || 'Unknown',
+  }));
+}
+

@@ -29,7 +29,9 @@ export const createOrderSchema = z.object({
 
 export type CreateOrderInput = z.infer<typeof createOrderSchema>;
 
-// Update order schema (same as create)
-export const updateOrderSchema = createOrderSchema;
+// Update order schema - allows null for observations to clear the field
+export const updateOrderSchema = createOrderSchema.extend({
+  observations: z.string().nullable().optional(), // Allow null to clear observations
+});
 export type UpdateOrderInput = z.infer<typeof updateOrderSchema>;
 

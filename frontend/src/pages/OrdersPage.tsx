@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { Plus, Search, Filter, Loader2, X, ChevronLeft, ChevronRight, MessageSquare, Eye, Copy, ArrowUp, ArrowDown, ChevronUp, ChevronDown, BarChart3, ChevronDown as ChevronDownIcon, ChevronUp as ChevronUpIcon, User, Building2, Coins, Hash, FileText, Download } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { useDebounce } from '../hooks/useDebounce';
@@ -41,15 +41,20 @@ interface Order {
 
 export default function OrdersPage() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { t } = useTranslation();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const abortControllerRef = useRef<AbortController | null>(null);
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
   const [updatedDateFrom, setUpdatedDateFrom] = useState<string>('');
   const [updatedDateTo, setUpdatedDateTo] = useState<string>('');
+  const [notifiedDateFrom, setNotifiedDateFrom] = useState<string>('');
+  const [notifiedDateTo, setNotifiedDateTo] = useState<string>('');
+  const [urlParamsRead, setUrlParamsRead] = useState(false);
   const [supplierFilter, setSupplierFilter] = useState<string[]>([]);
   const [customerFilter, setCustomerFilter] = useState<string>('');
   const [createdByFilter, setCreatedByFilter] = useState<string>('');
@@ -58,6 +63,7 @@ export default function OrdersPage() {
   const [minOrderNumber, setMinOrderNumber] = useState<string>('');
   const [maxOrderNumber, setMaxOrderNumber] = useState<string>('');
   const [hasObservations, setHasObservations] = useState<string>('');
+  const [productReferenceFilter, setProductReferenceFilter] = useState<string>('');
   const [showFilters, setShowFilters] = useState(false);
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({
     dates: true,
@@ -94,12 +100,13 @@ export default function OrdersPage() {
   const [supplierAnalyticsLoading, setSupplierAnalyticsLoading] = useState(false);
   const [supplierAnalyticsData, setSupplierAnalyticsData] = useState<any[]>([]);
 
-  const debouncedSearch = useDebounce(searchQuery, 500);
+  // Increased debounce time to 2000ms (2 seconds) to give users more time to type
+  const debouncedSearch = useDebounce(searchQuery, 2000);
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'SUPER_ADMIN';
   const { config: statusConfig } = useOrderStatusConfig();
 
-  const handleExportSupplierAnalytics = () => {
+  const handleExportSupplierAnalytics = async () => {
     if (!isAdmin) {
       toast.error(t('common.unauthorized'));
       return;
@@ -245,6 +252,82 @@ export default function OrdersPage() {
         console.warn('Failed to build supplier monthly pivot export:', error);
       }
 
+      // Fetch and add orders by month sheet
+      try {
+        const ordersByMonthRes = await api.get('/analytics/orders-by-month');
+        if (ordersByMonthRes.data?.success) {
+          const ordersData = ordersByMonthRes.data.data || [];
+          if (ordersData.length > 0) {
+            sheets.push({
+              name: t('dashboard.ordersByMonth'),
+              data: ordersData.map((item: any) => ({
+                [t('dashboard.month')]: item.monthName || item.month,
+                [t('dashboard.orderCount')]: item.count,
+              })),
+            });
+          } else {
+            // Add empty sheet with headers
+            sheets.push({
+              name: t('dashboard.ordersByMonth'),
+              data: [{
+                [t('dashboard.month')]: '',
+                [t('dashboard.orderCount')]: '',
+              }],
+            });
+          }
+        }
+      } catch (error: any) {
+        // Still add empty sheet so user knows it was attempted
+        sheets.push({
+          name: t('dashboard.ordersByMonth'),
+          data: [{
+            [t('dashboard.month')]: '',
+            [t('dashboard.orderCount')]: '',
+          }],
+        });
+      }
+
+      // Fetch and add quantity by reference sheet
+      try {
+        const quantityByRefRes = await api.get('/analytics/quantity-by-reference');
+        if (quantityByRefRes.data?.success) {
+          const quantityData = quantityByRefRes.data.data || [];
+          if (quantityData.length > 0) {
+            sheets.push({
+              name: t('dashboard.quantityByReference'),
+              data: quantityData.map((item: any) => ({
+                [t('products.reference')]: item.reference,
+                [t('products.supplier')]: item.supplierName,
+                [t('dashboard.totalQuantity')]: item.totalQuantity,
+                [t('dashboard.orderCount')]: item.orderCount,
+              })),
+            });
+          } else {
+            // Add empty sheet with headers
+            sheets.push({
+              name: t('dashboard.quantityByReference'),
+              data: [{
+                [t('products.reference')]: '',
+                [t('products.supplier')]: '',
+                [t('dashboard.totalQuantity')]: '',
+                [t('dashboard.orderCount')]: '',
+              }],
+            });
+          }
+        }
+      } catch (error: any) {
+        // Still add empty sheet so user knows it was attempted
+        sheets.push({
+          name: t('dashboard.quantityByReference'),
+          data: [{
+            [t('products.reference')]: '',
+            [t('products.supplier')]: '',
+            [t('dashboard.totalQuantity')]: '',
+            [t('dashboard.orderCount')]: '',
+          }],
+        });
+      }
+
       if (sheets.length === 0) {
         toast.error(t('orders.noSupplierAnalyticsToExport'));
         return;
@@ -262,6 +345,45 @@ export default function OrdersPage() {
     }
   };
 
+  // Read URL query params on mount and when they change
+  useEffect(() => {
+    const statusParam = searchParams.get('status');
+    const statuses = statusParam ? statusParam.split(',').filter(s => s.trim()) : [];
+    setStatusFilter(statuses);
+
+    const dateFromParam = searchParams.get('dateFrom') || '';
+    setDateFrom(dateFromParam);
+
+    const dateToParam = searchParams.get('dateTo') || '';
+    setDateTo(dateToParam);
+
+    const notifiedDateFromParam = searchParams.get('notifiedDateFrom') || '';
+    setNotifiedDateFrom(notifiedDateFromParam);
+
+    const notifiedDateToParam = searchParams.get('notifiedDateTo') || '';
+    setNotifiedDateTo(notifiedDateToParam);
+
+    // IMPORTANT UX: do NOT auto-open the filters panel just because URL params exist.
+    // If some flows want to open it programmatically, they can pass ?openFilters=1.
+    const shouldOpenFilters =
+      searchParams.get('openFilters') === '1' || searchParams.get('openFilters') === 'true';
+
+    if (shouldOpenFilters) {
+      setShowFilters(true);
+      setExpandedSections(prev => ({
+        ...prev,
+        status: true,
+        dates: true,
+      }));
+    }
+
+    // Reset to first page when filters change from URL
+    setPage(1);
+    
+    // Mark that URL params have been read
+    setUrlParamsRead(true);
+  }, [searchParams]);
+
   // Load filter data when filters panel opens
   useEffect(() => {
     if (showFilters && (suppliersList.length === 0 || customersList.length === 0 || usersList.length === 0)) {
@@ -270,8 +392,11 @@ export default function OrdersPage() {
   }, [showFilters]);
 
   useEffect(() => {
-    fetchOrders();
-  }, [debouncedSearch, statusFilter, dateFrom, dateTo, updatedDateFrom, updatedDateTo, supplierFilter, customerFilter, createdByFilter, minAmount, maxAmount, minOrderNumber, maxOrderNumber, hasObservations, page, sortBy, sortOrder]);
+    // Only fetch orders after URL params have been read (to avoid fetching with empty filters when navigating from dashboard)
+    if (urlParamsRead) {
+      fetchOrders();
+    }
+  }, [debouncedSearch, statusFilter, dateFrom, dateTo, updatedDateFrom, updatedDateTo, notifiedDateFrom, notifiedDateTo, supplierFilter, customerFilter, createdByFilter, minAmount, maxAmount, minOrderNumber, maxOrderNumber, hasObservations, productReferenceFilter, page, sortBy, sortOrder, urlParamsRead]);
 
   // Fetch supplier analytics when tab, year, or month changes
   useEffect(() => {
@@ -323,7 +448,16 @@ export default function OrdersPage() {
     }
   };
 
-  const fetchOrders = async () => {
+  const fetchOrders = async (useImmediateSearch: boolean = false) => {
+    // Cancel previous request if it exists
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+
+    // Create new AbortController for this request
+    const abortController = new AbortController();
+    abortControllerRef.current = abortController;
+
     try {
       setLoading(true);
       const params: any = {
@@ -331,8 +465,11 @@ export default function OrdersPage() {
         limit: 50,
       };
 
-      if (debouncedSearch.trim()) {
-        params.search = debouncedSearch.trim();
+      // Use searchQuery directly for immediate search (Enter key or button click)
+      // Otherwise use debouncedSearch for automatic search while typing
+      const searchValue = useImmediateSearch ? searchQuery : debouncedSearch;
+      if (searchValue.trim()) {
+        params.search = searchValue.trim();
       }
 
       if (statusFilter.length > 0) {
@@ -353,6 +490,14 @@ export default function OrdersPage() {
 
       if (updatedDateTo) {
         params.updatedDateTo = updatedDateTo;
+      }
+
+      if (notifiedDateFrom) {
+        params.notifiedDateFrom = notifiedDateFrom;
+      }
+
+      if (notifiedDateTo) {
+        params.notifiedDateTo = notifiedDateTo;
       }
 
       if (supplierFilter.length > 0) {
@@ -387,6 +532,10 @@ export default function OrdersPage() {
         params.hasObservations = hasObservations;
       }
 
+      if (productReferenceFilter.trim()) {
+        params.productReference = productReferenceFilter.trim();
+      }
+
       if (sortBy) {
         params.sortBy = sortBy;
       }
@@ -406,14 +555,33 @@ export default function OrdersPage() {
             totalPages: number;
           };
         };
-      }>('/orders', { params });
+      }>('/orders', { 
+        params,
+        signal: abortController.signal 
+      });
       
-      setOrders(response.data.data.orders || []);
-      setPagination(response.data.data.pagination);
+      // Only update state if request wasn't aborted
+      if (!abortController.signal.aborted) {
+        setOrders(response.data.data.orders || []);
+        setPagination(response.data.data.pagination);
+      }
     } catch (error: any) {
+      // Don't show error if request was aborted
+      if (error.name === 'AbortError' || abortController.signal.aborted || error.code === 'ERR_CANCELED' || error.message === 'canceled') {
+        return;
+      }
       toast.error(error.response?.data?.error?.message || t('orders.loadFailed'));
     } finally {
-      setLoading(false);
+      // Only set loading to false if this is still the current request (not aborted and still the active one)
+      if (abortControllerRef.current === abortController && !abortController.signal.aborted) {
+        setLoading(false);
+        abortControllerRef.current = null;
+      } else if (abortController.signal.aborted) {
+        // If this request was aborted, only set loading to false if there's no new request pending
+        if (abortControllerRef.current === null || abortControllerRef.current === abortController) {
+          setLoading(false);
+        }
+      }
     }
   };
 
@@ -458,6 +626,12 @@ export default function OrdersPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
+  // Handle manual search trigger (Enter key or search button click)
+  const handleManualSearch = () => {
+    setPage(1); // Reset to first page on new search
+    fetchOrders(true); // Use immediate search with current searchQuery (bypasses debounce)
+  };
+
   const clearFilters = () => {
     setSearchQuery('');
     setStatusFilter([]);
@@ -465,6 +639,8 @@ export default function OrdersPage() {
     setDateTo('');
     setUpdatedDateFrom('');
     setUpdatedDateTo('');
+    setNotifiedDateFrom('');
+    setNotifiedDateTo('');
     setSupplierFilter([]);
     setCustomerFilter('');
     setCreatedByFilter('');
@@ -473,7 +649,10 @@ export default function OrdersPage() {
     setMinOrderNumber('');
     setMaxOrderNumber('');
     setHasObservations('');
+    setProductReferenceFilter('');
     setPage(1);
+    // Clear URL params
+    setSearchParams({});
   };
 
   const handleSort = (field: string) => {
@@ -495,15 +674,13 @@ export default function OrdersPage() {
     return sortOrder === 'asc' ? <ArrowUp size={14} /> : <ArrowDown size={14} />;
   };
 
-  // Format date as DD/MM/YYYY HH:MM
+  // Format date as DD/MM/YYYY
   const formatDateTime = (dateString: string) => {
     const date = new Date(dateString);
     const day = String(date.getDate()).padStart(2, '0');
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const year = date.getFullYear();
-    const hours = String(date.getHours()).padStart(2, '0');
-    const minutes = String(date.getMinutes()).padStart(2, '0');
-    return `${day}/${month}/${year} ${hours}:${minutes}`;
+    return `${day}/${month}/${year}`;
   };
 
   const hasActiveFilters = useMemo(() => {
@@ -514,6 +691,8 @@ export default function OrdersPage() {
       dateTo ||
       updatedDateFrom ||
       updatedDateTo ||
+      notifiedDateFrom ||
+      notifiedDateTo ||
       supplierFilter.length > 0 ||
       customerFilter ||
       createdByFilter ||
@@ -521,9 +700,10 @@ export default function OrdersPage() {
       maxAmount ||
       minOrderNumber ||
       maxOrderNumber ||
-      hasObservations
+      hasObservations ||
+      productReferenceFilter.trim()
     );
-  }, [searchQuery, statusFilter, dateFrom, dateTo, updatedDateFrom, updatedDateTo, supplierFilter, customerFilter, createdByFilter, minAmount, maxAmount, minOrderNumber, maxOrderNumber, hasObservations]);
+  }, [searchQuery, statusFilter, dateFrom, dateTo, updatedDateFrom, updatedDateTo, notifiedDateFrom, notifiedDateTo, supplierFilter, customerFilter, createdByFilter, minAmount, maxAmount, minOrderNumber, maxOrderNumber, hasObservations, productReferenceFilter]);
 
   const toggleSection = (section: string) => {
     setExpandedSections(prev => ({
@@ -760,8 +940,21 @@ export default function OrdersPage() {
             placeholder={t('orders.searchPlaceholder')}
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleManualSearch();
+              }
+            }}
             className="search-input"
           />
+          <button
+            className="search-button"
+            onClick={handleManualSearch}
+            title={t('common.search') || 'Search'}
+          >
+            <Search size={18} />
+          </button>
           {searchQuery && (
             <button
               className="clear-search"
@@ -795,7 +988,7 @@ export default function OrdersPage() {
           <div className="filter-header">
             <h3>{t('common.filters')}</h3>
             <button className="btn-icon-small" onClick={() => setShowFilters(false)} title={t('common.close')}>
-              <X size={18} />
+              <X size={16} />
             </button>
           </div>
 
@@ -821,46 +1014,91 @@ export default function OrdersPage() {
                     <button className="preset-btn" onClick={() => applyDatePreset('last30Days')}>{t('orders.last30Days')}</button>
                     <button className="preset-btn" onClick={() => applyDatePreset('last90Days')}>{t('orders.last90Days')}</button>
                   </div>
-                  <div className="filter-row">
-                    <div className="filter-group">
-                      <label>{t('orders.createdDateFrom')}</label>
-                      <input
-                        type="date"
-                        value={dateFrom}
-                        onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
-                        className="filter-input"
-                      />
+                  
+                  {/* Date Groups in a Row */}
+                  <div className="date-groups-row">
+                    {/* Created Date Group */}
+                    <div className="date-filter-group">
+                      <div className="date-group-header">
+                        <span className="date-group-title">{t('orders.createdAt')}</span>
+                      </div>
+                      <div className="filter-row filter-row-2">
+                        <div className="filter-group">
+                          <label>{t('orders.createdDateFrom')}</label>
+                          <input
+                            type="date"
+                            value={dateFrom}
+                            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
+                            className="filter-input"
+                          />
+                        </div>
+                        <div className="filter-group">
+                          <label>{t('orders.createdDateTo')}</label>
+                          <input
+                            type="date"
+                            value={dateTo}
+                            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
+                            className="filter-input"
+                            min={dateFrom || undefined}
+                          />
+                        </div>
+                      </div>
                     </div>
-                    <div className="filter-group">
-                      <label>{t('orders.createdDateTo')}</label>
-                      <input
-                        type="date"
-                        value={dateTo}
-                        onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
-                        className="filter-input"
-                        min={dateFrom || undefined}
-                      />
+
+                    {/* Updated Date Group */}
+                    <div className="date-filter-group">
+                      <div className="date-group-header">
+                        <span className="date-group-title">{t('orders.updatedAt')}</span>
+                      </div>
+                      <div className="filter-row filter-row-2">
+                        <div className="filter-group">
+                          <label>{t('orders.updatedDateFrom')}</label>
+                          <input
+                            type="date"
+                            value={updatedDateFrom}
+                            onChange={(e) => { setUpdatedDateFrom(e.target.value); setPage(1); }}
+                            className="filter-input"
+                          />
+                        </div>
+                        <div className="filter-group">
+                          <label>{t('orders.updatedDateTo')}</label>
+                          <input
+                            type="date"
+                            value={updatedDateTo}
+                            onChange={(e) => { setUpdatedDateTo(e.target.value); setPage(1); }}
+                            className="filter-input"
+                            min={updatedDateFrom || undefined}
+                          />
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="filter-row">
-                    <div className="filter-group">
-                      <label>{t('orders.updatedDateFrom')}</label>
-                      <input
-                        type="date"
-                        value={updatedDateFrom}
-                        onChange={(e) => { setUpdatedDateFrom(e.target.value); setPage(1); }}
-                        className="filter-input"
-                      />
-                    </div>
-                    <div className="filter-group">
-                      <label>{t('orders.updatedDateTo')}</label>
-                      <input
-                        type="date"
-                        value={updatedDateTo}
-                        onChange={(e) => { setUpdatedDateTo(e.target.value); setPage(1); }}
-                        className="filter-input"
-                        min={updatedDateFrom || undefined}
-                      />
+
+                    {/* Notified Date Group */}
+                    <div className="date-filter-group">
+                      <div className="date-group-header">
+                        <span className="date-group-title">{t('orders.notifiedAt')}</span>
+                      </div>
+                      <div className="filter-row filter-row-2">
+                        <div className="filter-group">
+                          <label>{t('orders.notifiedDateFrom')}</label>
+                          <input
+                            type="date"
+                            value={notifiedDateFrom}
+                            onChange={(e) => { setNotifiedDateFrom(e.target.value); setPage(1); }}
+                            className="filter-input"
+                          />
+                        </div>
+                        <div className="filter-group">
+                          <label>{t('orders.notifiedDateTo')}</label>
+                          <input
+                            type="date"
+                            value={notifiedDateTo}
+                            onChange={(e) => { setNotifiedDateTo(e.target.value); setPage(1); }}
+                            className="filter-input"
+                            min={notifiedDateFrom || undefined}
+                          />
+                        </div>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -904,7 +1142,7 @@ export default function OrdersPage() {
             </div>
 
             {/* Entities Filter (Suppliers, Customers, Users) */}
-            <div className="filter-section">
+            <div className="filter-section" data-section="entities">
               <button 
                 className="filter-section-header"
                 onClick={() => toggleSection('entities')}
@@ -915,12 +1153,12 @@ export default function OrdersPage() {
               </button>
               {expandedSections.entities && (
                 <div className="filter-section-content">
-                  <div className="filter-group">
+                  <div className="filter-group" style={{ gridColumn: '1 / -1' }}>
                     <label>{t('orders.suppliers')}</label>
                     {loadingFilters ? (
                       <Loader2 className="spinner" size={16} />
                     ) : (
-                      <div className="multi-select-container">
+                      <div className="suppliers-checkbox-row">
                         {suppliersList.map((supplier) => (
                           <label key={supplier.id} className="checkbox-label">
                             <input
@@ -983,7 +1221,7 @@ export default function OrdersPage() {
               </button>
               {expandedSections.amounts && (
                 <div className="filter-section-content">
-                  <div className="filter-row">
+                  <div className="filter-row filter-row-4">
                     <div className="filter-group">
                       <label>{t('orders.minAmount')}</label>
                       <input
@@ -1006,8 +1244,6 @@ export default function OrdersPage() {
                         placeholder="999999.99"
                       />
                     </div>
-                  </div>
-                  <div className="filter-row">
                     <div className="filter-group">
                       <label>{t('orders.minOrderNumber')}</label>
                       <input
@@ -1034,7 +1270,7 @@ export default function OrdersPage() {
             </div>
 
             {/* Advanced Filters */}
-            <div className="filter-section">
+            <div className="filter-section" data-section="advanced">
               <button 
                 className="filter-section-header"
                 onClick={() => toggleSection('advanced')}
@@ -1044,7 +1280,7 @@ export default function OrdersPage() {
                 {expandedSections.advanced ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
               </button>
               {expandedSections.advanced && (
-                <div className="filter-section-content">
+                <div className="filter-section-content" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
                   <div className="filter-group">
                     <label>{t('orders.hasObservations')}</label>
                     <select
@@ -1056,6 +1292,16 @@ export default function OrdersPage() {
                       <option value="true">{t('orders.yes')}</option>
                       <option value="false">{t('orders.no')}</option>
                     </select>
+                  </div>
+                  <div className="filter-group">
+                    <label>{t('products.reference')}</label>
+                    <input
+                      type="text"
+                      placeholder={t('products.reference')}
+                      value={productReferenceFilter}
+                      onChange={(e) => { setProductReferenceFilter(e.target.value); setPage(1); }}
+                      className="filter-input"
+                    />
                   </div>
                 </div>
               )}
@@ -1086,13 +1332,13 @@ export default function OrdersPage() {
                 ))}
                 {dateFrom && (
                   <span className="filter-tag">
-                    {t('orders.createdFrom')}: {new Date(dateFrom).toLocaleDateString()}
+                    {t('orders.createdFrom')}: {formatDateTime(dateFrom)}
                     <button onClick={() => { setDateFrom(''); setPage(1); }}><X size={12} /></button>
                   </span>
                 )}
                 {dateTo && (
                   <span className="filter-tag">
-                    {t('orders.createdTo')}: {new Date(dateTo).toLocaleDateString()}
+                    {t('orders.createdTo')}: {formatDateTime(dateTo)}
                     <button onClick={() => { setDateTo(''); setPage(1); }}><X size={12} /></button>
                   </span>
                 )}
@@ -1112,6 +1358,18 @@ export default function OrdersPage() {
                   <span className="filter-tag">
                     {t('orders.amount')}: {minAmount || '0'} - {maxAmount || '∞'}
                     <button onClick={() => { setMinAmount(''); setMaxAmount(''); setPage(1); }}><X size={12} /></button>
+                  </span>
+                )}
+                {hasObservations && (
+                  <span className="filter-tag">
+                    {t('orders.hasObservations')}: {hasObservations === 'true' ? t('orders.yes') : t('orders.no')}
+                    <button onClick={() => { setHasObservations(''); setPage(1); }}><X size={12} /></button>
+                  </span>
+                )}
+                {productReferenceFilter.trim() && (
+                  <span className="filter-tag">
+                    {t('products.reference')}: "{productReferenceFilter}"
+                    <button onClick={() => { setProductReferenceFilter(''); setPage(1); }}><X size={12} /></button>
                   </span>
                 )}
               </div>
@@ -1237,7 +1495,7 @@ export default function OrdersPage() {
                         toast.success(textToCopy, { duration: 3000 });
                       }}
                       title={t('orders.clickToCopy')}
-                      style={{ cursor: 'pointer', textDecoration: 'underline' }}
+                      style={{ cursor: 'pointer', textDecoration: 'underline', fontSize: '1.1rem', fontWeight: 600 }}
                     >
                       {order.orderNumber || '-'}
                     </span>
@@ -1283,7 +1541,39 @@ export default function OrdersPage() {
                   <td>{order.createdBy?.username || '-'}</td>
                   <td>{formatDateTime(order.createdAt)}</td>
                   <td>{formatDateTime(order.updatedAt)}</td>
-                  <td>{order.observations?.trim() ? t('common.yes') : t('common.no')}</td>
+                  <td>
+                    {order.observations?.trim() ? (
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '4px 10px',
+                          borderRadius: 'var(--radius-full)',
+                          fontSize: 'var(--text-xs)',
+                          fontWeight: 600,
+                          backgroundColor: 'var(--warning-light, #fef3c7)',
+                          color: 'var(--warning, #f59e0b)',
+                          border: '1px solid var(--warning, #f59e0b)',
+                        }}
+                      >
+                        {t('common.yes')}
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '4px 10px',
+                          borderRadius: 'var(--radius-full)',
+                          fontSize: 'var(--text-xs)',
+                          fontWeight: 600,
+                          backgroundColor: 'var(--bg-secondary)',
+                          color: 'var(--text-secondary)',
+                          border: '1px solid var(--border-color)',
+                        }}
+                      >
+                        {t('common.no')}
+                      </span>
+                    )}
+                  </td>
                   <td>
                     <button
                       className="btn-link"

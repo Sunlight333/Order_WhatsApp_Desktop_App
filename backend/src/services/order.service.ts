@@ -32,7 +32,7 @@ export interface UpdateOrderInput {
   customerId?: string; // Reference to existing customer
   customerPhone?: string; // Optional now
   countryCode?: string; // Country code for phone (default +34)
-  observations?: string;
+  observations?: string | null; // Allow null to clear observations
   suppliers: Array<{
     name: string;
     supplierId?: string;
@@ -464,15 +464,70 @@ export async function updateOrderStatus(
   // Get current order
   const currentOrder = await prisma.order.findUnique({
     where: { id: orderId },
-    select: { status: true },
+    select: {
+      status: true,
+      products: {
+        select: {
+          id: true,
+          quantity: true,
+          receivedQuantity: true,
+        },
+      },
+    },
   });
 
   if (!currentOrder) {
     throw createError('ORDER_NOT_FOUND', 'Order not found', 404);
   }
 
+  // Business rule:
+  // When setting "RECEIVED" ("Pendiente de avisar"), auto-complete received quantities:
+  // set each product.receivedQuantity = product.quantity (max).
+  // This allows activating RECEIVED even from INCOMPLETO, while ensuring quantities are filled.
+  const shouldAutoCompleteReceivedQuantities = status === 'RECEIVED';
+
+  // Business rule:
+  // "READY_TO_SEND" can only be set when the order is completed (all items fully received).
+  // We define "completed" by products being fully received (calculated status = RECEIVED),
+  // regardless of the current workflow stage (e.g. it may already be NOTIFIED_*).
+  if (status === 'READY_TO_SEND') {
+    const calculated = calculateOrderStatus(currentOrder.products as any);
+    const isCompletedByProducts = calculated === 'RECEIVED';
+
+    if (!isCompletedByProducts) {
+      throw createError(
+        'READY_TO_SEND_NOT_ALLOWED',
+        '"Preparado para enviar" solo se puede activar cuando el pedido está completado.',
+        400
+      );
+    }
+  }
+
+  // Business rule:
+  // "SENT" can only be set when the order is currently in "READY_TO_SEND" status.
+  if (status === 'SENT') {
+    if (currentOrder.status !== 'READY_TO_SEND') {
+      throw createError(
+        'SENT_NOT_ALLOWED',
+        '"Enviado" solo se puede activar cuando el pedido está en estado "Preparado para enviar".',
+        400
+      );
+    }
+  }
+
   // Update order in transaction
   await prisma.$transaction(async (tx) => {
+    if (shouldAutoCompleteReceivedQuantities) {
+      const products = Array.isArray(currentOrder.products) ? currentOrder.products : [];
+      for (const p of products) {
+        // Persist as TEXT (matches existing schema). Keep exactly the ordered quantity string.
+        await tx.orderProduct.update({
+          where: { id: (p as any).id },
+          data: { receivedQuantity: (p as any).quantity ?? null },
+        });
+      }
+    }
+
     // Update order
     await tx.order.update({
       where: { id: orderId },
@@ -1119,12 +1174,17 @@ export async function updateOrder(orderId: string, userId: string, input: Update
     }
 
     // orderNumber cannot be updated once created
+    // Handle observations: if explicitly provided (including null), update it; otherwise keep existing value
+    const finalObservations = input.observations !== undefined 
+      ? (input.observations?.trim() || null)
+      : existingOrder.observations;
+    
     const updateData: any = {
       customerName: finalCustomerName,
       customerId,
       customerPhone: finalCustomerPhone,
       countryCode: finalCountryCode,
-      observations: input.observations?.trim(),
+      observations: finalObservations,
     };
     
     // Track field changes for order basic info
@@ -1166,8 +1226,12 @@ export async function updateOrder(orderId: string, userId: string, input: Update
 
     // Check observations change
     const oldObservations = existingOrder.observations || '';
-    const newObservations = input.observations?.trim() || '';
-    if (oldObservations !== newObservations) {
+    const newObservations = input.observations !== undefined 
+      ? (input.observations?.trim() || null)
+      : existingOrder.observations;
+    const oldObservationsForComparison = oldObservations || null;
+    const newObservationsForComparison = newObservations || null;
+    if (oldObservationsForComparison !== newObservationsForComparison) {
       fieldChanges.push({
         field: 'observations',
         oldValue: oldObservations || null,

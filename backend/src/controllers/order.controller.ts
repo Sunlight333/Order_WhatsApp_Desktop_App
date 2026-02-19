@@ -37,11 +37,36 @@ export async function listOrdersController(req: Request, res: Response, next: Ne
     // If user is not SUPER_ADMIN, check if they should only see their own orders
     if (req.user && req.user.role !== 'SUPER_ADMIN') {
       try {
-        const config = await getConfigValue('users_see_only_own_orders');
-        const usersSeeOnlyOwnOrders = config?.value === 'true';
-        
-        // If the setting is enabled, force filter by current user's ID
-        if (usersSeeOnlyOwnOrders) {
+        // Global default
+        const globalConfig = await getConfigValue('users_see_only_own_orders');
+        const globalOwnOnly = globalConfig?.value === 'true';
+
+        // Per-user override (JSON map: { [userId]: "OWN" | "ALL" })
+        let override: 'OWN' | 'ALL' | null = null;
+        try {
+          const enabledConfig = await getConfigValue('users_orders_visibility_overrides_enabled');
+          const overridesEnabled = enabledConfig?.value === 'true';
+          if (overridesEnabled) {
+            const overridesConfig = await getConfigValue('users_orders_visibility_overrides');
+            if (overridesConfig?.value) {
+              const parsed = JSON.parse(overridesConfig.value) as Record<string, unknown>;
+              const raw = parsed?.[req.user.userId];
+              if (raw === 'OWN' || raw === 'ALL') {
+                override = raw;
+              }
+            }
+          }
+        } catch (e) {
+          // Ignore parse errors for backward compatibility
+        }
+
+        // Apply effective policy:
+        // - Override OWN => force own orders
+        // - Override ALL => always allow all orders (even if global is enabled)
+        // - Otherwise => use global config
+        const effectiveOwnOnly = override === 'OWN' ? true : override === 'ALL' ? false : globalOwnOnly;
+
+        if (effectiveOwnOnly) {
           createdById = req.user.userId;
         }
       } catch (error) {

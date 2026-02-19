@@ -5,6 +5,7 @@ import {
   createProductController,
   updateProductController,
   deleteProductController,
+  getPendingProductsController,
 } from '../controllers/product.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
@@ -12,6 +13,7 @@ const router = Router();
 
 // List is available to all authenticated users (for autocomplete)
 router.get('/', authenticate, listProductsController);
+router.get('/pending', authenticate, getPendingProductsController);
 router.get('/:id', authenticate, getProductController);
 
 // CRUD operations require SUPER_ADMIN

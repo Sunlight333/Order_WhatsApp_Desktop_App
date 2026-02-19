@@ -5,6 +5,7 @@ import {
   createProduct,
   updateProduct,
   deleteProduct,
+  getPendingProducts,
   CreateProductInput,
   UpdateProductInput,
 } from '../services/product.service';
@@ -121,6 +122,19 @@ export async function deleteProductController(req: Request, res: Response): Prom
     await deleteProduct(id);
 
     res.status(200).json(createSuccessResponse(null, 'Product deleted successfully'));
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * GET /api/v1/products/pending
+ * Get pending products (products that haven't been fully received)
+ */
+export async function getPendingProductsController(req: Request, res: Response): Promise<void> {
+  try {
+    const pendingProducts = await getPendingProducts();
+    res.status(200).json(createSuccessResponse(pendingProducts));
   } catch (error) {
     throw error;
   }

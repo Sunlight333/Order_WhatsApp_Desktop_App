@@ -10,18 +10,22 @@ import {
   User,
   Package,
   AlertCircle,
+  AlertTriangle,
   PhoneCall,
   Loader2,
   Plus,
   Send,
   CheckCircle,
-  Trash2
+  Trash2,
+  X,
+  Save
 } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import ConfirmModal from '../components/ConfirmModal';
 import { useOrderStatusConfig, getStatusConfig } from '../hooks/useOrderStatusConfig';
 import WhatsAppModal from '../components/WhatsAppModal';
+import WhatsAppIcon from '../components/WhatsAppIcon';
 import { useAuthStore } from '../store/authStore';
 import '../styles/order-detail.css';
 
@@ -83,7 +87,7 @@ interface Order {
   auditLogs?: AuditLog[];
 }
 
-type OrderStatus = 'PENDING' | 'RECEIVED' | 'NOTIFIED_CALL' | 'NOTIFIED_WHATSAPP' | 'CANCELLED' | 'INCOMPLETO' | 'DELIVERED_COUNTER' | 'READY_TO_SEND';
+type OrderStatus = 'PENDING' | 'RECEIVED' | 'NOTIFIED_CALL' | 'NOTIFIED_WHATSAPP' | 'CANCELLED' | 'INCOMPLETO' | 'DELIVERED_COUNTER' | 'READY_TO_SEND' | 'SENT';
 
 export default function OrderDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -102,6 +106,8 @@ export default function OrderDetailPage() {
   const [localReceivedQuantities, setLocalReceivedQuantities] = useState<Record<string, string>>({});
   const [showDeleteModal, setShowDeleteModal] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [showSaveQuantityModal, setShowSaveQuantityModal] = useState(false);
+  const [pendingQuantityUpdate, setPendingQuantityUpdate] = useState<{ productId: string; value: string | null } | null>(null);
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'SUPER_ADMIN';
 
@@ -110,6 +116,7 @@ export default function OrderDetailPage() {
       fetchOrder(id);
     }
   }, [id]);
+
 
   const fetchOrder = async (orderId: string) => {
     try {
@@ -127,18 +134,23 @@ export default function OrderDetailPage() {
     }
   };
 
-  const getStatusIcon = (status: string) => {
+  const getStatusIcon = (status: string, color?: string) => {
+    const iconProps = { size: 16, color: color || 'currentColor' };
     switch (status) {
       case 'RECEIVED':
-        return <Package size={16} />;
+        return <AlertTriangle {...iconProps} />;
       case 'NOTIFIED_CALL':
-        return <PhoneCall size={16} />;
+        return <PhoneCall {...iconProps} />;
       case 'NOTIFIED_WHATSAPP':
-        return <MessageSquare size={16} />;
+        return <MessageSquare {...iconProps} />;
       case 'READY_TO_SEND':
-        return <Send size={16} />;
+        return <Send {...iconProps} />;
+      case 'SENT':
+        return <CheckCircle {...iconProps} />;
+      case 'CANCELLED':
+        return <X {...iconProps} />;
       default:
-        return <Clock size={16} />;
+        return <Clock {...iconProps} />;
     }
   };
 
@@ -406,6 +418,11 @@ export default function OrderDetailPage() {
   const handleUpdateReceivedQuantity = async (productId: string, receivedQuantity: string | null) => {
     if (!order || !id) return;
 
+    // Check if this product is already being updated to prevent race conditions
+    if (updatingProducts.has(productId)) {
+      return;
+    }
+
     // Find the product to get the ordered quantity
     const product = order.products.find((p) => p.id === productId);
     if (!product) return;
@@ -459,7 +476,7 @@ export default function OrderDetailPage() {
         receivedQuantity: receivedQuantity || null,
       });
 
-      // Clear local value after successful update
+      // Clear local value for this product after successful update
       setLocalReceivedQuantities((prev) => {
         const newState = { ...prev };
         delete newState[productId];
@@ -470,6 +487,7 @@ export default function OrderDetailPage() {
       if (id) {
         await fetchOrder(id);
       }
+
       toast.success(t('orderDetail.receivedQuantityUpdated'));
     } catch (error: any) {
       console.error('Failed to update received quantity:', error);
@@ -490,6 +508,60 @@ export default function OrderDetailPage() {
     }
   };
 
+  const handleSaveQuantityClick = (productId: string) => {
+    const value = localReceivedQuantities[productId];
+    const product = order?.products.find((p) => p.id === productId);
+    const currentSaved = product?.receivedQuantity || '';
+    
+    if (value !== undefined && value !== currentSaved) {
+      handleUpdateReceivedQuantity(productId, value || null);
+    }
+  };
+
+  const handleQuantityBlur = (productId: string, value: string) => {
+    const product = order?.products.find((p) => p.id === productId);
+    const currentSaved = product?.receivedQuantity || '';
+    
+    // Only show confirmation if value has changed
+    if (value !== currentSaved) {
+      setPendingQuantityUpdate({ productId, value: value || null });
+      setShowSaveQuantityModal(true);
+    } else {
+      // Clear local value if unchanged
+      setLocalReceivedQuantities((prev) => {
+        const newState = { ...prev };
+        delete newState[productId];
+        return newState;
+      });
+    }
+  };
+
+  const confirmSaveQuantity = () => {
+    if (pendingQuantityUpdate) {
+      handleUpdateReceivedQuantity(pendingQuantityUpdate.productId, pendingQuantityUpdate.value);
+      setShowSaveQuantityModal(false);
+      setPendingQuantityUpdate(null);
+    }
+  };
+
+  const cancelSaveQuantity = () => {
+    if (pendingQuantityUpdate) {
+      // Restore saved value
+      const product = order?.products.find((p) => p.id === pendingQuantityUpdate.productId);
+      setLocalReceivedQuantities((prev) => {
+        const newState = { ...prev };
+        if (product) {
+          newState[pendingQuantityUpdate.productId] = product.receivedQuantity || '';
+        } else {
+          delete newState[pendingQuantityUpdate.productId];
+        }
+        return newState;
+      });
+      setShowSaveQuantityModal(false);
+      setPendingQuantityUpdate(null);
+    }
+  };
+
   const confirmStatusUpdate = () => {
     if (selectedStatus) {
       // Validate cancellation reason is required when cancelling
@@ -502,7 +574,22 @@ export default function OrderDetailPage() {
   };
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleString();
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  const formatDateTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
   };
 
   const getActionIcon = (action: string) => {
@@ -552,7 +639,7 @@ export default function OrderDetailPage() {
   const translateStatusValue = (statusValue: string) => {
     // If it's a status code, translate it using getStatusLabel
     // Common status codes that need translation
-    const statusCodes = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO', 'DELIVERED_COUNTER', 'READY_TO_SEND'];
+    const statusCodes = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO', 'DELIVERED_COUNTER', 'READY_TO_SEND', 'SENT'];
     if (statusCodes.includes(statusValue)) {
       return getStatusLabel(statusValue);
     }
@@ -628,9 +715,9 @@ export default function OrderDetailPage() {
               <div className="detail-value">
                 <span 
                   className="status-badge status-custom"
-                  style={getStatusStyle(order.status)}
+                  style={{ ...getStatusStyle(order.status), display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}
                 >
-                  {getStatusIcon(order.status)}
+                  {getStatusIcon(order.status, getStatusStyle(order.status).color)}
                   {getStatusLabel(order.status)}
                 </span>
               </div>
@@ -702,9 +789,7 @@ export default function OrderDetailPage() {
                   onClick={handleWhatsAppClick}
                   title={t('orderDetail.sendWhatsApp')}
                 >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="#25D366">
-                    <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .96 4.534.96 10.09c0 1.79.463 3.47 1.27 4.94L0 24l9.218-2.38a11.807 11.807 0 005.832 1.53h.005c5.554 0 10.09-4.535 10.09-10.09 0-2.76-1.12-5.26-2.933-7.075"/>
-                  </svg>
+                  <WhatsAppIcon size={24} />
                 </button>
               </div>
             </div>
@@ -730,7 +815,7 @@ export default function OrderDetailPage() {
           <h2>{t('orderDetail.updateStatus')}</h2>
           <div className="status-actions">
             {/* Show all status options, allowing users to change to any status */}
-            {(['PENDING', 'RECEIVED', 'READY_TO_SEND', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'DELIVERED_COUNTER', 'CANCELLED', 'INCOMPLETO'] as OrderStatus[]).map((status) => {
+            {(['PENDING', 'RECEIVED', 'READY_TO_SEND', 'SENT', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'DELIVERED_COUNTER', 'CANCELLED', 'INCOMPLETO'] as OrderStatus[]).map((status) => {
               const isActive = order.status === status;
               
               // Block changing to PENDING if order is already completed
@@ -738,60 +823,101 @@ export default function OrderDetailPage() {
               const completedStates: OrderStatus[] = ['RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'DELIVERED_COUNTER'];
               const isOrderCompleted = completedStates.includes(order.status as OrderStatus);
               const isBlockedToPending = status === 'PENDING' && isOrderCompleted;
+
+              // For "RECEIVED" and "READY_TO_SEND" we require received quantities to be filled and fully received.
+              const productsArr = Array.isArray(order.products) ? order.products : [];
+              const isFullyReceivedByProducts =
+                productsArr.length === 0 ||
+                productsArr.every((p) => {
+                  const qty = parseFloat(p.quantity || '0') || 0;
+                  if (p.receivedQuantity === null || p.receivedQuantity === undefined || p.receivedQuantity === '') return false;
+                  const rec = parseFloat(p.receivedQuantity);
+                  if (Number.isNaN(rec)) return false;
+                  return rec >= qty;
+                });
+
+              // RECEIVED ("Pendiente de avisar") is allowed even if the order is currently INCOMPLETO;
+              // when selected, backend will auto-fill received quantities to max.
+              const isBlockedReceived = false;
+              // READY_TO_SEND should be enabled when order is completed; since RECEIVED now requires quantities,
+              // we can allow READY_TO_SEND when current status is a "completed" workflow status.
+              const isBlockedReadyToSend =
+                status === 'READY_TO_SEND' && (!isOrderCompleted || !isFullyReceivedByProducts);
               
-              const isDisabled = updating || isActive || isBlockedToPending;
+              // SENT can only be set when order is currently in READY_TO_SEND status
+              const isBlockedSent = status === 'SENT' && order.status !== 'READY_TO_SEND';
+              
+              const isDisabled = updating || isActive || isBlockedToPending || isBlockedReadyToSend || isBlockedReceived || isBlockedSent;
               const statusConfigData = getStatusConfig(status, statusConfig);
               
-              // Get icon for each status
-              let statusIcon;
-              switch (status) {
-                case 'PENDING':
-                  statusIcon = <Clock size={20} />;
-                  break;
-                case 'RECEIVED':
-                case 'DELIVERED_COUNTER':
-                  statusIcon = <Package size={20} />;
-                  break;
-                case 'NOTIFIED_CALL':
-                  statusIcon = <PhoneCall size={20} />;
-                  break;
-                case 'NOTIFIED_WHATSAPP':
-                  statusIcon = (
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="#25D366">
-                <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347m-5.421 7.403h-.004a9.87 9.87 0 01-5.031-1.378l-.361-.214-3.741.982.998-3.648-.235-.374a9.86 9.86 0 01-1.51-5.26c.001-5.45 4.436-9.884 9.888-9.884 2.64 0 5.122 1.03 6.988 2.898a9.825 9.825 0 012.893 6.994c-.003 5.45-4.437 9.884-9.885 9.884m8.413-18.297A11.815 11.815 0 0012.05 0C5.495 0 .96 4.534.96 10.09c0 1.79.463 3.47 1.27 4.94L0 24l9.218-2.38a11.807 11.807 0 005.832 1.53h.005c5.554 0 10.09-4.535 10.09-10.09 0-2.76-1.12-5.26-2.933-7.075"/>
-              </svg>
-                  );
-                  break;
-                case 'READY_TO_SEND':
-                  statusIcon = <Send size={20} />;
-                  break;
-                default:
-                  statusIcon = <Clock size={20} />;
-              }
-
               // Use the exact same style values as the status badge
               const statusStyle = getStatusStyle(status);
+              
+              // Get icon for each status with the same color as text
+              let statusIcon;
+              const iconColor = statusStyle.color;
+              switch (status) {
+                case 'PENDING':
+                  statusIcon = <Clock size={20} color={iconColor} />;
+                  break;
+                case 'RECEIVED':
+                  statusIcon = <AlertTriangle size={20} color={iconColor} />;
+                  break;
+                case 'DELIVERED_COUNTER':
+                  statusIcon = <Package size={20} color={iconColor} />;
+                  break;
+                case 'NOTIFIED_CALL':
+                  statusIcon = <PhoneCall size={20} color={iconColor} />;
+                  break;
+                case 'NOTIFIED_WHATSAPP':
+                  statusIcon = <WhatsAppIcon size={20} color={iconColor} />;
+                  break;
+                case 'READY_TO_SEND':
+                  statusIcon = <Send size={20} color={iconColor} />;
+                  break;
+                case 'SENT':
+                  statusIcon = <CheckCircle size={20} color={iconColor} />;
+                  break;
+                case 'CANCELLED':
+                  statusIcon = <X size={20} color={iconColor} />;
+                  break;
+                default:
+                  statusIcon = <Clock size={20} color={iconColor} />;
+              }
               
               return (
             <button
                   key={status}
                   className="status-action-btn"
                   style={{
-                    // Keep button-specific styles (border, etc.)
-                    borderColor: isActive ? 'var(--primary-color)' : statusConfigData.color || '#6b7280',
-                    // Use exact same colors as status badge
-                    color: isActive ? 'var(--primary-color)' : statusStyle.color,
-                    backgroundColor: isActive ? 'var(--primary-light)' : statusStyle.backgroundColor,
+                    // Use configured colors even when active, but add visual distinction
+                    borderColor: statusConfigData.color || '#6b7280',
+                    borderWidth: isActive ? '3px' : '2px',
+                    // Use exact same colors as status badge (always use configured colors)
+                    color: statusStyle.color,
+                    backgroundColor: statusStyle.backgroundColor,
                     // Use exact same font styles as status badge
                     fontFamily: statusStyle.fontFamily,
                     fontSize: statusStyle.fontSize,
                     fontWeight: statusStyle.fontWeight,
                     // Keep button behavior
                     cursor: isActive ? 'default' : 'pointer',
+                    // Add visual distinction for active state: thicker border and subtle shadow
+                    boxShadow: isActive ? `0 0 0 3px ${statusConfigData.color || '#6b7280'}30, 0 2px 4px rgba(0,0,0,0.1)` : 'none',
                   }}
                   onClick={() => status === 'NOTIFIED_WHATSAPP' ? handleWhatsAppClick() : handleStatusUpdate(status)}
                   disabled={isDisabled}
-                  title={isActive ? t('orderDetail.currentStatus') : getStatusLabel(status)}
+                  title={
+                    isActive
+                      ? t('orderDetail.currentStatus')
+                      : status === 'RECEIVED'
+                        ? 'Marcar como "Pendiente de avisar" completará automáticamente las cantidades recibidas.'
+                        : isBlockedReadyToSend
+                          ? '"Preparado para enviar" solo se puede activar cuando el pedido está completado.'
+                        : isBlockedSent
+                          ? '"Enviado" solo se puede activar cuando el pedido está en estado "Preparado para enviar".'
+                        : getStatusLabel(status)
+                  }
                   onMouseEnter={(e) => {
                     if (!isDisabled && !isActive) {
                       e.currentTarget.style.background = statusConfigData.color || '#6b7280';
@@ -864,22 +990,15 @@ export default function OrderDetailPage() {
                             }}
                             onKeyDown={(e) => {
                               if (e.key === 'Enter') {
-                                e.currentTarget.blur(); // This will trigger onBlur which will update
+                                e.preventDefault();
+                                const value = e.currentTarget.value;
+                                handleQuantityBlur(product.id, value);
+                                e.currentTarget.blur();
                               }
                             }}
                             onBlur={(e) => {
                               const value = e.target.value;
-                              // Update when focus is lost or Enter is pressed
-                              if (value !== (product.receivedQuantity || '')) {
-                                handleUpdateReceivedQuantity(product.id, value || null);
-                              } else {
-                                // Clear local value if unchanged
-                                setLocalReceivedQuantities((prev) => {
-                                  const newState = { ...prev };
-                                  delete newState[product.id];
-                                  return newState;
-                                });
-                              }
+                              handleQuantityBlur(product.id, value);
                             }}
                             placeholder="0"
                             disabled={isUpdating}
@@ -891,6 +1010,30 @@ export default function OrderDetailPage() {
                               backgroundColor: isReceived ? 'var(--success-light)' : 'var(--input-bg)',
                             }}
                           />
+                          {localReceivedQuantities[product.id] !== undefined && 
+                           localReceivedQuantities[product.id] !== (product.receivedQuantity || '') && (
+                            <button
+                              onClick={() => handleSaveQuantityClick(product.id)}
+                              disabled={isUpdating}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '4px',
+                                border: '1px solid var(--primary-color)',
+                                borderRadius: '4px',
+                                backgroundColor: 'var(--primary-color)',
+                                color: 'white',
+                                cursor: isUpdating ? 'not-allowed' : 'pointer',
+                                opacity: isUpdating ? 0.5 : 1,
+                                minWidth: '28px',
+                                minHeight: '28px',
+                              }}
+                              title={t('common.save') || 'Save'}
+                            >
+                              <Save size={14} />
+                            </button>
+                          )}
                           {isFullyReceived && (
                             <CheckCircle size={16} style={{ color: 'var(--success)' }} />
                           )}
@@ -926,7 +1069,7 @@ export default function OrderDetailPage() {
                     <div className="audit-header">
                       <span className="audit-action">{getActionLabel(log.action)}</span>
                       <span className="audit-user">{t('orderDetail.by')} {log.user.username}</span>
-                      <span className="audit-time">{formatDate(log.timestamp)}</span>
+                      <span className="audit-time">{formatDateTime(log.timestamp)}</span>
                     </div>
                     {log.fieldChanged && (
                       <div className="audit-details">
@@ -945,7 +1088,7 @@ export default function OrderDetailPage() {
                           </div>
                         )}
                         <div>
-                          <span className="field-name">{getFieldLabel(log.fieldChanged)}:</span>
+                          <span className="field-name">{getFieldLabel(log.fieldChanged)}: </span>
                           {log.oldValue && (
                             <span className="old-value">
                               {log.fieldChanged === 'price' ? '€' : ''}
@@ -982,9 +1125,9 @@ export default function OrderDetailPage() {
             <div className="status-preview">
               <span 
                 className="status-badge status-custom"
-                style={getStatusStyle(selectedStatus!)}
+                style={{ ...getStatusStyle(selectedStatus!), display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}
               >
-                {getStatusIcon(selectedStatus!)}
+                {getStatusIcon(selectedStatus!, getStatusStyle(selectedStatus!).color)}
                 {getStatusLabel(selectedStatus!)}
               </span>
             </div>
@@ -1081,6 +1224,32 @@ export default function OrderDetailPage() {
           loading={deleting}
         />
       )}
+
+      {/* Save Quantity Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showSaveQuantityModal}
+        onClose={cancelSaveQuantity}
+        onConfirm={confirmSaveQuantity}
+        title={t('orderDetail.saveQuantity') || 'Save Quantity'}
+        message={
+          pendingQuantityUpdate ? (
+            <div>
+              <p>{t('orderDetail.saveQuantityMessage') || 'Do you want to save the changes to the received quantity?'}</p>
+              {order && (() => {
+                const product = order.products.find(p => p.id === pendingQuantityUpdate.productId);
+                return product ? (
+                  <p style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                    <strong>{product.productRef}</strong>: {product.receivedQuantity || '0'} → {pendingQuantityUpdate.value || '0'}
+                  </p>
+                ) : null;
+              })()}
+            </div>
+          ) : null
+        }
+        confirmText={t('common.save') || 'Save'}
+        cancelText={t('common.cancel')}
+        type="info"
+      />
     </div>
   );
 }

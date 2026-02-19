@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { X, MessageSquare } from 'lucide-react';
+import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import WhatsAppIcon from './WhatsAppIcon';
 import '../styles/modal.css';
 
 interface WhatsAppModalProps {
@@ -39,7 +40,7 @@ export default function WhatsAppModal({
       <div className="modal-content confirm-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
           <div className="modal-title-group">
-            <MessageSquare size={24} className="modal-icon info" />
+            <WhatsAppIcon size={24} className="modal-icon" />
             <h3>{t('orderDetail.sendWhatsAppTitle')}</h3>
           </div>
           <button

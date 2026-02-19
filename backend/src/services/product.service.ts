@@ -230,3 +230,129 @@ export async function deleteProduct(productId: string) {
   return { success: true };
 }
 
+export interface PendingProduct {
+  id: string;
+  orderId: string;
+  orderNumber: number | null;
+  productRef: string;
+  supplierId: string;
+  supplierName: string;
+  quantity: string;
+  receivedQuantity: string | null;
+  pendingQuantity: number;
+  customerName: string | null;
+  customerId: string | null;
+  customerPhone: string | null;
+  orderStatus: string;
+  productDescription: string | null;
+}
+
+/**
+ * Get pending products (products that haven't been fully received)
+ * A product is pending if receivedQuantity is null or receivedQuantity < quantity
+ */
+export async function getPendingProducts(): Promise<PendingProduct[]> {
+  // Get all order products with their orders and customer info
+  const allOrderProducts = await prisma.orderProduct.findMany({
+    include: {
+      order: {
+        select: {
+          id: true,
+          orderNumber: true,
+          customerName: true,
+          customerId: true,
+          customerPhone: true,
+          status: true,
+        },
+      },
+      supplier: {
+        select: {
+          id: true,
+          name: true,
+        },
+      },
+    },
+  });
+  
+  // Filter to only include pending products (where receivedQuantity < quantity)
+  const pendingProducts: PendingProduct[] = [];
+  
+  // Get all unique product references to batch fetch descriptions
+  const productRefs = new Set<string>();
+  const supplierIds = new Set<string>();
+  for (const op of allOrderProducts) {
+    const quantity = parseFloat(op.quantity || '0');
+    const receivedQuantity = op.receivedQuantity ? parseFloat(op.receivedQuantity) : 0;
+    if (quantity > receivedQuantity) {
+      productRefs.add(op.productRef);
+      supplierIds.add(op.supplierId);
+    }
+  }
+  
+  // Batch fetch product descriptions
+  const products = await prisma.product.findMany({
+    where: {
+      supplierId: { in: Array.from(supplierIds) },
+      reference: { in: Array.from(productRefs) },
+    },
+    select: {
+      supplierId: true,
+      reference: true,
+      description: true,
+    },
+  });
+  
+  // Create a map for quick lookup
+  const productDescriptionMap = new Map<string, string | null>();
+  for (const product of products) {
+    const key = `${product.supplierId}|${product.reference}`;
+    productDescriptionMap.set(key, product.description);
+  }
+  
+  // Process order products and build pending products list
+  for (const op of allOrderProducts) {
+    const quantity = parseFloat(op.quantity || '0');
+    const receivedQuantity = op.receivedQuantity ? parseFloat(op.receivedQuantity) : 0;
+    const pendingQuantity = quantity - receivedQuantity;
+    
+    // Only include if there's still pending quantity
+    if (pendingQuantity > 0) {
+      const productKey = `${op.supplierId}|${op.productRef}`;
+      const productDescription = productDescriptionMap.get(productKey) || null;
+      
+      pendingProducts.push({
+        id: op.id,
+        orderId: op.orderId,
+        orderNumber: op.order.orderNumber,
+        productRef: op.productRef,
+        supplierId: op.supplierId,
+        supplierName: op.supplier.name,
+        quantity: op.quantity,
+        receivedQuantity: op.receivedQuantity,
+        pendingQuantity,
+        customerName: op.order.customerName,
+        customerId: op.order.customerId,
+        customerPhone: op.order.customerPhone,
+        orderStatus: op.order.status,
+        productDescription,
+      });
+    }
+  }
+  
+  // Sort by order number (newest first) then by supplier name, then by product reference
+  pendingProducts.sort((a, b) => {
+    // First by order number (descending - newest first)
+    if (a.orderNumber !== b.orderNumber) {
+      return (b.orderNumber || 0) - (a.orderNumber || 0);
+    }
+    // Then by supplier name
+    if (a.supplierName !== b.supplierName) {
+      return a.supplierName.localeCompare(b.supplierName);
+    }
+    // Then by product reference
+    return a.productRef.localeCompare(b.productRef);
+  });
+  
+  return pendingProducts;
+}
+

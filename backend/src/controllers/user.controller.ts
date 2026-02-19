@@ -1,4 +1,4 @@
-import { Request, Response } from 'express';
+import { Request, Response, NextFunction } from 'express';
 import { createUserSchema, updateUserSchema, CreateUserInput, UpdateUserInput } from '../validators/user.validator';
 import { listUsers, getUserById, createUser, updateUser, deleteUser } from '../services/user.service';
 import { createSuccessResponse } from '../utils/response.util';
@@ -9,14 +9,14 @@ import path from 'path';
  * GET /api/v1/users
  * List all users
  */
-export async function listUsersController(req: Request, res: Response): Promise<void> {
+export async function listUsersController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const sortBy = req.query.sortBy as string | undefined;
     const sortOrder = (req.query.sortOrder as 'asc' | 'desc') || 'desc';
     const users = await listUsers(sortBy, sortOrder);
     res.status(200).json(createSuccessResponse(users));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }
 
@@ -24,13 +24,13 @@ export async function listUsersController(req: Request, res: Response): Promise<
  * GET /api/v1/users/:id
  * Get user by ID
  */
-export async function getUserController(req: Request, res: Response): Promise<void> {
+export async function getUserController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     const { id } = req.params;
     const user = await getUserById(id);
     res.status(200).json(createSuccessResponse(user));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }
 
@@ -38,7 +38,7 @@ export async function getUserController(req: Request, res: Response): Promise<vo
  * POST /api/v1/users
  * Create a new user
  */
-export async function createUserController(req: Request, res: Response): Promise<void> {
+export async function createUserController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
       res.status(401).json({
@@ -56,7 +56,7 @@ export async function createUserController(req: Request, res: Response): Promise
 
     res.status(201).json(createSuccessResponse(user, 'User created successfully'));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }
 
@@ -64,7 +64,7 @@ export async function createUserController(req: Request, res: Response): Promise
  * PUT /api/v1/users/:id
  * Update user
  */
-export async function updateUserController(req: Request, res: Response): Promise<void> {
+export async function updateUserController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
       res.status(401).json({
@@ -83,7 +83,7 @@ export async function updateUserController(req: Request, res: Response): Promise
 
     res.status(200).json(createSuccessResponse(user, 'User updated successfully'));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }
 
@@ -91,7 +91,7 @@ export async function updateUserController(req: Request, res: Response): Promise
  * DELETE /api/v1/users/:id
  * Delete user
  */
-export async function deleteUserController(req: Request, res: Response): Promise<void> {
+export async function deleteUserController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
       res.status(401).json({
@@ -109,7 +109,7 @@ export async function deleteUserController(req: Request, res: Response): Promise
 
     res.status(200).json(createSuccessResponse(null, 'User deleted successfully'));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }
 
@@ -117,7 +117,7 @@ export async function deleteUserController(req: Request, res: Response): Promise
  * POST /api/v1/users/:id/avatar
  * Upload user avatar
  */
-export async function uploadAvatarController(req: Request, res: Response): Promise<void> {
+export async function uploadAvatarController(req: Request, res: Response, next: NextFunction): Promise<void> {
   try {
     if (!req.user) {
       res.status(401).json({
@@ -154,6 +154,6 @@ export async function uploadAvatarController(req: Request, res: Response): Promi
 
     res.status(200).json(createSuccessResponse(user, 'Avatar uploaded successfully'));
   } catch (error) {
-    throw error;
+    next(error);
   }
 }

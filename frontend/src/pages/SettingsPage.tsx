@@ -72,6 +72,11 @@ export default function SettingsPage() {
   const [usersSeeOnlyOwnOrders, setUsersSeeOnlyOwnOrders] = useState<boolean>(false);
   const [loadingUsersConfig, setLoadingUsersConfig] = useState(false);
   const [savingUsersConfig, setSavingUsersConfig] = useState(false);
+  const [enableUsersVisibilityOverrides, setEnableUsersVisibilityOverrides] = useState<boolean>(false);
+  const [usersVisibilityOverrides, setUsersVisibilityOverrides] = useState<Record<string, 'OWN' | 'ALL'>>({});
+  const [usersForVisibility, setUsersForVisibility] = useState<Array<{ id: string; username: string; role: string }>>([]);
+  const [usersVisibilitySearch, setUsersVisibilitySearch] = useState<string>('');
+  const [usersVisibilitySelectedIds, setUsersVisibilitySelectedIds] = useState<string[]>([]);
 
   useEffect(() => {
     loadSettings();
@@ -139,11 +144,29 @@ export default function SettingsPage() {
     try {
       setLoading(true);
       const loadedConfig = await configService.loadConfig();
-      setConfig(loadedConfig);
+      // Normalize DB fields for UI (especially SQLite: config persists `path`, not `url`)
+      const normalizedConfig = (() => {
+        if (loadedConfig?.database?.type === 'sqlite') {
+          const sqlitePath = loadedConfig.database.path || loadedConfig.database.url?.replace(/^file:/, '') || './database.db';
+          // Prisma prefers forward slashes in file URLs (Windows-safe)
+          const normalizedPath = sqlitePath.replace(/\\/g, '/');
+          return {
+            ...loadedConfig,
+            database: {
+              ...loadedConfig.database,
+              path: sqlitePath,
+              url: `file:${normalizedPath}`,
+            },
+          };
+        }
+        return loadedConfig;
+      })();
+
+      setConfig(normalizedConfig);
       
       // Apply language from config if available
-      if (loadedConfig.language && i18n.language !== loadedConfig.language) {
-        i18n.changeLanguage(loadedConfig.language);
+      if (normalizedConfig.language && i18n.language !== normalizedConfig.language) {
+        i18n.changeLanguage(normalizedConfig.language);
       }
     } catch (error) {
       console.error('Failed to load settings:', error);
@@ -151,6 +174,15 @@ export default function SettingsPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const hasValidDbConfig = (cfg: AppConfig | null) => {
+    if (!cfg) return false;
+    if (cfg.database.type === 'sqlite') {
+      const dbPath = cfg.database.path || cfg.database.url?.replace(/^file:/, '');
+      return Boolean(dbPath && dbPath.trim().length > 0);
+    }
+    return Boolean(cfg.database.url && cfg.database.url.trim().length > 0);
   };
 
   const handleDatabaseProviderChange = (provider: 'sqlite' | 'mysql' | 'postgresql') => {
@@ -586,15 +618,51 @@ export default function SettingsPage() {
   const loadUsersConfig = async () => {
     try {
       setLoadingUsersConfig(true);
-      const response = await api.get('/config/users_see_only_own_orders');
-      if (response.data.success) {
-        const value = response.data.data?.value || 'false';
+      const [globalRes, enabledRes, overridesRes, usersRes] = await Promise.all([
+        api.get('/config/users_see_only_own_orders'),
+        api.get('/config/users_orders_visibility_overrides_enabled').catch(() => null),
+        api.get('/config/users_orders_visibility_overrides').catch(() => null),
+        api.get('/users').catch(() => null),
+      ]);
+
+      if (globalRes?.data?.success) {
+        const value = globalRes.data.data?.value || 'false';
         setUsersSeeOnlyOwnOrders(value === 'true');
+      }
+
+      if (enabledRes?.data?.success) {
+        const value = enabledRes.data.data?.value || 'false';
+        setEnableUsersVisibilityOverrides(value === 'true');
+      } else {
+        setEnableUsersVisibilityOverrides(false);
+      }
+
+      // Overrides config is optional for backward-compat
+      try {
+        const raw = overridesRes?.data?.data?.value;
+        if (typeof raw === 'string' && raw.trim().length > 0) {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          const cleaned: Record<string, 'OWN' | 'ALL'> = {};
+          for (const [userId, v] of Object.entries(parsed || {})) {
+            if (v === 'OWN' || v === 'ALL') cleaned[userId] = v;
+          }
+          setUsersVisibilityOverrides(cleaned);
+        } else {
+          setUsersVisibilityOverrides({});
+        }
+      } catch {
+        setUsersVisibilityOverrides({});
+      }
+
+      if (usersRes?.data?.success) {
+        setUsersForVisibility(usersRes.data.data || []);
       }
     } catch (error) {
       console.error('Failed to load users config:', error);
       // Default to false if config doesn't exist
       setUsersSeeOnlyOwnOrders(false);
+      setEnableUsersVisibilityOverrides(false);
+      setUsersVisibilityOverrides({});
     } finally {
       setLoadingUsersConfig(false);
     }
@@ -603,9 +671,17 @@ export default function SettingsPage() {
   const handleSaveUsersConfig = async () => {
     try {
       setSavingUsersConfig(true);
-      await api.put('/config/users_see_only_own_orders', {
-        value: usersSeeOnlyOwnOrders ? 'true' : 'false',
-      });
+      await Promise.all([
+        api.put('/config/users_see_only_own_orders', {
+          value: usersSeeOnlyOwnOrders ? 'true' : 'false',
+        }),
+        api.put('/config/users_orders_visibility_overrides_enabled', {
+          value: enableUsersVisibilityOverrides ? 'true' : 'false',
+        }),
+        api.put('/config/users_orders_visibility_overrides', {
+          value: JSON.stringify(usersVisibilityOverrides || {}),
+        }),
+      ]);
       toast.success(t('settings.usersConfigSaved'));
     } catch (error: any) {
       console.error('Failed to save users config:', error);
@@ -667,6 +743,45 @@ export default function SettingsPage() {
         [field]: value,
       },
     }));
+  };
+
+  // Get translated status label for preview
+  // If custom text is configured, use it; otherwise use translation
+  const getStatusLabelForPreview = (status: string) => {
+    const normalizedStatus = status.toUpperCase().trim();
+    const customText = orderStatusConfig[normalizedStatus]?.text;
+    
+    // If custom text exists and is not empty, use it
+    if (customText && customText.trim()) {
+      return customText;
+    }
+    
+    // Otherwise, use translation
+    switch (normalizedStatus) {
+      case 'PENDING':
+        return t('orders.statusPending');
+      case 'RECEIVED':
+        return t('orders.statusReceived');
+      case 'NOTIFIED_CALL':
+        return t('orders.statusNotifiedCall');
+      case 'NOTIFIED_WHATSAPP':
+        return t('orders.statusNotifiedWhatsApp');
+      case 'READY_TO_SEND':
+        return t('orders.statusReadyToSend');
+      case 'SENT':
+        return t('orders.statusSent');
+      case 'DELIVERED_COUNTER':
+        return t('orders.statusDeliveredCounter');
+      case 'CANCELLED':
+        return t('orders.statusCancelled');
+      case 'INCOMPLETO':
+        return t('orders.statusIncompleto');
+      default:
+        // Fallback: try to translate if it's a known status key
+        const statusKey = `orders.status${normalizedStatus.charAt(0) + normalizedStatus.slice(1).toLowerCase().replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())}`;
+        const translated = t(statusKey, { defaultValue: normalizedStatus });
+        return translated !== statusKey ? translated : normalizedStatus;
+    }
   };
 
   const handleUpdateProfile = async () => {
@@ -1284,9 +1399,10 @@ export default function SettingsPage() {
                 }
                 onChange={(e) => {
                   if (config.database.type === 'sqlite') {
+                    const normalizedPath = e.target.value.replace(/\\/g, '/');
                     setConfig({
                       ...config,
-                      database: { ...config.database, path: e.target.value, url: `file:${e.target.value}` },
+                      database: { ...config.database, path: e.target.value, url: `file:${normalizedPath}` },
                     });
                   } else {
                     setConfig({
@@ -1310,7 +1426,7 @@ export default function SettingsPage() {
               <button
                 className="btn-secondary"
                 onClick={testDatabaseConnection}
-                disabled={testingConnection || initializingDatabase || !config.database.url}
+                disabled={testingConnection || initializingDatabase || !hasValidDbConfig(config)}
               >
                 {testingConnection ? (
                   <>
@@ -1327,7 +1443,7 @@ export default function SettingsPage() {
               <button
                 className="btn-primary"
                 onClick={handleUpgradeDatabase}
-                disabled={testingConnection || upgradingDatabase || initializingDatabase || !config.database.url}
+                disabled={testingConnection || upgradingDatabase || initializingDatabase || !hasValidDbConfig(config)}
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
               >
                 {upgradingDatabase ? (
@@ -1345,7 +1461,7 @@ export default function SettingsPage() {
               <button
                 className="btn-primary"
                 onClick={handleInitializeDatabase}
-                disabled={testingConnection || initializingDatabase || upgradingDatabase || !config.database.url}
+                disabled={testingConnection || initializingDatabase || upgradingDatabase || !hasValidDbConfig(config)}
                 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
               >
                 {initializingDatabase ? (
@@ -1725,6 +1841,8 @@ export default function SettingsPage() {
                     >
                       <option value="PENDING">{t('orders.statusPending')}</option>
                       <option value="RECEIVED">{t('orders.statusReceived')}</option>
+                      <option value="READY_TO_SEND">{t('orders.statusReadyToSend')}</option>
+                      <option value="SENT">{t('orders.statusSent')}</option>
                       <option value="NOTIFIED_CALL">{t('orders.statusNotifiedCall')}</option>
                       <option value="NOTIFIED_WHATSAPP">{t('orders.statusNotifiedWhatsApp')}</option>
                       <option value="CANCELLED">{t('orders.statusCancelled')}</option>
@@ -1741,7 +1859,7 @@ export default function SettingsPage() {
                     backgroundColor: 'var(--card-bg)'
                   }}>
                     <h3 style={{ marginBottom: '1.5rem', fontSize: '1.125rem', fontWeight: 600 }}>
-                      {selectedStatus}
+                      {getStatusLabelForPreview(selectedStatus)}
                     </h3>
                     
                     {/* Text Field - Full Width */}
@@ -1880,7 +1998,7 @@ export default function SettingsPage() {
                           border: '1px solid var(--border-color)',
                         }}
                       >
-                        {orderStatusConfig[selectedStatus]?.text || selectedStatus}
+                        {getStatusLabelForPreview(selectedStatus)}
                       </span>
                     </div>
                   </div>
@@ -2054,6 +2172,178 @@ export default function SettingsPage() {
                     <p className="form-hint" style={{ marginTop: '0.5rem' }}>
                       {t('settings.usersSeeOnlyOwnOrdersHint')}
                     </p>
+                  </div>
+
+                  <div className="form-group" style={{ marginTop: '1.25rem' }}>
+                    <label style={{ marginBottom: '0.5rem' }}>{t('settings.usersPerUserOrderVisibility')}</label>
+                    <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '0.75rem' }}>
+                      {t('settings.usersPerUserOrderVisibilityHint')}
+                    </p>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={enableUsersVisibilityOverrides}
+                        onChange={(e) => setEnableUsersVisibilityOverrides(e.target.checked)}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                      />
+                      <span>{t('settings.enableSpecialUsersSettings')}</span>
+                    </label>
+                    <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '0.75rem' }}>
+                      {t('settings.enableSpecialUsersSettingsHint')}
+                    </p>
+
+                    {!enableUsersVisibilityOverrides ? null : (
+                      <>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder={t('settings.usersSearchPlaceholder')}
+                      value={usersVisibilitySearch}
+                      onChange={(e) => setUsersVisibilitySearch(e.target.value)}
+                      style={{ maxWidth: '420px' }}
+                    />
+
+                    {(() => {
+                      const q = usersVisibilitySearch.trim().toLowerCase();
+                      const visibleUsers = (usersForVisibility || [])
+                        .filter((u) => u.role !== 'SUPER_ADMIN')
+                        .filter((u) => !q || String(u.username).toLowerCase().includes(q));
+
+                      const selectedSet = new Set(usersVisibilitySelectedIds);
+                      const overrideOwnCount = Object.values(usersVisibilityOverrides || {}).filter((v) => v === 'OWN').length;
+                      const overrideAllCount = Object.values(usersVisibilityOverrides || {}).filter((v) => v === 'ALL').length;
+
+                      const applyToSelected = (mode: 'OWN' | 'ALL' | 'DEFAULT') => {
+                        setUsersVisibilityOverrides((prev) => {
+                          const next = { ...(prev || {}) };
+                          for (const userId of usersVisibilitySelectedIds) {
+                            if (mode === 'DEFAULT') {
+                              delete next[userId];
+                            } else {
+                              next[userId] = mode;
+                            }
+                          }
+                          return next;
+                        });
+                      };
+
+                      return (
+                        <>
+                          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                              {t('settings.usersSelectedCount', { count: usersVisibilitySelectedIds.length })}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => applyToSelected('OWN')}
+                              disabled={usersVisibilitySelectedIds.length === 0}
+                            >
+                              {t('settings.applyOwnToSelected')}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => applyToSelected('ALL')}
+                              disabled={usersVisibilitySelectedIds.length === 0}
+                            >
+                              {t('settings.applyAllToSelected')}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => applyToSelected('DEFAULT')}
+                              disabled={usersVisibilitySelectedIds.length === 0}
+                            >
+                              {t('settings.resetSelectedToDefault')}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => setUsersVisibilitySelectedIds([])}
+                              disabled={usersVisibilitySelectedIds.length === 0}
+                            >
+                              {t('settings.clearSelection')}
+                            </button>
+                          </div>
+
+                          <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            {t('settings.usersOverridesSummary', { own: overrideOwnCount, all: overrideAllCount })}
+                          </div>
+
+                          <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+                            {visibleUsers.map((u) => {
+                              const current = usersVisibilityOverrides[u.id] ?? 'DEFAULT';
+                              const checked = selectedSet.has(u.id);
+                              return (
+                                <div
+                                  key={u.id}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: '1rem',
+                                    padding: '0.5rem 0.75rem',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 'var(--radius-md)',
+                                    background: 'var(--card-bg)',
+                                    maxWidth: '720px',
+                                  }}
+                                >
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(e) => {
+                                        const isChecked = e.target.checked;
+                                        setUsersVisibilitySelectedIds((prev) => {
+                                          const set = new Set(prev);
+                                          if (isChecked) set.add(u.id);
+                                          else set.delete(u.id);
+                                          return Array.from(set);
+                                        });
+                                      }}
+                                      style={{ width: '18px', height: '18px' }}
+                                    />
+                                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                      <strong style={{ fontSize: '0.95rem' }}>{u.username}</strong>
+                                      <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                        {t('settings.usersOrderVisibilityLabel')}: {current === 'OWN'
+                                          ? t('settings.usersOrderVisibilityOwn')
+                                          : current === 'ALL'
+                                            ? t('settings.usersOrderVisibilityAll')
+                                            : t('settings.usersOrderVisibilityDefault')}
+                                      </span>
+                                    </div>
+                                  </label>
+                                  <select
+                                    className="form-input"
+                                    style={{ maxWidth: '280px' }}
+                                    value={current}
+                                    onChange={(e) => {
+                                      const val = e.target.value as 'DEFAULT' | 'OWN' | 'ALL';
+                                      setUsersVisibilityOverrides((prev) => {
+                                        const next = { ...(prev || {}) };
+                                        if (val === 'DEFAULT') delete next[u.id];
+                                        else next[u.id] = val;
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    <option value="DEFAULT">{t('settings.usersOrderVisibilityDefault')}</option>
+                                    <option value="OWN">{t('settings.usersOrderVisibilityOwn')}</option>
+                                    <option value="ALL">{t('settings.usersOrderVisibilityAll')}</option>
+                                  </select>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      );
+                    })()}
+                      </>
+                    )}
                   </div>
 
                   <div className="form-actions-inline" style={{ marginTop: '1.5rem' }}>

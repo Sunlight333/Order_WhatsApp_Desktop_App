@@ -395,7 +395,7 @@ export default function EditOrderPage() {
         customerId: customerId || undefined,
         customerPhone: customerPhone.trim() || undefined,
         countryCode: countryCode || '+34',
-        observations: observations.trim() || undefined,
+        observations: observations.trim() || null, // Use null instead of undefined to allow clearing the field
         suppliers: suppliers.map((s) => ({
           name: s.name.trim(),
           supplierId: s.supplierId,
@@ -460,6 +460,7 @@ export default function EditOrderPage() {
                 onSelect={(item) => handleCustomerNameChange(item.value)}
                 placeholder={t('createOrder.enterCustomerName')}
                 inputClassName="form-input"
+                minChars={3}
               />
             </div>
             <div className="form-group">
@@ -494,6 +495,7 @@ export default function EditOrderPage() {
                     placeholder={t('createOrder.enterCustomerPhone')}
                     inputClassName="form-input"
                     maxItems={10}
+                    minChars={3}
                   />
                 </div>
               </div>

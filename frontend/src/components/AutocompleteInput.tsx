@@ -37,6 +37,7 @@ export default function AutocompleteInput<TMeta = unknown>({
   inputClassName,
   disabled,
   maxItems = 12,
+  minChars = 0,
 }: {
   id?: string;
   value: string;
@@ -48,6 +49,7 @@ export default function AutocompleteInput<TMeta = unknown>({
   inputClassName?: string;
   disabled?: boolean;
   maxItems?: number;
+  minChars?: number;
 }) {
   const wrapperRef = useRef<HTMLDivElement | null>(null);
   const [open, setOpen] = useState(false);
@@ -72,7 +74,7 @@ export default function AutocompleteInput<TMeta = unknown>({
     return () => document.removeEventListener('mousedown', onDocMouseDown);
   }, []);
 
-  const showMenu = open && visibleItems.length > 0;
+  const showMenu = open && visibleItems.length > 0 && query.trim().length >= minChars;
 
   return (
     <div ref={wrapperRef} className="autocomplete">

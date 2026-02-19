@@ -9,6 +9,10 @@ const prisma = getPrismaClient();
 const DEFAULT_CONFIGS: Record<string, string> = {
   whatsapp_default_message: 'Hola, tu pedido está listo para recoger.',
   users_see_only_own_orders: 'false', // Default: users can see all orders
+  // Per-user override for order visibility. JSON map: { [userId]: "OWN" | "ALL" }
+  users_orders_visibility_overrides: '{}',
+  // Feature flag: enable/disable per-user overrides enforcement
+  users_orders_visibility_overrides_enabled: 'false',
 };
 
 /**
@@ -131,6 +135,14 @@ const DEFAULT_ORDER_STATUSES: OrderStatusesConfig = {
     fontWeight: 'normal',
     text: 'Preparado para enviar',
   },
+  SENT: {
+    color: '#10b981',
+    backgroundColor: '#d1fae5',
+    fontFamily: 'inherit',
+    fontSize: 'inherit',
+    fontWeight: 'normal',
+    text: 'Enviado',
+  },
 };
 
 /**
@@ -168,8 +180,29 @@ export async function getOrderStatusConfig(): Promise<OrderStatusesConfig> {
 
     // Auto-upgrade: Ensure READY_TO_SEND status exists in stored config
     // This handles cases where the config was created before READY_TO_SEND was added
-    if (!merged.READY_TO_SEND || merged.READY_TO_SEND.text !== DEFAULT_ORDER_STATUSES.READY_TO_SEND.text) {
+    // Only update if the status doesn't exist at all, or if it's missing required fields
+    if (!merged.READY_TO_SEND) {
       merged.READY_TO_SEND = DEFAULT_ORDER_STATUSES.READY_TO_SEND;
+      await updateConfigValue('order_statuses_config', JSON.stringify(merged));
+    } else if (!merged.READY_TO_SEND.text || merged.READY_TO_SEND.text === '') {
+      // Only update text if it's missing, preserve colors and other customizations
+      merged.READY_TO_SEND = {
+        ...merged.READY_TO_SEND,
+        text: DEFAULT_ORDER_STATUSES.READY_TO_SEND.text,
+      };
+      await updateConfigValue('order_statuses_config', JSON.stringify(merged));
+    }
+
+    // Auto-upgrade: Ensure SENT status exists in stored config
+    // This handles cases where the config was created before SENT was added
+    if (!merged.SENT) {
+      merged.SENT = DEFAULT_ORDER_STATUSES.SENT;
+      await updateConfigValue('order_statuses_config', JSON.stringify(merged));
+    } else if (!merged.SENT.text || merged.SENT.text === '') {
+      merged.SENT = {
+        ...merged.SENT,
+        text: DEFAULT_ORDER_STATUSES.SENT.text,
+      };
       await updateConfigValue('order_statuses_config', JSON.stringify(merged));
     }
 
@@ -185,15 +218,21 @@ export async function getOrderStatusConfig(): Promise<OrderStatusesConfig> {
  */
 export async function updateOrderStatusConfig(config: OrderStatusesConfig): Promise<OrderStatusesConfig> {
   // Validate that all required statuses are present
-  const validStatuses = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO', 'DELIVERED_COUNTER', 'READY_TO_SEND'];
-  const mergedConfig: OrderStatusesConfig = { ...DEFAULT_ORDER_STATUSES };
+  const validStatuses = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO', 'DELIVERED_COUNTER', 'READY_TO_SEND', 'SENT'];
+  
+  // Load current configuration to preserve existing customizations
+  const currentConfig = await getOrderStatusConfig();
+  const mergedConfig: OrderStatusesConfig = { ...currentConfig };
 
-  // Only update statuses that are valid
+  // Only update statuses that are valid and provided in the update
   for (const status of validStatuses) {
     if (config[status]) {
+      // Merge with defaults first to ensure all required fields are present,
+      // then apply the user's customizations
       mergedConfig[status] = {
         ...DEFAULT_ORDER_STATUSES[status],
-        ...config[status],
+        ...currentConfig[status], // Preserve existing customizations
+        ...config[status], // Apply new updates
       };
     }
   }

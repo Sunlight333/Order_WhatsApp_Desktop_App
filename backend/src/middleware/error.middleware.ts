@@ -30,11 +30,12 @@ export const errorMiddleware = (
 
   // Handle Zod validation errors
   if (error instanceof ZodError) {
+    const firstMessage = error.errors?.[0]?.message;
     res.status(400).json({
       success: false,
       error: {
         code: 'VALIDATION_ERROR',
-        message: 'Validation failed',
+        message: firstMessage || 'Validation failed',
         details: error.errors.map((e) => ({
           path: e.path.join('.'),
           message: e.message,

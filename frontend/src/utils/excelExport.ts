@@ -35,8 +35,11 @@ export function exportToExcel<T extends Record<string, any>>(
   });
   worksheet['!cols'] = colWidths;
 
+  // Excel sheet names cannot exceed 31 characters
+  const validSheetName = sheetName.length > 31 ? sheetName.substring(0, 31) : sheetName;
+  
   // Add worksheet to workbook
-  XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+  XLSX.utils.book_append_sheet(workbook, worksheet, validSheetName);
 
   // Generate Excel file and download
   XLSX.writeFile(workbook, `${filename}.xlsx`);
@@ -58,6 +61,9 @@ export function exportMultipleSheets(
   const workbook = XLSX.utils.book_new();
 
   sheets.forEach((sheet) => {
+    // Excel sheet names cannot exceed 31 characters
+    const sheetName = sheet.name.length > 31 ? sheet.name.substring(0, 31) : sheet.name;
+    
     if (sheet.data && sheet.data.length > 0) {
       const worksheet = XLSX.utils.json_to_sheet(sheet.data);
 
@@ -75,7 +81,12 @@ export function exportMultipleSheets(
       });
       worksheet['!cols'] = colWidths;
 
-      XLSX.utils.book_append_sheet(workbook, worksheet, sheet.name);
+      XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+    } else {
+      // Add empty sheet with just the name (for sheets that failed to load or have no data)
+      // Create a minimal worksheet with headers if we have any info about expected columns
+      const emptyWorksheet = XLSX.utils.aoa_to_sheet([[]]);
+      XLSX.utils.book_append_sheet(workbook, emptyWorksheet, sheetName);
     }
   });
 

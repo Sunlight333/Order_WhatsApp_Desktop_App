@@ -62,6 +62,16 @@ export default function UsersPage() {
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'SUPER_ADMIN';
 
+  const getApiErrorMessage = (error: any, fallback: string) => {
+    const details = error?.response?.data?.error?.details;
+    if (Array.isArray(details) && details.length > 0) {
+      const first = details[0];
+      if (first?.message) return String(first.message);
+    }
+    const msg = error?.response?.data?.error?.message || error?.response?.data?.message || error?.message;
+    return msg ? String(msg) : fallback;
+  };
+
   const handleExportUsers = () => {
     if (!isAdmin) {
       toast.error(t('common.unauthorized'));
@@ -74,11 +84,22 @@ export default function UsersPage() {
         return;
       }
 
+      const formatDateForExport = (dateString: string) => {
+        const date = new Date(dateString);
+        const day = String(date.getDate()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const year = date.getFullYear();
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+      };
+      
       const exportData = users.map((user) => ({
         [t('users.username')]: user.username,
         [t('users.role')]: user.role === 'SUPER_ADMIN' ? t('users.superAdmin') : t('users.userRole'),
-        [t('users.createdAt')]: new Date(user.createdAt).toLocaleString(),
-        [t('users.updatedAt')]: new Date(user.updatedAt).toLocaleString(),
+        [t('users.createdAt')]: formatDateForExport(user.createdAt),
+        [t('users.updatedAt')]: formatDateForExport(user.updatedAt),
       }));
 
       const timestamp = new Date().toISOString().split('T')[0];
@@ -230,7 +251,7 @@ export default function UsersPage() {
       setShowCreateModal(false);
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || t('users.createFailed'));
+      toast.error(getApiErrorMessage(error, t('users.createFailed')));
     } finally {
       setSubmitting(false);
     }
@@ -286,7 +307,7 @@ export default function UsersPage() {
       setSelectedUser(null);
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || t('users.updateFailed'));
+      toast.error(getApiErrorMessage(error, t('users.updateFailed')));
     } finally {
       setSubmitting(false);
     }
@@ -303,7 +324,7 @@ export default function UsersPage() {
       setSelectedUser(null);
       fetchUsers();
     } catch (error: any) {
-      toast.error(error.response?.data?.error?.message || t('users.deleteFailed'));
+      toast.error(getApiErrorMessage(error, t('users.deleteFailed')));
     } finally {
       setDeleteLoading(false);
     }
@@ -319,7 +340,11 @@ export default function UsersPage() {
   });
 
   const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString();
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
   };
 
   const handleRowRightClick = (e: React.MouseEvent, user: User) => {

@@ -231,6 +231,26 @@ async function seedInitialData(prismaClient: PrismaClient): Promise<void> {
       },
     });
 
+    // Per-user override for order visibility. JSON map: { [userId]: "OWN" | "ALL" }
+    await prismaClient.config.upsert({
+      where: { key: 'users_orders_visibility_overrides' },
+      update: {},
+      create: {
+        key: 'users_orders_visibility_overrides',
+        value: '{}',
+      },
+    });
+
+    // Feature flag: enable/disable per-user overrides enforcement
+    await prismaClient.config.upsert({
+      where: { key: 'users_orders_visibility_overrides_enabled' },
+      update: {},
+      create: {
+        key: 'users_orders_visibility_overrides_enabled',
+        value: 'false',
+      },
+    });
+
     // IMPORTANT: PENDING means "pending receipt" (not "pending to notify")
     const defaultOrderStatusesConfig = {
       PENDING: {
@@ -297,6 +317,14 @@ async function seedInitialData(prismaClient: PrismaClient): Promise<void> {
         fontWeight: 'normal',
         text: 'Preparado para enviar',
       },
+      SENT: {
+        color: '#10b981',
+        backgroundColor: '#d1fae5',
+        fontFamily: 'inherit',
+        fontSize: 'inherit',
+        fontWeight: 'normal',
+        text: 'Enviado',
+      },
     };
 
     // Upsert order_statuses_config - if it exists, merge with defaults to add any missing statuses
@@ -307,11 +335,15 @@ async function seedInitialData(prismaClient: PrismaClient): Promise<void> {
     if (existingStatusConfig && existingStatusConfig.value) {
       try {
         const existing = JSON.parse(existingStatusConfig.value);
-        // Merge with defaults to ensure all statuses (including READY_TO_SEND) are present
+        // Merge with defaults to ensure all statuses (including READY_TO_SEND and SENT) are present
         const merged = { ...defaultOrderStatusesConfig, ...existing };
         // Ensure READY_TO_SEND is present with correct default
         if (!merged.READY_TO_SEND || merged.READY_TO_SEND.text !== defaultOrderStatusesConfig.READY_TO_SEND.text) {
           merged.READY_TO_SEND = defaultOrderStatusesConfig.READY_TO_SEND;
+        }
+        // Ensure SENT is present with correct default
+        if (!merged.SENT || merged.SENT.text !== defaultOrderStatusesConfig.SENT.text) {
+          merged.SENT = defaultOrderStatusesConfig.SENT;
         }
         await prismaClient.config.update({
           where: { key: 'order_statuses_config' },
@@ -397,6 +429,16 @@ async function isSchemaComplete(prismaClient: PrismaClient, dbType: string): Pro
         if (!orderColumnNames.includes('countryCode')) {
           console.log('🛠️ Adding missing column orders.countryCode');
           await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "countryCode" TEXT DEFAULT '+34';`);
+        }
+        // Added later: required for cancellation flow and audit consistency
+        if (!orderColumnNames.includes('cancellationReason')) {
+          console.log('🛠️ Adding missing column orders.cancellationReason');
+          await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "cancellationReason" TEXT;`);
+        }
+        // Added later: required for daily "notified" counter and tracking notifications
+        if (!orderColumnNames.includes('notifiedAt')) {
+          console.log('🛠️ Adding missing column orders.notifiedAt');
+          await prismaClient.$executeRawUnsafe(`ALTER TABLE "orders" ADD COLUMN "notifiedAt" DATETIME;`);
         }
 
         // Ensure new columns on orderProducts table
@@ -562,7 +604,7 @@ export async function initializeDatabase(
     
     return {
       success: true,
-      message: 'Database already initialized. Tables exist. Seeders verified.',
+      message: 'Base de datos ya inicializada. Las tablas existen. Los seeders están verificados.',
     };
   } catch (error: any) {
     console.error('⚠️  Could not initialize database:', error.message);
@@ -655,8 +697,8 @@ export async function testDatabaseConnection(
         return {
           success: true,
           message: initialized 
-            ? `Successfully connected to ${config.type.toUpperCase()} database. Database schema and seeders verified/initialized.`
-            : `Successfully connected to ${config.type.toUpperCase()} database. Schema is up to date.`,
+            ? `Conexión exitosa a la base de datos ${config.type.toUpperCase()}. Esquema de base de datos y seeders verificados/inicializados.`
+            : `Conexión exitosa a la base de datos ${config.type.toUpperCase()}. El esquema está actualizado.`,
           initialized: initialized,
         };
       } catch (initError: any) {
@@ -665,7 +707,7 @@ export async function testDatabaseConnection(
         console.warn('Initialization warning:', initError.message);
         return {
           success: true,
-          message: `Successfully connected to ${config.type.toUpperCase()} database. Warning: ${initError.message}`,
+          message: `Conexión exitosa a la base de datos ${config.type.toUpperCase()}. Advertencia: ${initError.message}`,
           initialized: false,
         };
       }
@@ -676,7 +718,7 @@ export async function testDatabaseConnection(
       } catch (error: any) {
         return {
           success: false,
-          message: `Connection failed: ${error.message}`,
+          message: `Conexión fallida: ${error.message}`,
           error: error.code || 'CONNECTION_ERROR',
         };
       }
@@ -701,15 +743,15 @@ export async function testDatabaseConnection(
         return {
           success: true,
           message: initialized 
-            ? `Successfully connected to ${config.type.toUpperCase()} database. Database schema and seeders verified/initialized.`
-            : `Successfully connected to ${config.type.toUpperCase()} database. Schema is up to date.`,
+            ? `Conexión exitosa a la base de datos ${config.type.toUpperCase()}. Esquema de base de datos y seeders verificados/inicializados.`
+            : `Conexión exitosa a la base de datos ${config.type.toUpperCase()}. El esquema está actualizado.`,
           initialized: initialized,
         };
       } catch (initError: any) {
         console.warn('Initialization warning:', initError.message);
         return {
           success: true,
-          message: `Successfully connected to ${config.type.toUpperCase()} database. Warning: ${initError.message}`,
+          message: `Conexión exitosa a la base de datos ${config.type.toUpperCase()}. Advertencia: ${initError.message}`,
           initialized: false,
         };
       }

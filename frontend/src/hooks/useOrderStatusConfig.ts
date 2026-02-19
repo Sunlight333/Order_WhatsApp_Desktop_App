@@ -55,6 +55,11 @@ const defaultConfig: OrderStatusesConfig = {
     backgroundColor: '#dbeafe',
     text: 'Preparado para enviar',
   },
+  SENT: {
+    color: '#10b981',
+    backgroundColor: '#d1fae5',
+    text: 'Enviado',
+  },
 };
 
 let cachedConfig: OrderStatusesConfig | null = null;
