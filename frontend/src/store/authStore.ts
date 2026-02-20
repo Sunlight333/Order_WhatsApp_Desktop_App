@@ -25,7 +25,7 @@ export const useAuthStore = create<AuthStore>()(
       login: async (credentials: LoginCredentials) => {
         try {
           set({ isLoading: true });
-          
+
           const response = await api.post<{
             success: true;
             data: {
@@ -40,6 +40,9 @@ export const useAuthStore = create<AuthStore>()(
           // Store token
           localStorage.setItem('auth_token', token);
           localStorage.setItem('auth_user', JSON.stringify(user));
+
+          // Clear any previous session data (admin password verification, etc.)
+          sessionStorage.removeItem('settings_password_verified');
 
           set({
             user,
@@ -65,6 +68,9 @@ export const useAuthStore = create<AuthStore>()(
           localStorage.removeItem('auth_token');
           localStorage.removeItem('auth_user');
 
+          // Clear session storage (admin password verification, etc.)
+          sessionStorage.removeItem('settings_password_verified');
+
           set({
             user: null,
             token: null,
@@ -80,6 +86,9 @@ export const useAuthStore = create<AuthStore>()(
 
           const token = localStorage.getItem('auth_token');
           if (!token) {
+            // Clear session storage if no token exists
+            sessionStorage.removeItem('settings_password_verified');
+
             set({
               user: null,
               token: null,
@@ -107,6 +116,9 @@ export const useAuthStore = create<AuthStore>()(
           // Token invalid, clear auth
           localStorage.removeItem('auth_token');
           localStorage.removeItem('auth_user');
+
+          // Clear session storage
+          sessionStorage.removeItem('settings_password_verified');
 
           set({
             user: null,

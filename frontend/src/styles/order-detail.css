@@ -75,6 +75,9 @@
   font-size: 1.125rem;
   font-weight: 700;
   color: var(--primary-color);
+  white-space: nowrap;
+  text-align: right;
+  min-width: 120px;
 }
 
 .phone-actions {
@@ -289,6 +292,12 @@
   border-top: 2px solid var(--border-color);
 }
 
+.products-table tfoot td.total-amount {
+  white-space: nowrap;
+  text-align: right;
+  min-width: 120px;
+}
+
 .text-right {
   text-align: right;
 }
@@ -474,6 +483,31 @@
 .header-actions {
   display: flex;
   gap: var(--spacing-md);
+}
+
+/* Received quantity input */
+.received-qty-input {
+  width: 60px;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background-color: var(--input-bg);
+  color: var(--text-primary);
+  font-size: inherit;
+  text-align: center;
+}
+
+.received-qty-input.received-qty-filled {
+  border: 2px solid var(--success);
+  background-color: #d1fae5;
+  color: #065f46;
+  font-weight: 600;
+}
+
+:root[data-theme="dark"] .received-qty-input.received-qty-filled {
+  background-color: #143d2b;
+  color: #6ee7b7;
+  border-color: #4ec9b0;
 }
 
 /* Product received status */

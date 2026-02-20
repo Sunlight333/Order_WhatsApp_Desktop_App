@@ -50,7 +50,7 @@
 .search-container {
   position: relative;
   flex: 1;
-  max-width: 500px;
+  max-width: 600px;
 }
 
 .search-icon {
@@ -185,7 +185,7 @@
 
 .orders-table th {
   padding: 16px;
-  text-align: left;
+  text-align: center;
   font-size: var(--text-xs);
   font-weight: 600;
   color: var(--text-secondary);
@@ -249,6 +249,7 @@
   padding: 16px;
   font-size: var(--text-sm);
   color: var(--text-primary);
+  text-align: center;
 }
 
 /* Ensure status column cells properly contain badges */
@@ -1042,6 +1043,39 @@
 
 .multi-select-container::-webkit-scrollbar-thumb:hover {
   background: var(--text-secondary);
+}
+
+.filter-actions {
+  padding: 0.625rem 1rem;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: flex-end;
+  background: var(--bg-secondary);
+}
+
+.btn-apply-filters {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.375rem 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: white;
+  background: var(--primary-color);
+  border: none;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-apply-filters:hover {
+  background: var(--primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.btn-apply-filters:active {
+  transform: translateY(0);
 }
 
 .active-filters-summary {

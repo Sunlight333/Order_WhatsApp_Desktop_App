@@ -170,7 +170,7 @@ datalist option {
 
 .product-row {
   display: grid;
-  grid-template-columns: 2fr 1fr 1fr auto;
+  grid-template-columns: 2fr 1fr 1fr 1fr auto; /* productRef, quantity, priceWithIGIC, priceWithoutIGIC, remove button */
   gap: var(--spacing-md);
   align-items: end;
   padding: var(--spacing-md);

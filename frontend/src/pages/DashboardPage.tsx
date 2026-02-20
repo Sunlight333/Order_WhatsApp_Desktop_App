@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { Package, ShoppingCart, Clock, CheckCircle, TrendingUp, ArrowRight, BarChart3, Users, Star, Download, Send } from 'lucide-react';
+import { Package, AlertTriangle, Clock, CheckCircle, TrendingUp, ArrowRight, BarChart3, Users, Star, Download, Send, AlertCircle } from 'lucide-react';
 import api from '../lib/api';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../store/authStore';
@@ -15,6 +15,7 @@ interface DashboardStats {
   receivedOrders: number;
   notifiedOrders: number;
   readyToSendOrders: number;
+  incompleteOrders: number;
   recentOrders: Array<{
     id: string;
     orderNumber?: number;
@@ -52,6 +53,7 @@ export default function DashboardPage() {
     receivedOrders: 0,
     notifiedOrders: 0,
     readyToSendOrders: 0,
+    incompleteOrders: 0,
     recentOrders: [],
   });
   const [analyticsLoading, setAnalyticsLoading] = useState(false);
@@ -77,7 +79,9 @@ export default function DashboardPage() {
       
       // Fetch orders with filters to calculate stats
       // Only "Notified" uses daily counter (resets every day), others show total count
-      const [allOrdersRes, pendingRes, receivedRes, notifiedRes, readyToSendRes, recentRes] = await Promise.all([
+      // Recent orders are filtered by current user (createdById)
+      const currentUserId = user?.id;
+      const [allOrdersRes, pendingRes, receivedRes, notifiedRes, readyToSendRes, incompleteRes, recentRes] = await Promise.all([
         api.get('/orders', { params: { limit: 1 } }),
         // Pending: total count (no date filter)
         api.get('/orders', { params: { status: 'PENDING', limit: 1 } }),
@@ -87,7 +91,10 @@ export default function DashboardPage() {
         api.get('/orders', { params: { status: 'NOTIFIED_CALL,NOTIFIED_WHATSAPP', notifiedDateFrom: todayStr, notifiedDateTo: todayStr, limit: 1 } }),
         // Ready to Send: total count (no date filter)
         api.get('/orders', { params: { status: 'READY_TO_SEND', limit: 1 } }),
-        api.get('/orders', { params: { limit: 5, sortBy: 'createdAt', sortOrder: 'desc' } }),
+        // Incomplete: total count (no date filter)
+        api.get('/orders', { params: { status: 'INCOMPLETO', limit: 1 } }),
+        // Recent orders: filtered by current user
+        api.get('/orders', { params: { limit: 5, sortBy: 'createdAt', sortOrder: 'desc', createdById: currentUserId } }),
       ]);
 
       // Get totals from pagination metadata if available
@@ -96,6 +103,7 @@ export default function DashboardPage() {
       const receivedOrders = receivedRes.data?.data?.pagination?.total || 0;
       const notifiedOrders = notifiedRes.data?.data?.pagination?.total || 0;
       const readyToSendOrders = readyToSendRes.data?.data?.pagination?.total || 0;
+      const incompleteOrders = incompleteRes.data?.data?.pagination?.total || 0;
       const recentOrders = recentRes.data?.data?.orders || [];
 
       setStats({
@@ -104,6 +112,7 @@ export default function DashboardPage() {
         receivedOrders,
         notifiedOrders,
         readyToSendOrders,
+        incompleteOrders,
         recentOrders,
       });
     } catch (error: any) {
@@ -407,7 +416,7 @@ export default function DashboardPage() {
           style={{ cursor: 'pointer' }}
         >
           <div className="stat-card-icon">
-            <ShoppingCart size={32} />
+            <AlertTriangle size={32} />
           </div>
           <div className="stat-card-content">
             <div className="stat-card-label">{t('dashboard.received')}</div>
@@ -447,12 +456,33 @@ export default function DashboardPage() {
             <div className="stat-card-value">{stats.readyToSendOrders}</div>
           </div>
         </div>
+
+        <div 
+          className="stat-card stat-card-danger"
+          onClick={() => {
+            navigate(`/orders?status=INCOMPLETO`);
+          }}
+          style={{ cursor: 'pointer' }}
+        >
+          <div className="stat-card-icon">
+            <AlertCircle size={32} />
+          </div>
+          <div className="stat-card-content">
+            <div className="stat-card-label">{t('orders.statusIncompleto')}</div>
+            <div className="stat-card-value">{stats.incompleteOrders}</div>
+          </div>
+        </div>
       </div>
 
       {/* Recent Orders */}
       <div className="dashboard-section">
         <div className="dashboard-section-header">
-          <h2>{t('dashboard.recentOrders')}</h2>
+          <h2>
+            {t('dashboard.recentOrders')}{' '}
+            <span style={{ color: 'var(--primary)', fontWeight: 600 }}>
+              {t('dashboard.byUser', { username: user?.username?.toUpperCase() || '' })}
+            </span>
+          </h2>
           <button
             className="btn-link"
             onClick={() => navigate('/orders')}
@@ -659,7 +689,7 @@ export default function DashboardPage() {
                                 </span>
                               </td>
                               <td style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--success)' }}>
-                                {safeTotalAmount.toFixed(2)} €
+                                €{safeTotalAmount.toFixed(2)}
                               </td>
                             </tr>
                           );

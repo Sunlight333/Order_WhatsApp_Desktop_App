@@ -107,15 +107,11 @@ export default function LoginPage() {
         </form>
 
         <div className="login-footer">
-          <p className="login-hint">
-            {t('login.defaultCredentials')}: <strong>admin</strong> / <strong>admin123</strong>
-          </p>
           <button
             type="button"
             onClick={() => navigate('/settings')}
             className="btn-secondary"
             style={{
-              marginTop: '1rem',
               display: 'flex',
               alignItems: 'center',
               gap: '0.5rem',

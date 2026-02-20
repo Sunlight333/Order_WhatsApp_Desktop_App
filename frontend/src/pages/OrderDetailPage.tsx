@@ -108,6 +108,10 @@ export default function OrderDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [showSaveQuantityModal, setShowSaveQuantityModal] = useState(false);
   const [pendingQuantityUpdate, setPendingQuantityUpdate] = useState<{ productId: string; value: string | null } | null>(null);
+  const [showDeleteProductModal, setShowDeleteProductModal] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState(false);
+  const [savedScrollPosition, setSavedScrollPosition] = useState<number | null>(null);
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'SUPER_ADMIN';
 
@@ -116,6 +120,14 @@ export default function OrderDetailPage() {
       fetchOrder(id);
     }
   }, [id]);
+
+  // Restore scroll position after order data updates
+  useEffect(() => {
+    if (savedScrollPosition !== null && order) {
+      window.scrollTo(0, savedScrollPosition);
+      setSavedScrollPosition(null);
+    }
+  }, [order, savedScrollPosition]);
 
 
   const fetchOrder = async (orderId: string) => {
@@ -380,28 +392,47 @@ export default function OrderDetailPage() {
     }
   };
 
+  const handleDeleteProduct = async () => {
+    if (!order || !id || !productToDelete) return;
+
+    try {
+      setDeletingProduct(true);
+      const scrollPos = window.scrollY;
+      await api.delete(`/orders/${id}/products/${productToDelete.id}`);
+      toast.success(t('orderDetail.productDeleteSuccess') || 'Product deleted successfully');
+      setShowDeleteProductModal(false);
+      setProductToDelete(null);
+      // Refresh the full order to get updated products list and audit logs
+      const response = await api.get<{ success: true; data: Order }>(`/orders/${id}`);
+      setOrder(response.data.data);
+      setSavedScrollPosition(scrollPos);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || t('orderDetail.productDeleteFailed') || 'Failed to delete product');
+    } finally {
+      setDeletingProduct(false);
+    }
+  };
+
   const updateOrderStatus = async (newStatus: OrderStatus, reason?: string) => {
     if (!order || !id) return;
 
     try {
       setUpdating(true);
-      const response = await api.patch<{
-        success: true;
-        data: Order;
-      }>(`/orders/${id}/status`, {
+      const scrollPos = window.scrollY;
+      await api.patch(`/orders/${id}/status`, {
         status: newStatus,
-        notificationMethod: newStatus.startsWith('NOTIFIED_') 
-          ? newStatus.replace('NOTIFIED_', '') 
+        notificationMethod: newStatus.startsWith('NOTIFIED_')
+          ? newStatus.replace('NOTIFIED_', '')
           : undefined,
         cancellationReason: newStatus === 'CANCELLED' ? reason : undefined
       });
 
-      setOrder(response.data.data);
+      // Always fetch fresh order to ensure auditLogs are up to date
+      const freshResponse = await api.get<{ success: true; data: Order }>(`/orders/${id}`);
+      setOrder(freshResponse.data.data);
+      setSavedScrollPosition(scrollPos);
       toast.success(t('orderDetail.statusUpdated'));
       setShowStatusModal(false);
-      
-      // Refresh order to get updated audit logs
-      fetchOrder(id);
     } catch (error: any) {
       toast.error(error.response?.data?.error?.message || t('orderDetail.updateStatusGenericFailed'));
     } finally {
@@ -483,12 +514,11 @@ export default function OrderDetailPage() {
         return newState;
       });
 
-      // Refresh order data
-      if (id) {
-        await fetchOrder(id);
-      }
-
       toast.success(t('orderDetail.receivedQuantityUpdated'));
+
+      // Refresh full order to get updated products, status and audit logs
+      const freshResponse = await api.get<{ success: true; data: Order }>(`/orders/${id}`);
+      setOrder(freshResponse.data.data);
     } catch (error: any) {
       console.error('Failed to update received quantity:', error);
       const errorMessage = error.response?.data?.error?.message || t('orderDetail.updateFailed');
@@ -597,9 +627,14 @@ export default function OrderDetailPage() {
       case 'CREATE':
         return <Plus size={14} />;
       case 'UPDATE':
+      case 'QUANTITY_UPDATE':
+        return <Edit2 size={14} />;
+      case 'EDIT_ORDER':
         return <Edit2 size={14} />;
       case 'STATUS_CHANGE':
         return <CheckCircle size={14} />;
+      case 'PRODUCT_DELETED':
+        return <Trash2 size={14} />;
       default:
         return <AlertCircle size={14} />;
     }
@@ -610,9 +645,14 @@ export default function OrderDetailPage() {
       case 'CREATE':
         return t('orderDetail.actionCreate');
       case 'UPDATE':
+      case 'QUANTITY_UPDATE':
         return t('orderDetail.actionUpdate');
+      case 'EDIT_ORDER':
+        return t('orderDetail.actionEditOrder');
       case 'STATUS_CHANGE':
         return t('orderDetail.actionStatusChange');
+      case 'PRODUCT_DELETED':
+        return t('orderDetail.actionProductDeleted');
       default:
         return action;
     }
@@ -631,6 +671,7 @@ export default function OrderDetailPage() {
       // Audit log custom fields from backend
       'supplier': t('orderDetail.supplier'),
       'product': t('orderDetail.productRef'),
+      'products': t('orderDetail.products'),
       'quantity': t('orderDetail.quantity'),
     };
     return fieldTranslations[fieldName] || fieldName;
@@ -683,7 +724,6 @@ export default function OrderDetailPage() {
         </button>
         <div>
           <h1>{t('orderDetail.title')}</h1>
-          <p className="page-subtitle">{t('orderDetail.orderNumber')}: {order.orderNumber || '-'}</p>
         </div>
         <div className="header-actions" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           {isAdmin && (
@@ -710,6 +750,10 @@ export default function OrderDetailPage() {
         <section className="detail-card">
           <h2>{t('orderDetail.orderInfo')}</h2>
           <div className="detail-content">
+            <div className="detail-row">
+              <span className="detail-label">{t('orderDetail.orderNumber')}</span>
+              <span className="detail-value" style={{ fontWeight: 600, color: 'var(--primary)' }}>{order.orderNumber || '-'}</span>
+            </div>
             <div className="detail-row">
               <span className="detail-label">{t('common.status')}</span>
               <div className="detail-value">
@@ -745,7 +789,7 @@ export default function OrderDetailPage() {
             )}
             <div className="detail-row">
               <span className="detail-label">{t('orderDetail.totalAmount')}</span>
-              <span className="detail-value total-amount">{order.totalAmount} €</span>
+              <span className="detail-value total-amount">€{order.totalAmount}</span>
             </div>
           </div>
         </section>
@@ -814,17 +858,15 @@ export default function OrderDetailPage() {
         <section className="detail-card">
           <h2>{t('orderDetail.updateStatus')}</h2>
           <div className="status-actions">
-            {/* Show all status options, allowing users to change to any status */}
-            {(['PENDING', 'RECEIVED', 'READY_TO_SEND', 'SENT', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'DELIVERED_COUNTER', 'CANCELLED', 'INCOMPLETO'] as OrderStatus[]).map((status) => {
+            {/* Show actionable status options (PENDING, RECEIVED and INCOMPLETO are automatic/initial states, not selectable) */}
+            {(['READY_TO_SEND', 'SENT', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'DELIVERED_COUNTER', 'CANCELLED'] as OrderStatus[]).map((status) => {
               const isActive = order.status === status;
-              
-              // Block changing to PENDING if order is already completed
+
               // Completed states: RECEIVED, NOTIFIED_CALL, NOTIFIED_WHATSAPP, DELIVERED_COUNTER
               const completedStates: OrderStatus[] = ['RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'DELIVERED_COUNTER'];
               const isOrderCompleted = completedStates.includes(order.status as OrderStatus);
-              const isBlockedToPending = status === 'PENDING' && isOrderCompleted;
 
-              // For "RECEIVED" and "READY_TO_SEND" we require received quantities to be filled and fully received.
+              // Check if all products are fully received
               const productsArr = Array.isArray(order.products) ? order.products : [];
               const isFullyReceivedByProducts =
                 productsArr.length === 0 ||
@@ -836,18 +878,27 @@ export default function OrderDetailPage() {
                   return rec >= qty;
                 });
 
-              // RECEIVED ("Pendiente de avisar") is allowed even if the order is currently INCOMPLETO;
-              // when selected, backend will auto-fill received quantities to max.
-              const isBlockedReceived = false;
-              // READY_TO_SEND should be enabled when order is completed; since RECEIVED now requires quantities,
-              // we can allow READY_TO_SEND when current status is a "completed" workflow status.
+              // READY_TO_SEND requires order to be completed and fully received
               const isBlockedReadyToSend =
                 status === 'READY_TO_SEND' && (!isOrderCompleted || !isFullyReceivedByProducts);
-              
+
               // SENT can only be set when order is currently in READY_TO_SEND status
               const isBlockedSent = status === 'SENT' && order.status !== 'READY_TO_SEND';
-              
-              const isDisabled = updating || isActive || isBlockedToPending || isBlockedReadyToSend || isBlockedReceived || isBlockedSent;
+
+              // Block notification statuses until order is fully received/completed,
+              // and also block them once order is in READY_TO_SEND or later
+              const isInSendingFlow = order.status === 'READY_TO_SEND' || order.status === 'SENT';
+              const isBlockedNotifiedCall = status === 'NOTIFIED_CALL' && (!isFullyReceivedByProducts || isInSendingFlow);
+              const isBlockedNotifiedWhatsApp = status === 'NOTIFIED_WHATSAPP' && (!isFullyReceivedByProducts || isInSendingFlow);
+              const isBlockedDeliveredCounter = status === 'DELIVERED_COUNTER' && (!isFullyReceivedByProducts || isInSendingFlow);
+
+              // CANCELLED can only be set when order is PENDING or INCOMPLETO
+              const isBlockedCancelled = status === 'CANCELLED' && order.status !== 'PENDING' && order.status !== 'INCOMPLETO';
+
+              // Once SENT, no status changes are allowed
+              const isBlockedBySent = order.status === 'SENT' && !isActive;
+
+              const isDisabled = updating || isActive || isBlockedReadyToSend || isBlockedSent || isBlockedNotifiedCall || isBlockedNotifiedWhatsApp || isBlockedDeliveredCounter || isBlockedCancelled || isBlockedBySent;
               const statusConfigData = getStatusConfig(status, statusConfig);
               
               // Use the exact same style values as the status badge
@@ -910,13 +961,17 @@ export default function OrderDetailPage() {
                   title={
                     isActive
                       ? t('orderDetail.currentStatus')
-                      : status === 'RECEIVED'
-                        ? 'Marcar como "Pendiente de avisar" completará automáticamente las cantidades recibidas.'
-                        : isBlockedReadyToSend
-                          ? '"Preparado para enviar" solo se puede activar cuando el pedido está completado.'
-                        : isBlockedSent
-                          ? '"Enviado" solo se puede activar cuando el pedido está en estado "Preparado para enviar".'
-                        : getStatusLabel(status)
+                      : isBlockedBySent
+                        ? t('orderDetail.blockedBySent') || 'El pedido ya fue enviado, no se puede cambiar el estado.'
+                      : isBlockedCancelled
+                        ? t('orderDetail.blockedCancelled') || 'Solo se puede cancelar cuando el pedido está pendiente de recibir o incompleto.'
+                      : (isBlockedNotifiedCall || isBlockedNotifiedWhatsApp || isBlockedDeliveredCounter) && isInSendingFlow
+                        ? t('orderDetail.blockedByReadyToSend') || 'No disponible una vez preparado para enviar.'
+                      : isBlockedReadyToSend
+                        ? '"Preparado para enviar" solo se puede activar cuando el pedido está completado.'
+                      : isBlockedSent
+                        ? '"Enviado" solo se puede activar cuando el pedido está en estado "Preparado para enviar".'
+                      : getStatusLabel(status)
                   }
                   onMouseEnter={(e) => {
                     if (!isDisabled && !isActive) {
@@ -949,9 +1004,11 @@ export default function OrderDetailPage() {
                   <th>{t('orderDetail.supplier')}</th>
                   <th>{t('orderDetail.productRef')}</th>
                   <th>{t('orderDetail.quantity')}</th>
-                  <th>{t('orderDetail.receivedQuantity')}</th>
-                  <th>{t('orderDetail.price')}</th>
+                  <th style={{ textAlign: 'center' }}>{t('orderDetail.receivedQuantity')}</th>
+                  <th>{t('orderDetail.priceWithoutIGIC')}</th>
+                  <th>{t('orderDetail.priceWithIGIC')}</th>
                   <th>{t('orderDetail.subtotal')}</th>
+                  <th style={{ width: '60px' }}>{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -973,12 +1030,13 @@ export default function OrderDetailPage() {
                       <td>{product.productRef}</td>
                       <td>{Math.round(parseFloat(product.quantity) || 0)}</td>
                       <td>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.5rem' }}>
                           <input
                             type="number"
                             min="0"
                             max={quantity}
                             step="1"
+                            className={`received-qty-input ${isReceived ? 'received-qty-filled' : ''}`}
                             value={localReceivedQuantities[product.id] !== undefined ? localReceivedQuantities[product.id] : (received || '')}
                             onChange={(e) => {
                               const value = e.target.value;
@@ -1002,13 +1060,6 @@ export default function OrderDetailPage() {
                             }}
                             placeholder="0"
                             disabled={isUpdating}
-                            style={{
-                              width: '80px',
-                              padding: '0.25rem 0.5rem',
-                              border: isReceived ? '2px solid var(--success)' : '1px solid var(--border-color)',
-                              borderRadius: '4px',
-                              backgroundColor: isReceived ? 'var(--success-light)' : 'var(--input-bg)',
-                            }}
                           />
                           {localReceivedQuantities[product.id] !== undefined && 
                            localReceivedQuantities[product.id] !== (product.receivedQuantity || '') && (
@@ -1039,16 +1090,54 @@ export default function OrderDetailPage() {
                           )}
                         </div>
                       </td>
-                      <td>{product.price} €</td>
-                      <td>{subtotal.toFixed(2)} €</td>
+                      <td>
+                        {(() => {
+                          const priceWithIGIC = parseFloat(product.price) || 0;
+                          if (priceWithIGIC === 0) return '-';
+                          const priceWithoutIGIC = priceWithIGIC / 1.07;
+                          return '€' + priceWithoutIGIC.toFixed(2);
+                        })()}
+                      </td>
+                      <td>€{product.price}</td>
+                      <td>€{subtotal.toFixed(2)}</td>
+                      <td style={{ textAlign: 'center' }}>
+                        <button
+                          onClick={() => {
+                            setProductToDelete(product);
+                            setShowDeleteProductModal(true);
+                          }}
+                          disabled={order.products.length <= 1 || isReceived}
+                          className="btn-icon-danger"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: '6px',
+                            border: 'none',
+                            borderRadius: '4px',
+                            backgroundColor: (order.products.length <= 1 || isReceived) ? 'var(--bg-secondary)' : 'var(--danger-light)',
+                            color: (order.products.length <= 1 || isReceived) ? 'var(--text-muted)' : 'var(--danger)',
+                            cursor: (order.products.length <= 1 || isReceived) ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                          title={order.products.length <= 1
+                            ? (t('orderDetail.cannotDeleteLastProduct') || 'Cannot delete the last product')
+                            : isReceived
+                            ? (t('orderDetail.cannotDeleteReceivedProduct') || 'Cannot delete a received product')
+                            : (t('orderDetail.deleteProduct') || 'Delete product')
+                          }
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
               </tbody>
               <tfoot>
                 <tr>
-                  <td colSpan={5} className="text-right">{t('orderDetail.total')}:</td>
-                  <td className="total-amount">{order.totalAmount} €</td>
+                  <td colSpan={7} className="text-right">{t('orderDetail.total')}:</td>
+                  <td className="total-amount">€{order.totalAmount}</td>
                 </tr>
               </tfoot>
             </table>
@@ -1073,21 +1162,22 @@ export default function OrderDetailPage() {
                     </div>
                     {log.fieldChanged && (
                       <div className="audit-details">
-                        {log.fieldChanged === 'price' && log.metadata && (
-                          <div style={{ marginBottom: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
-                            {(() => {
-                              try {
-                                const meta = typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
-                                return meta.productRef && meta.supplierName 
-                                  ? `${meta.productRef} (${meta.supplierName})`
-                                  : meta.productRef || '';
-                              } catch {
-                                return '';
-                              }
-                            })()}
-                          </div>
-                        )}
                         <div>
+                          {log.metadata && (() => {
+                            try {
+                              const meta = typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
+                              if (meta.productRef && meta.supplierName) {
+                                return (
+                                  <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginRight: '0.25rem' }}>
+                                    {meta.productRef} ({meta.supplierName})
+                                  </span>
+                                );
+                              }
+                              return null;
+                            } catch {
+                              return null;
+                            }
+                          })()}
                           <span className="field-name">{getFieldLabel(log.fieldChanged)}: </span>
                           {log.oldValue && (
                             <span className="old-value">
@@ -1224,6 +1314,40 @@ export default function OrderDetailPage() {
           loading={deleting}
         />
       )}
+
+      {/* Delete Product Modal */}
+      <ConfirmModal
+        isOpen={showDeleteProductModal}
+        onClose={() => {
+          setShowDeleteProductModal(false);
+          setProductToDelete(null);
+        }}
+        onConfirm={handleDeleteProduct}
+        title={t('orderDetail.deleteProductTitle') || 'Delete Product'}
+        message={
+          productToDelete ? (
+            <div>
+              <p>{t('orderDetail.deleteProductConfirm') || 'Are you sure you want to delete this product from the order?'}</p>
+              <div style={{ marginTop: '1rem', padding: '0.75rem', backgroundColor: 'var(--bg-secondary)', borderRadius: '6px' }}>
+                <p style={{ fontWeight: 600 }}>{productToDelete.supplier.name}</p>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  {t('orderDetail.productRef')}: {productToDelete.productRef}
+                </p>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  {t('orderDetail.quantity')}: {productToDelete.quantity} × €{productToDelete.price}
+                </p>
+              </div>
+              <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--warning)' }}>
+                {t('orderDetail.deleteProductWarning') || 'This action will be recorded in the order history.'}
+              </p>
+            </div>
+          ) : null
+        }
+        confirmText={t('common.delete') || 'Delete'}
+        cancelText={t('common.cancel')}
+        type="danger"
+        loading={deletingProduct}
+      />
 
       {/* Save Quantity Confirmation Modal */}
       <ConfirmModal

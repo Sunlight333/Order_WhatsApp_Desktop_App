@@ -285,7 +285,11 @@ export default function CreateOrderPage() {
   };
 
   const validateForm = (): boolean => {
-    // Phone is now optional, no validation needed
+    // Phone number is required
+    if (!customerPhone.trim()) {
+      toast.error(t('createOrder.phoneRequired'));
+      return false;
+    }
 
     for (const supplier of suppliers) {
       if (!supplier.name.trim()) {
@@ -386,7 +390,7 @@ export default function CreateOrderPage() {
             </div>
             <div className="form-group">
               <label htmlFor="customerPhone">
-                {t('createOrder.customerPhone')} <span className="optional">({t('common.optional')})</span>
+                {t('createOrder.customerPhone')} <span className="required">*</span>
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ 
@@ -529,7 +533,9 @@ export default function CreateOrderPage() {
                         {t('orderDetail.quantity')} <span className="required">*</span>
                       </label>
                       <input
-                        type="text"
+                        type="number"
+                        min="0"
+                        step="any"
                         value={product.quantity}
                         onChange={(e) =>
                           updateProduct(supplier.id, product.id, 'quantity', e.target.value)
@@ -541,17 +547,44 @@ export default function CreateOrderPage() {
                     </div>
                     <div className="form-group">
                       <label>
-                        {t('orderDetail.price')} <span className="required">*</span>
+                        {t('orderDetail.priceWithIGIC')} <span className="required">*</span>
                       </label>
                       <input
                         type="text"
+                        inputMode="decimal"
                         value={product.price}
-                        onChange={(e) =>
-                          updateProduct(supplier.id, product.id, 'price', e.target.value)
-                        }
+                        onChange={(e) => {
+                          updateProduct(supplier.id, product.id, 'price', e.target.value);
+                        }}
                         placeholder={t('createOrder.enterPrice')}
                         className="form-input"
                         required
+                      />
+                    </div>
+                    <div className="form-group">
+                      <label>
+                        {t('orderDetail.priceWithoutIGIC')}
+                      </label>
+                      <input
+                        type="text"
+                        value={(() => {
+                          if (!product.price || product.price.trim() === '') return '';
+                          // Try to extract numbers from the price string
+                          const priceStr = product.price.replace(',', '.');
+                          const priceWithIGIC = parseFloat(priceStr);
+                          // If not a valid number, return empty (allows text input but shows no calculation)
+                          if (isNaN(priceWithIGIC) || priceWithIGIC === 0) return '';
+                          const priceWithoutIGIC = priceWithIGIC / 1.07;
+                          // Format with 2 decimals, using comma as decimal separator
+                          return '€' + priceWithoutIGIC.toFixed(2).replace('.', ',');
+                        })()}
+                        readOnly
+                        className="form-input"
+                        style={{ 
+                          backgroundColor: 'var(--bg-secondary)', 
+                          cursor: 'not-allowed',
+                          opacity: 0.7
+                        }}
                       />
                     </div>
                     {supplier.products.length > 1 && (

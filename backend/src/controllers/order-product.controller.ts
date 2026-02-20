@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express';
-import { updateProductReceivedQuantity } from '../services/order-product.service';
+import { updateProductReceivedQuantity, deleteOrderProduct } from '../services/order-product.service';
 import { createSuccessResponse } from '../utils/response.util';
 import { ApiError } from '../utils/error.util';
 
@@ -38,6 +38,39 @@ export async function updateProductReceivedController(
     );
   } catch (error) {
     // Pass error to Express error middleware
+    next(error);
+  }
+}
+
+/**
+ * DELETE /api/v1/orders/:orderId/products/:productId
+ * Delete an order product from an order
+ */
+export async function deleteOrderProductController(
+  req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  try {
+    if (!req.user) {
+      res.status(401).json({
+        success: false,
+        error: {
+          code: 'UNAUTHORIZED',
+          message: 'Authentication required',
+        },
+      });
+      return;
+    }
+
+    const { productId } = req.params;
+
+    const result = await deleteOrderProduct(productId, req.user.userId);
+
+    res.status(200).json(
+      createSuccessResponse(result, 'Product deleted from order successfully')
+    );
+  } catch (error) {
     next(error);
   }
 }

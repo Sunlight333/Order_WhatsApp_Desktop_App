@@ -1,10 +1,12 @@
 import { Sun, Moon, Monitor } from 'lucide-react';
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { configService } from '../services/config.service';
 
 type Theme = 'light' | 'dark' | 'system';
 
 export default function ThemeToggle() {
+  const { t } = useTranslation();
   const [theme, setTheme] = useState<Theme>(() => {
     // Try to get theme from config service first, then fallback to localStorage
     const config = configService.getConfig();
@@ -88,8 +90,8 @@ export default function ThemeToggle() {
         type="button"
         onClick={() => changeTheme('light')}
         className={`theme-btn ${theme === 'light' ? 'active' : ''}`}
-        title="Light theme"
-        aria-label="Light theme"
+        title={t('settings.light')}
+        aria-label={t('settings.light')}
       >
         <Sun size={18} />
       </button>
@@ -97,8 +99,8 @@ export default function ThemeToggle() {
         type="button"
         onClick={() => changeTheme('dark')}
         className={`theme-btn ${theme === 'dark' ? 'active' : ''}`}
-        title="Dark theme"
-        aria-label="Dark theme"
+        title={t('settings.dark')}
+        aria-label={t('settings.dark')}
       >
         <Moon size={18} />
       </button>
@@ -106,8 +108,8 @@ export default function ThemeToggle() {
         type="button"
         onClick={() => changeTheme('system')}
         className={`theme-btn ${theme === 'system' ? 'active' : ''}`}
-        title="System theme"
-        aria-label="System theme"
+        title={t('settings.system')}
+        aria-label={t('settings.system')}
       >
         <Monitor size={18} />
       </button>

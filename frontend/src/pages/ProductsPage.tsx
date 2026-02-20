@@ -73,6 +73,7 @@ export default function ProductsPage() {
   // Advanced filters
   const [referenceFilter, setReferenceFilter] = useState<string>('');
   const [customerFilter, setCustomerFilter] = useState<string>('');
+  const [createdByFilter, setCreatedByFilter] = useState<string>('');
   const [dateFromFilter, setDateFromFilter] = useState<string>('');
   const [dateToFilter, setDateToFilter] = useState<string>('');
   const [orderNumberFilter, setOrderNumberFilter] = useState<string>('');
@@ -466,17 +467,22 @@ export default function ProductsPage() {
     if (selectedSupplierFilter && product.supplierId !== selectedSupplierFilter) {
       return false;
     }
-    
+
     // Apply reference filter
     if (referenceFilter.trim() && !product.productRef.toLowerCase().includes(referenceFilter.toLowerCase())) {
       return false;
     }
-    
+
     // Apply customer filter
     if (customerFilter && product.customerId !== customerFilter) {
       return false;
     }
-    
+
+    // Apply created by user filter
+    if (createdByFilter && product.createdBy?.id !== createdByFilter) {
+      return false;
+    }
+
     // Apply order number filter
     if (orderNumberFilter.trim()) {
       if (!product.orderNumber) {
@@ -487,10 +493,32 @@ export default function ProductsPage() {
         return false;
       }
     }
-    
-    // Note: Date filtering would require backend support to include order createdAt in PendingProduct
-    // For now, date filters are available in UI but won't filter until backend provides the data
-    
+
+    // Apply date filter (using createdAt from pending product)
+    if (dateFromFilter || dateToFilter) {
+      if (!product.createdAt) {
+        return false;
+      }
+      const productDate = new Date(product.createdAt);
+      productDate.setHours(0, 0, 0, 0);
+
+      if (dateFromFilter) {
+        const fromDate = new Date(dateFromFilter);
+        fromDate.setHours(0, 0, 0, 0);
+        if (productDate < fromDate) {
+          return false;
+        }
+      }
+
+      if (dateToFilter) {
+        const toDate = new Date(dateToFilter);
+        toDate.setHours(23, 59, 59, 999);
+        if (productDate > toDate) {
+          return false;
+        }
+      }
+    }
+
     // Apply search query filter
     if (!searchQuery.trim()) return true;
     const query = searchQuery.toLowerCase();
@@ -508,6 +536,7 @@ export default function ProductsPage() {
   const clearFilters = () => {
     setReferenceFilter('');
     setCustomerFilter('');
+    setCreatedByFilter('');
     setDateFromFilter('');
     setDateToFilter('');
     setOrderNumberFilter('');
@@ -515,7 +544,16 @@ export default function ProductsPage() {
     setSearchQuery('');
   };
 
-  const hasActiveFilters = referenceFilter || customerFilter || dateFromFilter || dateToFilter || orderNumberFilter || selectedSupplierFilter;
+  const hasActiveFilters = referenceFilter || customerFilter || createdByFilter || dateFromFilter || dateToFilter || orderNumberFilter || selectedSupplierFilter;
+
+  // Extract unique users from pending products for the filter dropdown
+  const uniqueUsers = Array.from(
+    new Map(
+      pendingProducts
+        .filter(p => p.createdBy?.id && p.createdBy?.username)
+        .map(p => [p.createdBy!.id, { id: p.createdBy!.id, username: p.createdBy!.username }])
+    ).values()
+  ).sort((a, b) => a.username.localeCompare(b.username));
 
   const filteredProducts = products.filter((product) => {
     if (!searchQuery.trim()) return true;
@@ -632,15 +670,15 @@ export default function ProductsPage() {
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
           {isAdmin && (
             <>
-              <button
-                className="btn-secondary"
+            <button
+              className="btn-secondary"
                 onClick={handleExportOrdersBySupplierMonth}
-                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
                 title={t('products.exportOrdersBySupplierMonth')}
-              >
-                <Download size={18} />
+            >
+              <Download size={18} />
                 {t('products.ordersBySupplierMonth')}
-              </button>
+            </button>
               <button
                 className="btn-secondary"
                 onClick={handleExportQuantityByReference}
@@ -649,7 +687,7 @@ export default function ProductsPage() {
               >
                 <Download size={18} />
                 {t('products.quantityByReference')}
-              </button>
+            </button>
             </>
           )}
         </div>
@@ -687,7 +725,7 @@ export default function ProductsPage() {
             onClick={() => setShowFilters(!showFilters)}
             style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
           >
-            <Filter size={18} />
+          <Filter size={18} />
             {t('common.filters')}
           </button>
         </div>
@@ -765,20 +803,20 @@ export default function ProductsPage() {
                 <Building2 size={14} />
                 {t('products.supplier')}
               </label>
-              <select
-                value={selectedSupplierFilter}
-                onChange={(e) => setSelectedSupplierFilter(e.target.value)}
+          <select
+            value={selectedSupplierFilter}
+            onChange={(e) => setSelectedSupplierFilter(e.target.value)}
                 className="filter-input"
                 style={{ padding: '0.5rem 0.75rem', fontSize: '0.875rem', minHeight: '36px' }}
-              >
-                <option value="">{t('products.allSuppliers')}</option>
-                {suppliers.map((supplier) => (
-                  <option key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                  </option>
-                ))}
-              </select>
-            </div>
+          >
+            <option value="">{t('products.allSuppliers')}</option>
+            {suppliers.map((supplier) => (
+              <option key={supplier.id} value={supplier.id}>
+                {supplier.name}
+              </option>
+            ))}
+          </select>
+        </div>
 
             {/* Order Number Filter */}
             <div className="filter-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
@@ -795,6 +833,27 @@ export default function ProductsPage() {
                 style={{ padding: '0.5rem 0.75rem', fontSize: '0.875rem', minHeight: '36px' }}
               />
             </div>
+
+            {/* Created By User Filter */}
+            <div className="filter-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
+              <label style={{ fontSize: '0.8125rem', fontWeight: 500, color: 'var(--text-secondary)', display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+                <User size={14} />
+                {t('orders.createdBy')}
+              </label>
+              <select
+                value={createdByFilter}
+                onChange={(e) => setCreatedByFilter(e.target.value)}
+                className="filter-input"
+                style={{ padding: '0.5rem 0.75rem', fontSize: '0.875rem', minHeight: '36px' }}
+              >
+                <option value="">{t('orders.allUsers')}</option>
+                {uniqueUsers.map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.username}
+                  </option>
+                ))}
+              </select>
+      </div>
 
             {/* Date Filters */}
             <div className="filter-group" style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem', gridColumn: 'span 2' }}>
@@ -819,11 +878,6 @@ export default function ProductsPage() {
                   min={dateFromFilter || undefined}
                 />
               </div>
-              {dateFromFilter || dateToFilter ? (
-                <div style={{ fontSize: '0.6875rem', color: 'var(--text-secondary)', fontStyle: 'italic', marginTop: '-0.25rem' }}>
-                  {t('products.dateFilterNote') || 'Nota: Requiere soporte del backend.'}
-                </div>
-              ) : null}
             </div>
           </div>
         </div>
@@ -850,8 +904,6 @@ export default function ProductsPage() {
                   </div>
                 </th>
                 <th>{t('products.supplier')}</th>
-                <th>{t('orders.customer')}</th>
-                <th>{t('orders.customerPhone')}</th>
                 <th 
                   className={sortBy === 'createdAt' ? 'sortable-header active' : 'sortable-header'}
                   onClick={() => handleSort('createdAt')}
@@ -862,6 +914,8 @@ export default function ProductsPage() {
                   </div>
                 </th>
                 <th>{t('orders.createdBy')}</th>
+                <th>{t('orders.customerPhone')}</th>
+                <th>{t('orders.customer')}</th>
                 <th>{t('orders.orderNumber')}</th>
                 <th>{t('orderDetail.quantity')}</th>
                 <th>{t('orderDetail.receivedQuantity')}</th>
@@ -869,34 +923,20 @@ export default function ProductsPage() {
               </tr>
             </thead>
             <tbody>
-              {filteredPendingProducts.map((product) => (
-                <tr 
-                  key={product.id} 
-                  className="product-row"
+              {filteredPendingProducts.map((product) => {
+                const isCancelled = product.orderStatus === 'CANCELLED';
+                return (
+                <tr
+                  key={product.id}
+                  className={`product-row ${isCancelled ? 'product-row-cancelled' : ''}`}
                   style={{ cursor: 'pointer' }}
                   onClick={() => handleProductClick(product)}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = 'var(--bg-hover)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '';
-                  }}
                 >
                   <td>
                     <div className="product-reference">{product.productRef}</div>
                   </td>
                   <td>
                     <div className="product-supplier">{product.supplierName}</div>
-                  </td>
-                  <td>
-                    <div className="product-customer">
-                      {product.customerName || '-'}
-                    </div>
-                  </td>
-                  <td>
-                    <div className="product-customer-phone">
-                      {product.customerPhone || '-'}
-                    </div>
                   </td>
                   <td>
                     <div className="product-created-date">
@@ -906,6 +946,16 @@ export default function ProductsPage() {
                   <td>
                     <div className="product-created-by">
                       {product.createdBy?.username || '-'}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="product-customer-phone">
+                      {product.customerPhone || '-'}
+                    </div>
+                  </td>
+                  <td>
+                    <div className="product-customer">
+                      {product.customerName || '-'}
                     </div>
                   </td>
                   <td>
@@ -919,17 +969,18 @@ export default function ProductsPage() {
                     </div>
                   </td>
                   <td>
-                    <div className="product-received">
+                    <div className="qty-badge qty-badge-received">
                       {product.receivedQuantity || '0'}
                     </div>
                   </td>
                   <td>
-                    <div className="product-pending" style={{ fontWeight: '600', color: 'var(--color-warning)' }}>
+                    <div className="qty-badge qty-badge-pending">
                       {product.pendingQuantity}
                     </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

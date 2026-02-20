@@ -31,6 +31,7 @@ export async function listOrdersController(req: Request, res: Response, next: Ne
     const minOrderNumber = req.query.minOrderNumber as string;
     const maxOrderNumber = req.query.maxOrderNumber as string;
     const hasObservations = req.query.hasObservations as string;
+    const productReference = req.query.productReference as string;
     const sortBy = req.query.sortBy as string;
     const sortOrder = (req.query.sortOrder as 'asc' | 'desc') || 'desc';
 
@@ -94,6 +95,7 @@ export async function listOrdersController(req: Request, res: Response, next: Ne
       minOrderNumber,
       maxOrderNumber,
       hasObservations,
+      productReference,
       sortBy,
       sortOrder,
     });

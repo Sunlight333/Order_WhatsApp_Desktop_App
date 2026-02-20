@@ -283,7 +283,14 @@ input[list] {
   --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.4);
   --shadow-lg: 0 8px 16px rgba(0, 0, 0, 0.5);
   --shadow-xl: 0 12px 24px rgba(0, 0, 0, 0.6);
-  
+
+  /* Border Radius - Same as light theme */
+  --radius-sm: 0.25rem;
+  --radius-md: 0.5rem;
+  --radius-lg: 0.75rem;
+  --radius-xl: 1rem;
+  --radius-full: 9999px;
+
   /* Component mappings */
   --primary-color: var(--primary);
   --primary-color-alpha: rgba(14, 165, 233, 0.15);

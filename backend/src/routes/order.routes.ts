@@ -7,7 +7,7 @@ import {
   updateOrderController,
   deleteOrderController,
 } from '../controllers/order.controller';
-import { updateProductReceivedController } from '../controllers/order-product.controller';
+import { updateProductReceivedController, deleteOrderProductController } from '../controllers/order-product.controller';
 import { authenticate, authorize } from '../middleware/auth.middleware';
 
 const router = Router();
@@ -53,6 +53,13 @@ router.patch('/:id/status', authenticate, updateOrderStatusController);
  * @access  Private
  */
 router.patch('/:orderId/products/:productId/received', authenticate, updateProductReceivedController);
+
+/**
+ * @route   DELETE /api/v1/orders/:orderId/products/:productId
+ * @desc    Delete an order product from an order
+ * @access  Private
+ */
+router.delete('/:orderId/products/:productId', authenticate, deleteOrderProductController);
 
 /**
  * @route   DELETE /api/v1/orders/:id

@@ -32,6 +32,7 @@ interface OrderProduct {
   productRef: string;
   quantity: string;
   price: string;
+  receivedQuantity: string | null;
   supplier: {
     id: string;
     name: string;
@@ -66,6 +67,7 @@ interface ProductData {
   productRef: string;
   quantity: string;
   price: string;
+  receivedQuantity: string | null;
 }
 
 export default function EditOrderPage() {
@@ -141,6 +143,7 @@ export default function EditOrderPage() {
           productRef: product.productRef,
           quantity: product.quantity,
           price: product.price,
+          receivedQuantity: product.receivedQuantity,
         });
       });
 
@@ -239,6 +242,7 @@ export default function EditOrderPage() {
             productRef: '',
             quantity: '',
             price: '',
+            receivedQuantity: null,
           },
         ],
       },
@@ -277,6 +281,7 @@ export default function EditOrderPage() {
                 productRef: '',
                 quantity: '',
                 price: '',
+                receivedQuantity: null,
               },
             ],
           };
@@ -346,7 +351,11 @@ export default function EditOrderPage() {
   };
 
   const validateForm = (): boolean => {
-    // Phone is now optional, no validation needed
+    // Phone number is required
+    if (!customerPhone.trim()) {
+      toast.error(t('createOrder.phoneRequired'));
+      return false;
+    }
 
     for (const supplier of suppliers) {
       if (!supplier.name.trim()) {
@@ -366,6 +375,20 @@ export default function EditOrderPage() {
         if (!product.price.trim()) {
           toast.error(t('createOrder.priceRequired'));
           return false;
+        }
+        // Validate quantity >= receivedQuantity
+        if (product.receivedQuantity) {
+          const received = parseFloat(product.receivedQuantity);
+          const qty = parseFloat(product.quantity);
+          if (!isNaN(received) && received > 0 && !isNaN(qty) && qty < received) {
+            toast.error(
+              t('editOrder.quantityBelowReceived', {
+                ref: product.productRef,
+                received: product.receivedQuantity,
+              })
+            );
+            return false;
+          }
         }
       }
     }
@@ -465,7 +488,7 @@ export default function EditOrderPage() {
             </div>
             <div className="form-group">
               <label htmlFor="customerPhone">
-                {t('createOrder.customerPhone')} <span className="optional">({t('common.optional')})</span>
+                {t('createOrder.customerPhone')} <span className="required">*</span>
               </label>
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                 <span style={{ 
@@ -588,16 +611,18 @@ export default function EditOrderPage() {
                       <label>
                         {t('createOrder.productReference')} <span className="required">*</span>
                       </label>
-                      <AutocompleteInput
+                      <input
+                        type="text"
                         value={product.productRef}
-                        onChange={(next) => updateProduct(supplier.id, product.id, 'productRef', next)}
-                        items={getProductHints(supplier.name, product.productRef).map((p) => ({
-                          key: p.id,
-                          value: p.reference,
-                        }))}
-                        onSelect={(item) => updateProduct(supplier.id, product.id, 'productRef', item.value)}
+                        onChange={(e) =>
+                          updateProduct(supplier.id, product.id, 'productRef', e.target.value)
+                        }
                         placeholder={t('createOrder.enterProductRef')}
-                        inputClassName="form-input"
+                        className="form-input"
+                        autoComplete="off"
+                        autoCorrect="off"
+                        autoCapitalize="off"
+                        spellCheck={false}
                         required
                       />
                     </div>
@@ -606,31 +631,65 @@ export default function EditOrderPage() {
                         {t('orderDetail.quantity')} <span className="required">*</span>
                       </label>
                       <input
-                        type="text"
+                        type="number"
+                        min={product.receivedQuantity && parseFloat(product.receivedQuantity) > 0 ? product.receivedQuantity : "0"}
+                        step="any"
                         value={product.quantity}
-                        onChange={(e) =>
-                          updateProduct(supplier.id, product.id, 'quantity', e.target.value)
-                        }
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const received = product.receivedQuantity ? parseFloat(product.receivedQuantity) : 0;
+                          if (received > 0 && val !== '' && parseFloat(val) < received) {
+                            return; // Block typing below received quantity
+                          }
+                          updateProduct(supplier.id, product.id, 'quantity', val);
+                        }}
                         placeholder={t('createOrder.enterQuantity')}
+                        className="form-input"
+                        required
+                      />
+                      {product.receivedQuantity && parseFloat(product.receivedQuantity) > 0 && (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--warning-color, #e67e22)', marginTop: '0.25rem', display: 'block' }}>
+                          {t('editOrder.receivedQuantityHint', { received: product.receivedQuantity })}
+                        </span>
+                      )}
+                    </div>
+                    <div className="form-group">
+                      <label>
+                        {t('orderDetail.priceWithIGIC')} <span className="required">*</span>
+                      </label>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={product.price}
+                        onChange={(e) => {
+                          updateProduct(supplier.id, product.id, 'price', e.target.value);
+                        }}
+                        placeholder={t('createOrder.enterPrice')}
                         className="form-input"
                         required
                       />
                     </div>
                     <div className="form-group">
                       <label>
-                        {t('orderDetail.price')} <span className="required">*</span>
+                        {t('orderDetail.priceWithoutIGIC')}
                       </label>
                       <input
-                        type="number"
-                        step="1"
-                        min="0"
-                        value={product.price}
-                        onChange={(e) =>
-                          updateProduct(supplier.id, product.id, 'price', e.target.value)
-                        }
-                        placeholder={t('createOrder.enterPrice')}
+                        type="text"
+                        value={(() => {
+                          if (!product.price || product.price.trim() === '') return '';
+                          const priceStr = product.price.replace(',', '.');
+                          const priceWithIGIC = parseFloat(priceStr) || 0;
+                          if (priceWithIGIC === 0 || isNaN(priceWithIGIC)) return '';
+                          const priceWithoutIGIC = priceWithIGIC / 1.07;
+                          return '€' + priceWithoutIGIC.toFixed(2).replace('.', ',');
+                        })()}
+                        readOnly
                         className="form-input"
-                        required
+                        style={{
+                          backgroundColor: 'var(--bg-secondary)',
+                          cursor: 'not-allowed',
+                          opacity: 0.7
+                        }}
                       />
                     </div>
                     {supplier.products.length > 1 && (

@@ -45,6 +45,7 @@ export default function OrdersPage() {
   const { t } = useTranslation();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
+  const [initialLoad, setInitialLoad] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const abortControllerRef = useRef<AbortController | null>(null);
   const [statusFilter, setStatusFilter] = useState<string[]>([]);
@@ -71,6 +72,8 @@ export default function OrdersPage() {
     entities: false,
     amounts: false,
     advanced: false,
+    reference: false,
+    createdBy: false,
   });
   
   // Filter data caches
@@ -100,8 +103,9 @@ export default function OrdersPage() {
   const [supplierAnalyticsLoading, setSupplierAnalyticsLoading] = useState(false);
   const [supplierAnalyticsData, setSupplierAnalyticsData] = useState<any[]>([]);
 
-  // Increased debounce time to 2000ms (2 seconds) to give users more time to type
-  const debouncedSearch = useDebounce(searchQuery, 2000);
+  // Debounce search query for the main search bar only
+  const debouncedSearch = useDebounce(searchQuery, 400);
+
   const { user } = useAuthStore();
   const isAdmin = user?.role === 'SUPER_ADMIN';
   const { config: statusConfig } = useOrderStatusConfig();
@@ -163,7 +167,7 @@ export default function OrdersPage() {
         supplierExportData = tableData.map((row) => ({
           [t('orders.supplier')]: row.supplierName,
           [t('orders.month')]: row.month,
-          [t('orders.totalAmount')]: `${row.totalAmount.toFixed(2)} €`,
+          [t('orders.totalAmount')]: `€${row.totalAmount.toFixed(2)}`,
           [t('orders.orderCount')]: row.orderCount,
         }));
       } else {
@@ -185,7 +189,7 @@ export default function OrdersPage() {
 
         supplierExportData = tableData.map((row) => ({
           [t('orders.supplier')]: row.supplierName,
-          [t('orders.totalAmount')]: `${row.totalAmount.toFixed(2)} €`,
+          [t('orders.totalAmount')]: `€${row.totalAmount.toFixed(2)}`,
           [t('orders.orderCount')]: row.orderCount,
         }));
       }
@@ -345,23 +349,89 @@ export default function OrdersPage() {
     }
   };
 
-  // Read URL query params on mount and when they change
+  // Load filters from localStorage on mount (before reading URL params)
+  useEffect(() => {
+    const savedFilters = localStorage.getItem('ordersPageFilters');
+    if (savedFilters) {
+      try {
+        const filters = JSON.parse(savedFilters);
+        if (filters.statusFilter) setStatusFilter(filters.statusFilter);
+        if (filters.dateFrom) setDateFrom(filters.dateFrom);
+        if (filters.dateTo) setDateTo(filters.dateTo);
+        if (filters.updatedDateFrom) setUpdatedDateFrom(filters.updatedDateFrom);
+        if (filters.updatedDateTo) setUpdatedDateTo(filters.updatedDateTo);
+        if (filters.notifiedDateFrom) setNotifiedDateFrom(filters.notifiedDateFrom);
+        if (filters.notifiedDateTo) setNotifiedDateTo(filters.notifiedDateTo);
+        if (filters.supplierFilter) setSupplierFilter(filters.supplierFilter);
+        if (filters.customerFilter) setCustomerFilter(filters.customerFilter);
+        if (filters.createdByFilter) setCreatedByFilter(filters.createdByFilter);
+        if (filters.minAmount) setMinAmount(filters.minAmount);
+        if (filters.maxAmount) setMaxAmount(filters.maxAmount);
+        if (filters.minOrderNumber) setMinOrderNumber(filters.minOrderNumber);
+        if (filters.maxOrderNumber) setMaxOrderNumber(filters.maxOrderNumber);
+        if (filters.hasObservations) setHasObservations(filters.hasObservations);
+        if (filters.productReferenceFilter) setProductReferenceFilter(filters.productReferenceFilter);
+        if (filters.searchQuery) setSearchQuery(filters.searchQuery);
+      } catch (error) {
+        console.error('Failed to load filters from localStorage:', error);
+      }
+    }
+  }, []);
+
+  // Read URL query params on mount and when they change (URL params take precedence over localStorage)
   useEffect(() => {
     const statusParam = searchParams.get('status');
     const statuses = statusParam ? statusParam.split(',').filter(s => s.trim()) : [];
-    setStatusFilter(statuses);
+    if (statuses.length > 0) setStatusFilter(statuses);
 
     const dateFromParam = searchParams.get('dateFrom') || '';
-    setDateFrom(dateFromParam);
+    if (dateFromParam) setDateFrom(dateFromParam);
 
     const dateToParam = searchParams.get('dateTo') || '';
-    setDateTo(dateToParam);
+    if (dateToParam) setDateTo(dateToParam);
+
+    const updatedDateFromParam = searchParams.get('updatedDateFrom') || '';
+    if (updatedDateFromParam) setUpdatedDateFrom(updatedDateFromParam);
+
+    const updatedDateToParam = searchParams.get('updatedDateTo') || '';
+    if (updatedDateToParam) setUpdatedDateTo(updatedDateToParam);
 
     const notifiedDateFromParam = searchParams.get('notifiedDateFrom') || '';
-    setNotifiedDateFrom(notifiedDateFromParam);
+    if (notifiedDateFromParam) setNotifiedDateFrom(notifiedDateFromParam);
 
     const notifiedDateToParam = searchParams.get('notifiedDateTo') || '';
-    setNotifiedDateTo(notifiedDateToParam);
+    if (notifiedDateToParam) setNotifiedDateTo(notifiedDateToParam);
+
+    const supplierParam = searchParams.get('suppliers');
+    const suppliers = supplierParam ? supplierParam.split(',').filter(s => s.trim()) : [];
+    if (suppliers.length > 0) setSupplierFilter(suppliers);
+
+    const customerParam = searchParams.get('customer') || '';
+    if (customerParam) setCustomerFilter(customerParam);
+
+    const createdByParam = searchParams.get('createdBy') || '';
+    if (createdByParam) setCreatedByFilter(createdByParam);
+
+    const minAmountParam = searchParams.get('minAmount') || '';
+    if (minAmountParam) setMinAmount(minAmountParam);
+
+    const maxAmountParam = searchParams.get('maxAmount') || '';
+    if (maxAmountParam) setMaxAmount(maxAmountParam);
+
+    const minOrderNumberParam = searchParams.get('minOrderNumber') || '';
+    if (minOrderNumberParam) setMinOrderNumber(minOrderNumberParam);
+
+    const maxOrderNumberParam = searchParams.get('maxOrderNumber') || '';
+    if (maxOrderNumberParam) setMaxOrderNumber(maxOrderNumberParam);
+
+    const hasObservationsParam = searchParams.get('hasObservations') || '';
+    if (hasObservationsParam) setHasObservations(hasObservationsParam);
+
+    const productReferenceParam = searchParams.get('productReference') || '';
+    if (productReferenceParam) setProductReferenceFilter(productReferenceParam);
+
+    const searchParam = searchParams.get('search') || '';
+    if (searchParam) setSearchQuery(searchParam);
 
     // IMPORTANT UX: do NOT auto-open the filters panel just because URL params exist.
     // If some flows want to open it programmatically, they can pass ?openFilters=1.
@@ -384,19 +454,81 @@ export default function OrdersPage() {
     setUrlParamsRead(true);
   }, [searchParams]);
 
-  // Load filter data when filters panel opens
+  // Sync filters to localStorage only (URL sync happens on search trigger)
+  // This effect saves filter state for persistence but does NOT trigger search
+  // Uses debouncedSearch instead of searchQuery to avoid localStorage writes on every keystroke
   useEffect(() => {
-    if (showFilters && (suppliersList.length === 0 || customersList.length === 0 || usersList.length === 0)) {
+    if (!urlParamsRead) return;
+
+    const filtersToSave = {
+      statusFilter,
+      dateFrom,
+      dateTo,
+      updatedDateFrom,
+      updatedDateTo,
+      notifiedDateFrom,
+      notifiedDateTo,
+      supplierFilter,
+      customerFilter,
+      createdByFilter,
+      minAmount,
+      maxAmount,
+      minOrderNumber,
+      maxOrderNumber,
+      hasObservations,
+      productReferenceFilter,
+      searchQuery: debouncedSearch,
+    };
+    localStorage.setItem('ordersPageFilters', JSON.stringify(filtersToSave));
+  }, [debouncedSearch, statusFilter, dateFrom, dateTo, updatedDateFrom, updatedDateTo, notifiedDateFrom, notifiedDateTo, supplierFilter, customerFilter, createdByFilter, minAmount, maxAmount, minOrderNumber, maxOrderNumber, hasObservations, productReferenceFilter, urlParamsRead]);
+
+  // Sync filters to URL - called manually when search is triggered
+  const syncFiltersToUrl = () => {
+    const params = new URLSearchParams();
+
+    if (searchQuery.trim()) params.set('search', searchQuery.trim());
+    if (statusFilter.length > 0) params.set('status', statusFilter.join(','));
+    if (dateFrom) params.set('dateFrom', dateFrom);
+    if (dateTo) params.set('dateTo', dateTo);
+    if (updatedDateFrom) params.set('updatedDateFrom', updatedDateFrom);
+    if (updatedDateTo) params.set('updatedDateTo', updatedDateTo);
+    if (notifiedDateFrom) params.set('notifiedDateFrom', notifiedDateFrom);
+    if (notifiedDateTo) params.set('notifiedDateTo', notifiedDateTo);
+    if (supplierFilter.length > 0) params.set('suppliers', supplierFilter.join(','));
+    if (customerFilter) params.set('customer', customerFilter);
+    if (createdByFilter) params.set('createdBy', createdByFilter);
+    if (minAmount) params.set('minAmount', minAmount);
+    if (maxAmount) params.set('maxAmount', maxAmount);
+    if (minOrderNumber) params.set('minOrderNumber', minOrderNumber);
+    if (maxOrderNumber) params.set('maxOrderNumber', maxOrderNumber);
+    if (hasObservations) params.set('hasObservations', hasObservations);
+    if (productReferenceFilter) params.set('productReference', productReferenceFilter);
+
+    setSearchParams(params, { replace: true });
+  };
+
+  // Manual filter apply function - called on Enter key or date blur
+  const applyFilters = () => {
+    setPage(1);
+    syncFiltersToUrl();
+    fetchOrders(true);
+  };
+
+  // Load filter data when filters panel opens or when active filters need display names
+  useEffect(() => {
+    if ((showFilters || customerFilter || createdByFilter || supplierFilter.length > 0) && (suppliersList.length === 0 || customersList.length === 0 || usersList.length === 0)) {
       loadFilterData();
     }
-  }, [showFilters]);
+  }, [showFilters, customerFilter, createdByFilter, supplierFilter]);
 
   useEffect(() => {
-    // Only fetch orders after URL params have been read (to avoid fetching with empty filters when navigating from dashboard)
+    // Only fetch orders after URL params have been read
+    // Auto-trigger only for: main search, select-type filters, pagination, sorting
+    // Text/date/number filters require manual trigger (Enter key or blur)
     if (urlParamsRead) {
       fetchOrders();
     }
-  }, [debouncedSearch, statusFilter, dateFrom, dateTo, updatedDateFrom, updatedDateTo, notifiedDateFrom, notifiedDateTo, supplierFilter, customerFilter, createdByFilter, minAmount, maxAmount, minOrderNumber, maxOrderNumber, hasObservations, productReferenceFilter, page, sortBy, sortOrder, urlParamsRead]);
+  }, [debouncedSearch, statusFilter, supplierFilter, customerFilter, createdByFilter, hasObservations, page, sortBy, sortOrder, urlParamsRead]);
 
   // Fetch supplier analytics when tab, year, or month changes
   useEffect(() => {
@@ -564,6 +696,7 @@ export default function OrdersPage() {
       if (!abortController.signal.aborted) {
         setOrders(response.data.data.orders || []);
         setPagination(response.data.data.pagination);
+        if (initialLoad) setInitialLoad(false);
       }
     } catch (error: any) {
       // Don't show error if request was aborted
@@ -653,6 +786,8 @@ export default function OrdersPage() {
     setPage(1);
     // Clear URL params
     setSearchParams({});
+    // Clear localStorage
+    localStorage.removeItem('ordersPageFilters');
   };
 
   const handleSort = (field: string) => {
@@ -869,7 +1004,7 @@ export default function OrdersPage() {
     ];
   };
 
-  if (loading) {
+  if (initialLoad && loading) {
     return (
       <div className="page-container">
         <div className="loading-container">
@@ -1023,26 +1158,28 @@ export default function OrdersPage() {
                         <span className="date-group-title">{t('orders.createdAt')}</span>
                       </div>
                       <div className="filter-row filter-row-2">
-                        <div className="filter-group">
-                          <label>{t('orders.createdDateFrom')}</label>
-                          <input
-                            type="date"
-                            value={dateFrom}
-                            onChange={(e) => { setDateFrom(e.target.value); setPage(1); }}
-                            className="filter-input"
-                          />
-                        </div>
-                        <div className="filter-group">
-                          <label>{t('orders.createdDateTo')}</label>
-                          <input
-                            type="date"
-                            value={dateTo}
-                            onChange={(e) => { setDateTo(e.target.value); setPage(1); }}
-                            className="filter-input"
-                            min={dateFrom || undefined}
-                          />
-                        </div>
-                      </div>
+                    <div className="filter-group">
+                      <label>{t('orders.createdDateFrom')}</label>
+                      <input
+                        type="date"
+                        value={dateFrom}
+                        onChange={(e) => setDateFrom(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+                        className="filter-input"
+                      />
+                    </div>
+                    <div className="filter-group">
+                      <label>{t('orders.createdDateTo')}</label>
+                      <input
+                        type="date"
+                        value={dateTo}
+                        onChange={(e) => setDateTo(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+                        className="filter-input"
+                        min={dateFrom || undefined}
+                      />
+                    </div>
+                  </div>
                     </div>
 
                     {/* Updated Date Group */}
@@ -1051,26 +1188,28 @@ export default function OrdersPage() {
                         <span className="date-group-title">{t('orders.updatedAt')}</span>
                       </div>
                       <div className="filter-row filter-row-2">
-                        <div className="filter-group">
-                          <label>{t('orders.updatedDateFrom')}</label>
-                          <input
-                            type="date"
-                            value={updatedDateFrom}
-                            onChange={(e) => { setUpdatedDateFrom(e.target.value); setPage(1); }}
-                            className="filter-input"
-                          />
-                        </div>
-                        <div className="filter-group">
-                          <label>{t('orders.updatedDateTo')}</label>
-                          <input
-                            type="date"
-                            value={updatedDateTo}
-                            onChange={(e) => { setUpdatedDateTo(e.target.value); setPage(1); }}
-                            className="filter-input"
-                            min={updatedDateFrom || undefined}
-                          />
-                        </div>
-                      </div>
+                    <div className="filter-group">
+                      <label>{t('orders.updatedDateFrom')}</label>
+                      <input
+                        type="date"
+                        value={updatedDateFrom}
+                        onChange={(e) => setUpdatedDateFrom(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+                        className="filter-input"
+                      />
+                    </div>
+                    <div className="filter-group">
+                      <label>{t('orders.updatedDateTo')}</label>
+                      <input
+                        type="date"
+                        value={updatedDateTo}
+                        onChange={(e) => setUpdatedDateTo(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+                        className="filter-input"
+                        min={updatedDateFrom || undefined}
+                      />
+                    </div>
+                  </div>
                     </div>
 
                     {/* Notified Date Group */}
@@ -1079,24 +1218,26 @@ export default function OrdersPage() {
                         <span className="date-group-title">{t('orders.notifiedAt')}</span>
                       </div>
                       <div className="filter-row filter-row-2">
-                        <div className="filter-group">
-                          <label>{t('orders.notifiedDateFrom')}</label>
-                          <input
-                            type="date"
-                            value={notifiedDateFrom}
-                            onChange={(e) => { setNotifiedDateFrom(e.target.value); setPage(1); }}
-                            className="filter-input"
-                          />
-                        </div>
-                        <div className="filter-group">
-                          <label>{t('orders.notifiedDateTo')}</label>
-                          <input
-                            type="date"
-                            value={notifiedDateTo}
-                            onChange={(e) => { setNotifiedDateTo(e.target.value); setPage(1); }}
-                            className="filter-input"
-                            min={notifiedDateFrom || undefined}
-                          />
+                    <div className="filter-group">
+                      <label>{t('orders.notifiedDateFrom')}</label>
+                      <input
+                        type="date"
+                        value={notifiedDateFrom}
+                        onChange={(e) => setNotifiedDateFrom(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+                        className="filter-input"
+                      />
+                    </div>
+                    <div className="filter-group">
+                      <label>{t('orders.notifiedDateTo')}</label>
+                      <input
+                        type="date"
+                        value={notifiedDateTo}
+                        onChange={(e) => setNotifiedDateTo(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
+                        className="filter-input"
+                        min={notifiedDateFrom || undefined}
+                      />
                         </div>
                       </div>
                     </div>
@@ -1123,6 +1264,8 @@ export default function OrdersPage() {
                       { value: 'RECEIVED', label: t('orders.statusReceived') },
                       { value: 'NOTIFIED_CALL', label: t('orders.statusNotifiedCall') },
                       { value: 'NOTIFIED_WHATSAPP', label: t('orders.statusNotifiedWhatsApp') },
+                      { value: 'READY_TO_SEND', label: t('orders.statusReadyToSend') },
+                      { value: 'SENT', label: t('orders.statusSent') },
                       { value: 'DELIVERED_COUNTER', label: t('orders.statusDeliveredCounter') },
                       { value: 'CANCELLED', label: t('orders.statusCancelled') },
                       { value: 'INCOMPLETO', label: t('orders.statusIncompleto') },
@@ -1192,19 +1335,6 @@ export default function OrdersPage() {
                       ))}
                     </select>
                   </div>
-                  <div className="filter-group">
-                    <label>{t('orders.createdBy')}</label>
-                    <select
-                      value={createdByFilter}
-                      onChange={(e) => { setCreatedByFilter(e.target.value); setPage(1); }}
-                      className="filter-input"
-                    >
-                      <option value="">{t('orders.allUsers')}</option>
-                      {usersList.map((user) => (
-                        <option key={user.id} value={user.id}>{user.username}</option>
-                      ))}
-                    </select>
-                  </div>
                 </div>
               )}
             </div>
@@ -1228,7 +1358,8 @@ export default function OrdersPage() {
                         type="number"
                         step="0.01"
                         value={minAmount}
-                        onChange={(e) => { setMinAmount(e.target.value); setPage(1); }}
+                        onChange={(e) => setMinAmount(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
                         className="filter-input"
                         placeholder="0.00"
                       />
@@ -1239,7 +1370,8 @@ export default function OrdersPage() {
                         type="number"
                         step="0.01"
                         value={maxAmount}
-                        onChange={(e) => { setMaxAmount(e.target.value); setPage(1); }}
+                        onChange={(e) => setMaxAmount(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
                         className="filter-input"
                         placeholder="999999.99"
                       />
@@ -1249,7 +1381,8 @@ export default function OrdersPage() {
                       <input
                         type="number"
                         value={minOrderNumber}
-                        onChange={(e) => { setMinOrderNumber(e.target.value); setPage(1); }}
+                        onChange={(e) => setMinOrderNumber(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
                         className="filter-input"
                         placeholder="1"
                       />
@@ -1259,7 +1392,8 @@ export default function OrdersPage() {
                       <input
                         type="number"
                         value={maxOrderNumber}
-                        onChange={(e) => { setMaxOrderNumber(e.target.value); setPage(1); }}
+                        onChange={(e) => setMaxOrderNumber(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
                         className="filter-input"
                         placeholder="999999"
                       />
@@ -1269,18 +1403,18 @@ export default function OrdersPage() {
               )}
             </div>
 
-            {/* Advanced Filters */}
+            {/* Observations Filter */}
             <div className="filter-section" data-section="advanced">
-              <button 
+              <button
                 className="filter-section-header"
                 onClick={() => toggleSection('advanced')}
               >
                 <FileText size={18} />
-                <span>{t('orders.advanced')}</span>
+                <span>{t('orders.observations')}</span>
                 {expandedSections.advanced ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
               </button>
               {expandedSections.advanced && (
-                <div className="filter-section-content" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem' }}>
+                <div className="filter-section-content">
                   <div className="filter-group">
                     <label>{t('orders.hasObservations')}</label>
                     <select
@@ -1293,15 +1427,61 @@ export default function OrdersPage() {
                       <option value="false">{t('orders.no')}</option>
                     </select>
                   </div>
+                </div>
+              )}
+            </div>
+
+            {/* Reference Filter */}
+            <div className="filter-section" data-section="reference">
+              <button
+                className="filter-section-header"
+                onClick={() => toggleSection('reference')}
+              >
+                <Hash size={18} />
+                <span>{t('products.reference')}</span>
+                {expandedSections.reference ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
+              </button>
+              {expandedSections.reference && (
+                <div className="filter-section-content">
                   <div className="filter-group">
-                    <label>{t('products.reference')}</label>
+                    <label>{t('orders.productReference')}</label>
                     <input
                       type="text"
-                      placeholder={t('products.reference')}
+                      placeholder={t('orders.productReferencePlaceholder')}
                       value={productReferenceFilter}
-                      onChange={(e) => { setProductReferenceFilter(e.target.value); setPage(1); }}
+                      onChange={(e) => setProductReferenceFilter(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && applyFilters()}
                       className="filter-input"
                     />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Created By Filter */}
+            <div className="filter-section" data-section="createdBy">
+              <button
+                className="filter-section-header"
+                onClick={() => toggleSection('createdBy')}
+              >
+                <User size={18} />
+                <span>{t('orders.createdBy')}</span>
+                {expandedSections.createdBy ? <ChevronUpIcon size={18} /> : <ChevronDownIcon size={18} />}
+              </button>
+              {expandedSections.createdBy && (
+                <div className="filter-section-content">
+                  <div className="filter-group">
+                    <label>{t('orders.createdBy')}</label>
+                    <select
+                      value={createdByFilter}
+                      onChange={(e) => { setCreatedByFilter(e.target.value); setPage(1); }}
+                      className="filter-input"
+                    >
+                      <option value="">{t('orders.allUsers')}</option>
+                      {usersList.map((user) => (
+                        <option key={user.id} value={user.id}>{user.username}</option>
+                      ))}
+                    </select>
                   </div>
                 </div>
               )}
@@ -1375,6 +1555,105 @@ export default function OrdersPage() {
               </div>
             </div>
           )}
+
+          {/* Apply Filters Button */}
+          <div className="filter-actions">
+            <button className="btn-apply-filters" onClick={applyFilters}>
+              <Search size={14} />
+              {t('common.applyFilters')}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Active Filters Message */}
+      {hasActiveFilters && !showFilters && orders.length > 0 && (
+        <div style={{
+          background: 'var(--primary-light)',
+          border: '1px solid var(--primary)',
+          borderRadius: 'var(--radius-md)',
+          padding: 'var(--spacing-md)',
+          marginBottom: 'var(--spacing-md)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 'var(--spacing-sm)',
+          flexWrap: 'wrap',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--spacing-sm)', flexWrap: 'wrap' }}>
+            <Filter size={18} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+            <span style={{ color: 'var(--primary)', fontWeight: 600, marginRight: '4px' }}>
+              {t('orders.filtersApplied').split(' - ')[0]}:
+            </span>
+            {searchQuery.trim() && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('common.search')}: "{searchQuery.trim()}"
+              </span>
+            )}
+            {statusFilter.length > 0 && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('common.status')}: {statusFilter.map(s => getStatusLabel(s)).join(', ')}
+              </span>
+            )}
+            {(dateFrom || dateTo) && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('orders.createdAt')}: {dateFrom || '...'} → {dateTo || '...'}
+              </span>
+            )}
+            {(updatedDateFrom || updatedDateTo) && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('orders.updatedAt')}: {updatedDateFrom || '...'} → {updatedDateTo || '...'}
+              </span>
+            )}
+            {(notifiedDateFrom || notifiedDateTo) && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('orders.notifiedAt')}: {notifiedDateFrom || '...'} → {notifiedDateTo || '...'}
+              </span>
+            )}
+            {supplierFilter.length > 0 && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('orders.suppliers')}: {supplierFilter.map(id => suppliersList.find(s => s.id === id)?.name || id).join(', ')}
+              </span>
+            )}
+            {customerFilter && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('orders.customerName')}: {customersList.find(c => c.id === customerFilter)?.name || customerFilter}
+              </span>
+            )}
+            {createdByFilter && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('orders.createdBy')}: {usersList.find(u => u.id === createdByFilter)?.username || createdByFilter}
+              </span>
+            )}
+            {(minAmount || maxAmount) && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('orders.minAmount') && t('orders.maxAmount') ? `${t('orders.minAmount').split(' ').pop()}` : 'Importe'}: €{minAmount || '0'} → €{maxAmount || '∞'}
+              </span>
+            )}
+            {(minOrderNumber || maxOrderNumber) && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                Nº: {minOrderNumber || '...'} → {maxOrderNumber || '...'}
+              </span>
+            )}
+            {hasObservations && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('orders.hasObservations')}: {hasObservations === 'yes' ? t('common.yes') : t('common.no')}
+              </span>
+            )}
+            {productReferenceFilter.trim() && (
+              <span style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', padding: '2px 8px', borderRadius: 'var(--radius-sm)', fontSize: '0.85rem' }}>
+                {t('orders.productReference')}: "{productReferenceFilter.trim()}"
+              </span>
+            )}
+          </div>
+          <button
+            className="btn-secondary btn-sm"
+            onClick={clearFilters}
+            style={{ flexShrink: 0 }}
+          >
+            <X size={16} />
+            {t('common.clearFilters')}
+          </button>
         </div>
       )}
 
@@ -1473,7 +1752,6 @@ export default function OrdersPage() {
                     </div>
                   </th>
                   <th>{t('orders.hasObservations')}</th>
-                  <th>{t('common.actions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -1573,17 +1851,6 @@ export default function OrdersPage() {
                         {t('common.no')}
                       </span>
                     )}
-                  </td>
-                  <td>
-                    <button
-                      className="btn-link"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        navigate(`/orders/${order.id}`);
-                      }}
-                    >
-                      {t('orders.viewDetails')}
-                    </button>
                   </td>
                 </tr>
                 ))}
@@ -2026,7 +2293,7 @@ export default function OrdersPage() {
                                   {row.month}
                                 </td>
                                 <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
-                                  {row.totalAmount.toFixed(2)} €
+                                  €{row.totalAmount.toFixed(2)}
                                 </td>
                                 <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
                                   {row.orderCount}
@@ -2092,7 +2359,7 @@ export default function OrdersPage() {
                                   {row.supplierName}
                                 </td>
                                 <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
-                                  {row.totalAmount.toFixed(2)} €
+                                  €{row.totalAmount.toFixed(2)}
                                 </td>
                                 <td style={{ padding: '0.75rem 1rem', textAlign: 'right', color: 'var(--text-primary)', fontWeight: 500 }}>
                                   {row.orderCount}

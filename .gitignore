@@ -17,9 +17,13 @@ out/
 # IDE
 .vscode/
 .idea/
+.cursor/
 *.swp
 *.swo
 *~
+
+# Documentation
+docs/
 
 # OS
 .DS_Store
@@ -45,6 +49,11 @@ database.db-wal
 # Electron
 electron/dist/
 electron/out/
+build-electron/
+
+# Backend compiled output (TypeScript -> JS)
+backend/src/**/*.js
+backend/src/**/*.d.ts
 
 # Prisma
 backend/prisma/migrations/

@@ -245,6 +245,11 @@ export interface PendingProduct {
   customerPhone: string | null;
   orderStatus: string;
   productDescription: string | null;
+  createdAt?: string;
+  createdBy?: {
+    id: string;
+    username: string;
+  } | null;
 }
 
 /**
@@ -263,6 +268,13 @@ export async function getPendingProducts(): Promise<PendingProduct[]> {
           customerId: true,
           customerPhone: true,
           status: true,
+          createdAt: true,
+          createdBy: {
+            select: {
+              id: true,
+              username: true,
+            },
+          },
         },
       },
       supplier: {
@@ -335,6 +347,11 @@ export async function getPendingProducts(): Promise<PendingProduct[]> {
         customerPhone: op.order.customerPhone,
         orderStatus: op.order.status,
         productDescription,
+        createdAt: op.order.createdAt ? op.order.createdAt.toISOString() : undefined,
+        createdBy: op.order.createdBy ? {
+          id: op.order.createdBy.id,
+          username: op.order.createdBy.username,
+        } : null,
       });
     }
   }

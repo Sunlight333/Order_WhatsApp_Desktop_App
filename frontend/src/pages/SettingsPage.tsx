@@ -100,6 +100,13 @@ export default function SettingsPage() {
     return unsubscribe;
   }, [isAuthenticated, user]);
 
+  // Reset admin password verification when user changes
+  // This ensures non-admin users can't access protected settings after another user verified the password
+  useEffect(() => {
+    const isVerified = sessionStorage.getItem('settings_password_verified') === 'true';
+    setSettingsPasswordVerified(isVerified);
+  }, [user?.id]);
+
   // Load user's WhatsApp message when user changes
   useEffect(() => {
     if (isAuthenticated && user) {
@@ -556,8 +563,8 @@ export default function SettingsPage() {
     }
   };
 
-  const handleVerifySettingsPassword = async () => {
-    if (!settingsPassword.trim()) {
+  const handleSettingsPasswordConfirm = async (password: string) => {
+    if (!password.trim()) {
       toast.error(t('settings.passwordRequired') || 'Password is required');
       return;
     }
@@ -565,7 +572,7 @@ export default function SettingsPage() {
     try {
       // Verify admin password using the dedicated endpoint
       await api.post('/auth/verify-admin-password', {
-        password: settingsPassword,
+        password: password,
       });
 
       setSettingsPasswordVerified(true);
@@ -577,13 +584,8 @@ export default function SettingsPage() {
     } catch (error: any) {
       const errorMessage = error.response?.data?.error?.message || t('settings.invalidPassword') || 'Invalid admin password';
       toast.error(errorMessage);
-      setSettingsPassword('');
+      // Don't close modal on error - keep it open so user can try again
     }
-  };
-
-  const handleSettingsPasswordConfirm = async (password: string) => {
-    setSettingsPassword(password);
-    await handleVerifySettingsPassword();
   };
 
   const loadOrderStatusConfig = async () => {

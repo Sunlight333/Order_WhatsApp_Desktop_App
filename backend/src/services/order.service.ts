@@ -657,6 +657,7 @@ export async function listOrders(options: {
   minOrderNumber?: string;
   maxOrderNumber?: string;
   hasObservations?: string;
+  productReference?: string;
   sortBy?: string;
   sortOrder?: 'asc' | 'desc';
 }) {
@@ -728,6 +729,7 @@ export async function listOrders(options: {
       { customerPhone: { contains: options.search } },
       { id: { contains: options.search } },
       ...(isNumberSearch ? [{ orderNumber: searchAsNumber }] : []),
+      { products: { some: { productRef: { contains: options.search } } } },
     ];
   }
 
@@ -792,6 +794,18 @@ export async function listOrders(options: {
       where.suppliers = {
         some: {
           supplierId: { in: supplierIds },
+        },
+      };
+    }
+  }
+
+  // Product reference filter - filter orders that have at least one product with matching reference
+  if (options.productReference) {
+    const productRef = options.productReference.trim();
+    if (productRef) {
+      where.products = {
+        some: {
+          productRef: { contains: productRef },
         },
       };
     }
@@ -1272,9 +1286,10 @@ export async function updateOrder(orderId: string, userId: string, input: Update
     });
 
     // Create a map of existing products by supplierId + productRef for quick lookup
-    const existingProductsMap = new Map<string, { 
-      price: string; 
+    const existingProductsMap = new Map<string, {
+      price: string;
       quantity: string;
+      receivedQuantity: string | null;
       supplierName: string;
     }>();
     existingProducts.forEach((product) => {
@@ -1282,6 +1297,7 @@ export async function updateOrder(orderId: string, userId: string, input: Update
       existingProductsMap.set(key, {
         price: product.price,
         quantity: product.quantity,
+        receivedQuantity: product.receivedQuantity,
         supplierName: product.supplier.name,
       });
     });
@@ -1298,7 +1314,7 @@ export async function updateOrder(orderId: string, userId: string, input: Update
         data: {
           orderId,
           userId,
-          action: 'UPDATE',
+          action: 'EDIT_ORDER',
           fieldChanged: change.field,
           oldValue: change.oldValue,
           newValue: change.newValue,
@@ -1324,6 +1340,7 @@ export async function updateOrder(orderId: string, userId: string, input: Update
       productRef: string;
       quantity: string;
       price: string;
+      receivedQuantity: string | null;
     }> = [];
 
     // Track new suppliers (for audit log)
@@ -1350,7 +1367,7 @@ export async function updateOrder(orderId: string, userId: string, input: Update
           data: {
             orderId,
             userId,
-            action: 'UPDATE',
+            action: 'EDIT_ORDER',
             fieldChanged: 'supplier',
             oldValue: null,
             newValue: supplier.name,
@@ -1385,6 +1402,19 @@ export async function updateOrder(orderId: string, userId: string, input: Update
         const productKey = `${supplier.id}|${product.reference}`;
         const existingProduct = existingProductsMap.get(productKey);
 
+        // Validate: quantity cannot be less than receivedQuantity
+        if (existingProduct?.receivedQuantity) {
+          const received = parseFloat(existingProduct.receivedQuantity);
+          const requested = parseFloat(newQuantity);
+          if (!isNaN(received) && received > 0 && !isNaN(requested) && requested < received) {
+            throw createError(
+              'QUANTITY_BELOW_RECEIVED',
+              `No se puede establecer la cantidad de "${product.reference}" (${supplier.name}) a ${newQuantity} porque ya se han recibido ${existingProduct.receivedQuantity} unidades.`,
+              400
+            );
+          }
+        }
+
         if (existingProduct) {
           // Product exists - track changes
           // Track price changes
@@ -1393,7 +1423,7 @@ export async function updateOrder(orderId: string, userId: string, input: Update
               data: {
                 orderId,
                 userId,
-                action: 'UPDATE',
+                action: 'EDIT_ORDER',
                 fieldChanged: 'price',
                 oldValue: existingProduct.price,
                 newValue: newPrice,
@@ -1412,7 +1442,7 @@ export async function updateOrder(orderId: string, userId: string, input: Update
               data: {
                 orderId,
                 userId,
-                action: 'UPDATE',
+                action: 'EDIT_ORDER',
                 fieldChanged: 'quantity',
                 oldValue: existingProduct.quantity,
                 newValue: newQuantity,
@@ -1430,7 +1460,7 @@ export async function updateOrder(orderId: string, userId: string, input: Update
             data: {
               orderId,
               userId,
-              action: 'UPDATE',
+              action: 'EDIT_ORDER',
               fieldChanged: 'product',
               oldValue: null,
               newValue: product.reference,
@@ -1452,6 +1482,7 @@ export async function updateOrder(orderId: string, userId: string, input: Update
           productRef: product.reference,
           quantity: newQuantity,
           price: newPrice,
+          receivedQuantity: existingProduct?.receivedQuantity ?? null,
         });
       }
     }
@@ -1463,7 +1494,7 @@ export async function updateOrder(orderId: string, userId: string, input: Update
           data: {
             orderId,
             userId,
-            action: 'UPDATE',
+            action: 'EDIT_ORDER',
             fieldChanged: 'supplier',
             oldValue: supplierName,
             newValue: null,
@@ -1492,7 +1523,7 @@ export async function updateOrder(orderId: string, userId: string, input: Update
           data: {
             orderId,
             userId,
-            action: 'UPDATE',
+            action: 'EDIT_ORDER',
             fieldChanged: 'product',
             oldValue: productRef,
             newValue: null,

@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmd /c \"dir \"\"f:\\\\My git\\\\Order_WhatsApp_Desktop_App\\\\build-electron\\\\win-unpacked\\\\d3dcompiler_47.dll\"\" 2>&1\")",
+      "Bash(DATABASE_URL=\"file:C:/Users/Administrator/AppData/Roaming/order-whatsapp-desktop-app/database.db\" npx tsx:*)"
+    ]
+  }
+}

@@ -28,7 +28,7 @@
 
 .search-input {
   width: 100%;
-  padding: 12px 44px 12px 44px;
+  padding: 12px 50px 12px 44px;
   font-size: var(--text-base);
   border: 2px solid var(--primary-light);
   border-radius: var(--radius-md);
@@ -94,15 +94,18 @@
 .products-list-container {
   background: var(--card-bg);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: visible;
   border: 1px solid var(--border-color);
   box-shadow: var(--shadow-sm);
+  width: 100%;
 }
 
 .products-table {
   width: 100%;
+  min-width: 1200px;
   border-collapse: collapse;
-  table-layout: fixed;
+  table-layout: auto;
   display: table;
 }
 
@@ -124,7 +127,7 @@
 }
 
 .products-table th {
-  text-align: left;
+  text-align: center;
   padding: var(--spacing-md);
   background: var(--bg-secondary);
   border-bottom: 2px solid var(--border-color);
@@ -179,41 +182,92 @@
   gap: 0.5rem;
 }
 
-.products-table th:nth-child(1) {
-  width: 15%;
-  min-width: 150px;
-}
-
-.products-table th:nth-child(2) {
-  width: 20%;
-  min-width: 150px;
-}
-
-.products-table th:nth-child(3) {
-  width: 35%;
-  min-width: 200px;
-}
-
-.products-table th:nth-child(4) {
-  width: 15%;
+.products-table th:nth-child(1),
+.products-table td:nth-child(1) {
+  width: 10%;
   min-width: 120px;
+  max-width: 150px;
 }
 
-.products-table th:nth-child(5) {
-  width: 15%;
+.products-table th:nth-child(2),
+.products-table td:nth-child(2) {
+  width: 12%;
   min-width: 120px;
-  text-align: center;
+  max-width: 150px;
 }
 
+.products-table th:nth-child(3),
+.products-table td:nth-child(3) {
+  width: 15%;
+  min-width: 160px;
+  max-width: 200px;
+}
+
+.products-table th:nth-child(4),
+.products-table td:nth-child(4) {
+  width: 10%;
+  min-width: 100px;
+  max-width: 130px;
+}
+
+.products-table th:nth-child(5),
 .products-table td:nth-child(5) {
-  text-align: center;
+  width: 10%;
+  min-width: 100px;
+  max-width: 130px;
+}
+
+.products-table th:nth-child(6),
+.products-table td:nth-child(6) {
+  width: 12%;
+  min-width: 120px;
+  max-width: 150px;
+}
+
+.products-table th:nth-child(7),
+.products-table td:nth-child(7) {
+  width: 10%;
+  min-width: 100px;
+  max-width: 130px;
+}
+
+.products-table th:nth-child(8),
+.products-table td:nth-child(8) {
+  width: 8%;
+  min-width: 80px;
+  max-width: 100px;
+}
+
+.products-table th:nth-child(9),
+.products-table td:nth-child(9) {
+  width: 8%;
+  min-width: 80px;
+  max-width: 100px;
+}
+
+.products-table th:nth-child(10),
+.products-table td:nth-child(10) {
+  width: 8%;
+  min-width: 80px;
+  max-width: 100px;
 }
 
 .products-table td {
   padding: var(--spacing-md);
   border-bottom: 1px solid var(--border-light);
   color: var(--text-primary);
-  vertical-align: top;
+  vertical-align: middle;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+}
+
+.products-table td .product-created-date,
+.products-table td .product-customer,
+.products-table td .product-customer-phone {
+  white-space: normal;
+  word-break: break-word;
 }
 
 .product-row {
@@ -222,6 +276,58 @@
 
 .product-row:hover {
   background: var(--hover-bg);
+}
+
+.product-row-cancelled {
+  background-color: #fee2e2 !important;
+}
+
+.product-row-cancelled:hover {
+  background-color: #fecaca !important;
+}
+
+:root[data-theme="dark"] .product-row-cancelled {
+  background-color: #3b1c1c !important;
+}
+
+:root[data-theme="dark"] .product-row-cancelled:hover {
+  background-color: #4a2222 !important;
+}
+
+:root[data-theme="dark"] .product-row-cancelled td {
+  color: #fca5a5;
+}
+
+/* Quantity badges for pending products table */
+.qty-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  padding: 0.25rem 0.625rem;
+  border-radius: var(--radius-sm);
+  font-weight: 600;
+  font-size: 0.875rem;
+}
+
+.qty-badge-received {
+  background-color: #d1fae5;
+  color: #065f46;
+}
+
+.qty-badge-pending {
+  background-color: #fee2e2;
+  color: #991b1b;
+}
+
+:root[data-theme="dark"] .qty-badge-received {
+  background-color: #143d2b;
+  color: #6ee7b7;
+}
+
+:root[data-theme="dark"] .qty-badge-pending {
+  background-color: #3b1c1c;
+  color: #fca5a5;
 }
 
 .product-reference {
