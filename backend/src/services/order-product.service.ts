@@ -148,8 +148,13 @@ export async function updateProductReceivedQuantity(
  */
 export async function deleteOrderProduct(
   orderProductId: string,
-  userId: string
+  userId: string,
+  reason?: string
 ) {
+  if (!reason || reason.trim().length === 0) {
+    throw createError('REASON_REQUIRED', 'Se requiere un motivo para eliminar el producto', 400);
+  }
+
   // Get the order product with order and supplier info
   const orderProduct = await prisma.orderProduct.findUnique({
     where: { id: orderProductId },
@@ -168,14 +173,22 @@ export async function deleteOrderProduct(
     throw createError('ORDER_PRODUCT_NOT_FOUND', 'Order product not found', 404);
   }
 
+  if (orderProduct.deletionReason) {
+    throw createError('ALREADY_DELETED', 'This product has already been deleted', 400);
+  }
+
   const orderId = orderProduct.orderId;
   const productInfo = `${orderProduct.supplier.name} - ${orderProduct.productRef} (Cant: ${orderProduct.quantity}, Precio: ${orderProduct.price})`;
 
-  // Delete the order product and create audit log in a transaction
+  // Soft-delete the order product and create audit log in a transaction
   await prisma.$transaction(async (tx) => {
-    // Delete the order product
-    await tx.orderProduct.delete({
+    // Mark the order product as deleted
+    await tx.orderProduct.update({
       where: { id: orderProductId },
+      data: {
+        deletionReason: reason.trim(),
+        deletedAt: new Date(),
+      },
     });
 
     // Create audit log for product deletion
@@ -186,7 +199,7 @@ export async function deleteOrderProduct(
         action: 'PRODUCT_DELETED',
         fieldChanged: 'products',
         oldValue: productInfo,
-        newValue: null,
+        newValue: reason.trim(),
         metadata: JSON.stringify({
           deletedProduct: {
             id: orderProduct.id,
@@ -196,6 +209,7 @@ export async function deleteOrderProduct(
             quantity: orderProduct.quantity,
             price: orderProduct.price,
             receivedQuantity: orderProduct.receivedQuantity,
+            deletionReason: reason.trim(),
           },
         }),
       },

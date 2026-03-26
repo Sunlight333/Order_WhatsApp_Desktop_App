@@ -7,14 +7,17 @@ import { OrderProduct } from '@prisma/client';
  * - RECEIVED: All products fully received
  */
 export function calculateOrderStatus(products: OrderProduct[]): string {
-  if (products.length === 0) {
+  // Only consider active (non-deleted) products
+  const activeProducts = products.filter(p => !p.deletionReason);
+
+  if (activeProducts.length === 0) {
     return 'PENDING';
   }
 
   let allReceived = true;
   let someReceived = false;
 
-  for (const product of products) {
+  for (const product of activeProducts) {
     const quantity = parseFloat(product.quantity || '0');
     const received = product.receivedQuantity ? parseFloat(product.receivedQuantity) : 0;
 

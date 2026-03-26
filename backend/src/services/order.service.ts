@@ -618,8 +618,9 @@ export async function getOrderById(orderId: string) {
     throw createError('ORDER_NOT_FOUND', 'Order not found', 404);
   }
 
-  // Calculate total amount
+  // Calculate total amount (exclude soft-deleted products)
   const totalAmount = order.products.reduce((sum, product) => {
+    if (product.deletionReason) return sum;
     const quantity = parseFloat(product.quantity) || 0;
     const price = parseFloat(product.price) || 0;
     return sum + quantity * price;
@@ -729,7 +730,7 @@ export async function listOrders(options: {
       { customerPhone: { contains: options.search } },
       { id: { contains: options.search } },
       ...(isNumberSearch ? [{ orderNumber: searchAsNumber }] : []),
-      { products: { some: { productRef: { contains: options.search } } } },
+      { products: { some: { productRef: { contains: options.search }, deletionReason: null } } },
     ];
   }
 
@@ -900,6 +901,7 @@ export async function listOrders(options: {
   // Format orders and apply amount filter if needed
   let formattedOrders = orders.map((order) => {
     const totalAmount = order.products.reduce((sum, product) => {
+      if (product.deletionReason) return sum;
       const quantity = parseFloat(product.quantity) || 0;
       const price = parseFloat(product.price) || 0;
       return sum + quantity * price;

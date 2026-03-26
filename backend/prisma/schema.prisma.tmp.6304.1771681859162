@@ -1,0 +1,168 @@
+// Prisma Schema - SQLite (Default)
+// For MySQL/PostgreSQL, see docs/09_MULTI_DATABASE_GUIDE.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// SQLite doesn't support enums, so we use String with constraints
+// UserRole: SUPER_ADMIN | USER
+// OrderStatus: PENDING | RECEIVED | NOTIFIED_CALL | NOTIFIED_WHATSAPP | CANCELLED
+// NotificationMethod: CALL | WHATSAPP
+
+model User {
+  id             String   @id @default(uuid())
+  username       String   @unique
+  password       String
+  role           String   @default("USER") // SUPER_ADMIN | USER
+  avatar         String?  // Avatar file path or URL
+  whatsappMessage String? // User's default WhatsApp message template
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  createdOrders Order[]         @relation("OrderCreator")
+  auditLogs     AuditLog[]      @relation("AuditLogUser")
+
+  @@map("users")
+}
+
+model Supplier {
+  id          String    @id @default(uuid())
+  name        String
+  description String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  products      Product[]        @relation("SupplierProducts")
+  orderSuppliers OrderSupplier[] @relation("OrderSupplierRef")
+  orderProducts  OrderProduct[]  @relation("OrderProductSupplier")
+
+  @@map("suppliers")
+}
+
+model Product {
+  id           String   @id @default(uuid())
+  supplierId   String
+  reference    String
+  description  String?
+  defaultPrice String?  // Text to allow flexibility
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  supplier Supplier @relation("SupplierProducts", fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([supplierId, reference])
+  @@map("products")
+}
+
+model Customer {
+  id          String   @id @default(uuid())
+  name        String   // Not unique to allow duplicate names
+  phone       String?
+  countryCode String?  @default("+34")
+  description String?  // Notes about the customer
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  orders Order[]           @relation("CustomerOrders")
+
+  @@index([name])
+  @@map("customers")
+}
+
+model Order {
+  id                String   @id @default(uuid())
+  orderNumber       Int?     @unique // Auto-incremental order number (1, 2, 3...)
+  customerName      String?  // Keep for backward compatibility
+  customerId        String?  // Reference to Customer
+  customerPhone     String?  // Optional, can be stored in Customer model
+  countryCode       String?  @default("+34") // Country code for phone
+  status            String   @default("PENDING") // PENDING | RECEIVED | NOTIFIED_CALL | NOTIFIED_WHATSAPP | CANCELLED | INCOMPLETO
+  notificationMethod String? // CALL | WHATSAPP
+  observations      String?
+  cancellationReason String? // Reason for cancellation (required when status is CANCELLED)
+  createdById       String
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  notifiedAt        DateTime?
+
+  createdBy    User           @relation("OrderCreator", fields: [createdById], references: [id])
+  customer     Customer?      @relation("CustomerOrders", fields: [customerId], references: [id], onDelete: SetNull)
+  suppliers    OrderSupplier[] @relation("OrderSuppliers")
+  products     OrderProduct[]  @relation("OrderProducts")
+  auditLogs    AuditLog[]      @relation("OrderAuditLogs")
+
+  @@index([customerPhone])
+  @@index([customerId])
+  @@index([status])
+  @@index([createdAt])
+  @@index([orderNumber])
+  @@map("orders")
+}
+
+model OrderSupplier {
+  id         String   @id @default(uuid())
+  orderId    String
+  supplierId String
+  createdAt  DateTime @default(now())
+
+  order    Order    @relation("OrderSuppliers", fields: [orderId], references: [id], onDelete: Cascade)
+  supplier Supplier @relation("OrderSupplierRef", fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@unique([orderId, supplierId])
+  @@map("orderSuppliers")
+}
+
+model OrderProduct {
+  id             String   @id @default(uuid())
+  orderId        String
+  supplierId     String
+  productRef     String
+  quantity       String   // Text to allow flexibility (user requirement)
+  price          String   // Text to allow flexibility (user requirement)
+  receivedQuantity String? // Quantity received (null = not received, empty = 0, value = received amount)
+  deletionReason   String? // If set, product is soft-deleted with this reason
+  deletedAt        DateTime? // Timestamp of soft deletion
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  order    Order    @relation("OrderProducts", fields: [orderId], references: [id], onDelete: Cascade)
+  supplier Supplier @relation("OrderProductSupplier", fields: [supplierId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@map("orderProducts")
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  orderId     String
+  userId      String
+  action      String   // CREATE, UPDATE, STATUS_CHANGE, etc.
+  fieldChanged String?
+  oldValue    String?
+  newValue    String?
+  timestamp   DateTime @default(now())
+  metadata    String?  // JSON string for additional context
+
+  order Order @relation("OrderAuditLogs", fields: [orderId], references: [id], onDelete: Cascade)
+  user  User  @relation("AuditLogUser", fields: [userId], references: [id])
+
+  @@index([orderId])
+  @@index([userId])
+  @@index([timestamp])
+  @@map("auditLogs")
+}
+
+model Config {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  value     String?
+  updatedAt DateTime @updatedAt
+
+  @@map("config")
+}

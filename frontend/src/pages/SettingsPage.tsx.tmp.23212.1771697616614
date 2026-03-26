@@ -1,0 +1,2571 @@
+import { useState, useEffect, useRef } from 'react';
+import { Save, Database, Server, Monitor, Loader2, CheckCircle, AlertCircle, RefreshCw, Wifi, ArrowLeft, MessageSquare, Download, Upload, HardDrive, User, Image as ImageIcon, X, Globe, Palette, Hash } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import toast from 'react-hot-toast';
+import ConfirmModal from '../components/ConfirmModal';
+import PasswordModal from '../components/PasswordModal';
+import ProgressBar from '../components/ProgressBar';
+import { configService, type AppConfig } from '../services/config.service';
+import api, { updateApiBaseUrl } from '../lib/api';
+import '../styles/settings.css';
+import { useNavigate } from 'react-router-dom';
+import { useAuthStore } from '../store/authStore';
+import { clearStatusConfigCache } from '../hooks/useOrderStatusConfig';
+
+// Helper function to get full avatar URL
+function getAvatarUrl(avatarPath: string | null | undefined): string | null {
+  if (!avatarPath) return null;
+  const serverBaseUrl = configService.getServerBaseUrl();
+  return `${serverBaseUrl}${avatarPath}`;
+}
+
+export default function SettingsPage() {
+  const navigate = useNavigate();
+  const { isAuthenticated, user, checkAuth } = useAuthStore();
+  const { t, i18n } = useTranslation();
+  const [config, setConfig] = useState<AppConfig | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [testingConnection, setTestingConnection] = useState(false);
+  const [connectionStatus, setConnectionStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [connectionMessage, setConnectionMessage] = useState('');
+  const [initializingDatabase, setInitializingDatabase] = useState(false);
+  const [upgradingDatabase, setUpgradingDatabase] = useState(false);
+  const [showSaveModal, setShowSaveModal] = useState(false);
+  const [localIp, setLocalIp] = useState<string>('');
+  const [whatsappMessage, setWhatsappMessage] = useState<string>('');
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [backingUp, setBackingUp] = useState(false);
+  const [restoring, setRestoring] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [restoreFilePath, setRestoreFilePath] = useState<string>('');
+  const [showBackupPasswordModal, setShowBackupPasswordModal] = useState(false);
+  const [showRestorePasswordModal, setShowRestorePasswordModal] = useState(false);
+  const [restorePassword, setRestorePassword] = useState<string>('');
+  const [backupProgress, setBackupProgress] = useState<number>(0);
+  const [pendingBackupFilePath, setPendingBackupFilePath] = useState<string | null>(null);
+  const progressIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const [profileUsername, setProfileUsername] = useState<string>('');
+  const [profilePassword, setProfilePassword] = useState<string>('');
+  const [profileConfirmPassword, setProfileConfirmPassword] = useState<string>('');
+  const [profileAvatar, setProfileAvatar] = useState<File | null>(null);
+  const [profileAvatarPreview, setProfileAvatarPreview] = useState<string | null>(null);
+  const [avatarRemoved, setAvatarRemoved] = useState(false);
+  const [updatingProfile, setUpdatingProfile] = useState(false);
+  const profileAvatarInputRef = useRef<HTMLInputElement>(null);
+  const [settingsPassword, setSettingsPassword] = useState<string>('');
+  const [showSettingsPasswordModal, setShowSettingsPasswordModal] = useState(false);
+  const [settingsPasswordVerified, setSettingsPasswordVerified] = useState(() => {
+    // Check if password was verified in this session
+    return sessionStorage.getItem('settings_password_verified') === 'true';
+  });
+  const [orderStatusConfig, setOrderStatusConfig] = useState<Record<string, any>>({});
+  const [loadingStatusConfig, setLoadingStatusConfig] = useState(false);
+  const [savingStatusConfig, setSavingStatusConfig] = useState(false);
+  const [selectedStatus, setSelectedStatus] = useState<string>('PENDING');
+  const [activeTab, setActiveTab] = useState<'system' | 'user'>('system');
+  const [orderCounter, setOrderCounter] = useState<number>(0);
+  const [orderPrefix, setOrderPrefix] = useState<string>('');
+  const [loadingOrderCounter, setLoadingOrderCounter] = useState(false);
+  const [resettingCounter, setResettingCounter] = useState(false);
+  const [savingPrefix, setSavingPrefix] = useState(false);
+  const [usersSeeOnlyOwnOrders, setUsersSeeOnlyOwnOrders] = useState<boolean>(false);
+  const [loadingUsersConfig, setLoadingUsersConfig] = useState(false);
+  const [savingUsersConfig, setSavingUsersConfig] = useState(false);
+  const [enableUsersVisibilityOverrides, setEnableUsersVisibilityOverrides] = useState<boolean>(false);
+  const [usersVisibilityOverrides, setUsersVisibilityOverrides] = useState<Record<string, 'OWN' | 'ALL'>>({});
+  const [usersForVisibility, setUsersForVisibility] = useState<Array<{ id: string; username: string; role: string }>>([]);
+  const [usersVisibilitySearch, setUsersVisibilitySearch] = useState<string>('');
+  const [usersVisibilitySelectedIds, setUsersVisibilitySelectedIds] = useState<string[]>([]);
+
+  useEffect(() => {
+    loadSettings();
+    detectLocalIp();
+    
+    // Subscribe to config changes - update state directly from cached config to avoid infinite loop
+    const unsubscribe = configService.subscribe(() => {
+      const cachedConfig = configService.getConfig();
+      if (cachedConfig) {
+        setConfig(cachedConfig);
+      }
+    });
+
+    // Load order status configuration if user is admin
+    if (isAuthenticated && user?.role === 'SUPER_ADMIN') {
+      loadOrderStatusConfig();
+      loadOrderCounterConfig();
+      loadUsersConfig();
+    }
+
+    return unsubscribe;
+  }, [isAuthenticated, user]);
+
+  // Reset admin password verification when user changes
+  // This ensures non-admin users can't access protected settings after another user verified the password
+  useEffect(() => {
+    const isVerified = sessionStorage.getItem('settings_password_verified') === 'true';
+    setSettingsPasswordVerified(isVerified);
+  }, [user?.id]);
+
+  // Load user's WhatsApp message when user changes
+  useEffect(() => {
+    if (isAuthenticated && user) {
+      setWhatsappMessage(user.whatsappMessage || '');
+      setProfileUsername(user.username || '');
+      setProfileAvatarPreview(
+        user.avatar ? getAvatarUrl(user.avatar) : null
+      );
+      setAvatarRemoved(false);
+    } else {
+      setWhatsappMessage('');
+      setProfileUsername('');
+      setProfileAvatarPreview(null);
+      setAvatarRemoved(false);
+    }
+  }, [isAuthenticated, user]);
+
+  const detectLocalIp = async () => {
+    try {
+      // In Electron, use the IPC handler to get local network IP
+      if (window.electron?.getLocalIp) {
+        const ip = await window.electron.getLocalIp();
+        setLocalIp(ip);
+        return;
+      }
+      
+      // Fallback: Try to get public IP (not ideal, but works)
+      const response = await fetch('https://api.ipify.org?format=json').catch(() => null);
+      if (response) {
+        const data = await response.json();
+        // Use localhost instead of public IP for server mode
+        setLocalIp('localhost');
+      } else {
+        setLocalIp('localhost');
+      }
+    } catch (error) {
+      setLocalIp('localhost');
+    }
+  };
+
+  const loadSettings = async () => {
+    try {
+      setLoading(true);
+      const loadedConfig = await configService.loadConfig();
+      // Normalize DB fields for UI (especially SQLite: config persists `path`, not `url`)
+      const normalizedConfig = (() => {
+        if (loadedConfig?.database?.type === 'sqlite') {
+          const sqlitePath = loadedConfig.database.path || loadedConfig.database.url?.replace(/^file:/, '') || './database.db';
+          // Normalize backslashes to forward slashes (Windows-safe for Prisma)
+          const normalizedPath = sqlitePath.replace(/\\/g, '/');
+          return {
+            ...loadedConfig,
+            database: {
+              ...loadedConfig.database,
+              path: normalizedPath,
+              url: `file:${normalizedPath}`,
+            },
+          };
+        }
+        return loadedConfig;
+      })();
+
+      setConfig(normalizedConfig);
+      
+      // Apply language from config if available
+      if (normalizedConfig.language && i18n.language !== normalizedConfig.language) {
+        i18n.changeLanguage(normalizedConfig.language);
+      }
+    } catch (error) {
+      console.error('Failed to load settings:', error);
+      toast.error(t('settings.loadFailed'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const hasValidDbConfig = (cfg: AppConfig | null) => {
+    if (!cfg) return false;
+    if (cfg.database.type === 'sqlite') {
+      const dbPath = cfg.database.path || cfg.database.url?.replace(/^file:/, '');
+      return Boolean(dbPath && dbPath.trim().length > 0);
+    }
+    return Boolean(cfg.database.url && cfg.database.url.trim().length > 0);
+  };
+
+  const handleDatabaseProviderChange = (provider: 'sqlite' | 'mysql' | 'postgresql') => {
+    if (!config) return;
+    
+    setConfig({
+      ...config,
+      database: {
+        ...config.database,
+        type: provider,
+        url: provider === 'sqlite' ? config.database.path || './database.db' : config.database.url || '',
+      },
+    });
+  };
+
+  const getDefaultDatabaseUrl = (provider: 'sqlite' | 'mysql' | 'postgresql'): string => {
+    switch (provider) {
+      case 'sqlite':
+        return './database.db';
+      case 'mysql':
+        return 'mysql://user:password@localhost:3306/order_db';
+      case 'postgresql':
+        return 'postgresql://user:password@localhost:5432/order_db?schema=public';
+      default:
+        return '';
+    }
+  };
+
+  const testDatabaseConnection = async () => {
+    if (!config) return;
+    
+    try {
+      setTestingConnection(true);
+      setConnectionStatus('idle');
+      setConnectionMessage('');
+
+      // Validate required fields
+      if (config.database.type === 'sqlite') {
+        const dbPath = config.database.path || config.database.url?.replace('file:', '');
+        if (!dbPath || dbPath.trim().length === 0) {
+          setConnectionStatus('error');
+          setConnectionMessage(t('settings.databasePathRequired'));
+          return;
+        }
+      } else {
+        if (!config.database.url || config.database.url.trim().length === 0) {
+          setConnectionStatus('error');
+          setConnectionMessage(t('settings.databaseUrlRequired'));
+          return;
+        }
+      }
+
+      // Call the backend API to test the database connection
+      const response = await api.post('/database/test', {
+        type: config.database.type,
+        url: config.database.url,
+        path: config.database.type === 'sqlite' 
+          ? (config.database.path || config.database.url?.replace('file:', ''))
+          : undefined,
+      });
+
+      if (response.data.success) {
+        setConnectionStatus('success');
+        const message = response.data.data?.message || t('settings.databaseConnectionSuccessful');
+        const initialized = response.data.data?.initialized || false;
+        
+        if (initialized) {
+          toast.success(
+            `${message}\n\n${t('settings.databaseSchemaCreated')}`,
+            { duration: 8000 }
+          );
+        } else {
+          toast.success(message, { duration: 3000 });
+        }
+        setConnectionMessage(message);
+      } else {
+        setConnectionStatus('error');
+        const errorMessage = response.data.error?.message || t('settings.failedToConnectDatabase');
+        toast.error(errorMessage);
+        setConnectionMessage(errorMessage);
+      }
+    } catch (error: any) {
+      setConnectionStatus('error');
+      const errorMessage = 
+        error.response?.data?.error?.message || 
+        error.response?.data?.message ||
+        error.message || 
+        t('settings.failedToConnectDatabase');
+      setConnectionMessage(errorMessage);
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  const handleUpgradeDatabase = async () => {
+    try {
+      setUpgradingDatabase(true);
+      setConnectionStatus('idle');
+      setConnectionMessage('');
+
+      const response = await api.post('/database/upgrade');
+
+      if (response.data.success) {
+        setConnectionStatus('success');
+        const message = response.data.data?.message || t('settings.databaseUpgradeSuccess');
+        const changes = response.data.data?.changes || [];
+        
+        if (changes.length > 0) {
+          toast.success(
+            `${message}\n\n${t('common.changesApplied')}:\n${changes.map((c: string) => `• ${c}`).join('\n')}`,
+            { duration: 6000 }
+          );
+        } else {
+          toast.success(message, { duration: 3000 });
+        }
+        setConnectionMessage(message);
+      } else {
+        setConnectionStatus('error');
+        const errorMessage = response.data.error?.message || t('settings.failedToUpgradeSchema');
+        toast.error(errorMessage);
+        setConnectionMessage(errorMessage);
+      }
+    } catch (error: any) {
+      setConnectionStatus('error');
+      const errorMessage = 
+        error.response?.data?.error?.message || 
+        error.response?.data?.message ||
+        error.message || 
+        t('settings.failedToUpgradeSchema');
+      toast.error(errorMessage);
+      setConnectionMessage(errorMessage);
+    } finally {
+      setUpgradingDatabase(false);
+    }
+  };
+
+  const handleInitializeDatabase = async () => {
+    if (!config) return;
+    
+    try {
+      setInitializingDatabase(true);
+
+      // Validate required fields
+      if (config.database.type === 'sqlite') {
+        const dbPath = config.database.path || config.database.url?.replace('file:', '');
+        if (!dbPath || dbPath.trim().length === 0) {
+          toast.error(t('settings.databasePathRequired'));
+          return;
+        }
+      } else {
+        if (!config.database.url || config.database.url.trim().length === 0) {
+          toast.error(t('settings.databaseUrlRequired'));
+          return;
+        }
+      }
+
+      // Call the backend API to initialize the database
+      const response = await api.post('/database/initialize', {
+        type: config.database.type,
+        url: config.database.url,
+        path: config.database.type === 'sqlite' 
+          ? (config.database.path || config.database.url?.replace('file:', ''))
+          : undefined,
+        force: false, // Don't force if tables already exist
+      });
+
+      if (response.data.success) {
+        const message = response.data.data?.message || t('settings.databaseInitialized');
+        
+        if (message.includes('already initialized') || message.includes('ya inicializada')) {
+          toast.success(message, { duration: 3000 });
+        } else {
+          toast.success(
+            `${message}\n\n${t('settings.databaseSchemaCreated')}\n\n${t('settings.youCanNowLogin')}`,
+            { duration: 10000 }
+          );
+        }
+        
+        // Update connection status
+        setConnectionStatus('success');
+        setConnectionMessage(message);
+      } else {
+        const errorMessage = response.data.error?.message || t('settings.failedToInitializeDatabase');
+        toast.error(errorMessage);
+        setConnectionStatus('error');
+        setConnectionMessage(errorMessage);
+      }
+    } catch (error: any) {
+      const errorMessage = 
+        error.response?.data?.error?.message || 
+        error.response?.data?.message ||
+        error.message || 
+        t('settings.failedToInitializeDatabase');
+      toast.error(errorMessage);
+      setConnectionStatus('error');
+      setConnectionMessage(errorMessage);
+    } finally {
+      setInitializingDatabase(false);
+    }
+  };
+
+  const testServerConnection = async () => {
+    if (!config || config.mode !== 'client' || !config.serverAddress) return;
+
+    try {
+      setTestingConnection(true);
+      setConnectionStatus('idle');
+      setConnectionMessage('');
+
+      const port = config.serverPort || 3000;
+      const url = `http://${config.serverAddress}:${port}/api/v1/auth/me`;
+      
+      const response = await fetch(url, {
+        method: 'GET',
+        headers: { 'Content-Type': 'application/json' },
+      });
+
+      if (response.ok || response.status === 401) {
+        // 401 is OK - it means server is reachable (just not authenticated)
+        setConnectionStatus('success');
+        setConnectionMessage(`Server is reachable at ${config.serverAddress}:${port}`);
+      } else {
+        setConnectionStatus('error');
+        setConnectionMessage('Server is not reachable');
+      }
+    } catch (error: any) {
+      setConnectionStatus('error');
+      setConnectionMessage(`Connection failed: ${error.message}`);
+    } finally {
+      setTestingConnection(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!config) return;
+
+    try {
+      setSaving(true);
+      
+      // Prepare config to save
+      const configToSave: Partial<AppConfig> = {
+        mode: config.mode,
+        serverPort: config.serverPort || 3000,
+        database: {
+          type: config.database.type,
+          ...(config.database.type === 'sqlite' 
+            ? { path: config.database.path || config.database.url?.replace('file:', '') || './database.db' }
+            : { url: config.database.url || '' }
+          ),
+        },
+        theme: config.theme || 'system',
+        language: config.language || 'es',
+      };
+
+      // Set serverAddress based on mode
+      if (config.mode === 'server') {
+        // In server mode, use the configured serverAddress (should be localhost, 127.0.0.1, or network IP)
+        // If not set, default to localhost
+        if (config.serverAddress && (config.serverAddress === 'localhost' || config.serverAddress === '127.0.0.1' || 
+            config.serverAddress.match(/^(\d{1,3}\.){3}\d{1,3}$/))) {
+          configToSave.serverAddress = config.serverAddress;
+        } else {
+          // Default to localhost for server mode
+          configToSave.serverAddress = 'localhost';
+        }
+      } else if (config.mode === 'client') {
+        configToSave.serverAddress = config.serverAddress || '';
+      }
+
+      const saveResult = await configService.saveConfig(configToSave);
+      
+      // Reload config to ensure we have the latest values
+      const updatedConfig = await configService.loadConfig();
+      setConfig(updatedConfig);
+      
+      // Update API base URL immediately after config is saved
+      updateApiBaseUrl();
+      console.log('🔗 Config saved, API Base URL updated to:', configService.getApiBaseUrl());
+
+      // Apply language immediately if changed
+      if (config.language && i18n.language !== config.language) {
+        i18n.changeLanguage(config.language);
+      }
+
+      // Apply theme immediately if changed
+      const root = document.documentElement;
+      if (config.theme === 'system') {
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+        root.setAttribute('data-theme', prefersDark ? 'dark' : 'light');
+        // Sync localStorage
+        localStorage.removeItem('theme');
+      } else if (config.theme) {
+        root.setAttribute('data-theme', config.theme);
+        // Sync localStorage
+        localStorage.setItem('theme', config.theme);
+      } else {
+        root.removeAttribute('data-theme');
+      }
+
+      setShowSaveModal(false);
+
+      // Show success message based on whether server was restarted
+      if (saveResult?.needsRestart) {
+        toast.success(t('settings.saveSuccessPortChanged', { port: saveResult.newPort }), {
+            duration: 8000,
+        });
+      } else if (saveResult?.newPort) {
+        toast.success(t('settings.saveSuccessServerRestarted', { port: saveResult.newPort }), {
+            duration: 5000,
+        });
+      } else {
+        toast.success(t('settings.saveSuccess'), { duration: 3000 });
+      }
+    } catch (error: any) {
+      toast.error(error.message || t('settings.saveFailed'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleSaveProfile = async () => {
+    if (!isAuthenticated) {
+      toast.error(t('settings.mustBeLoggedInWhatsApp'));
+      return;
+    }
+
+    try {
+      setSavingProfile(true);
+
+      // Update user profile with WhatsApp message
+      await api.patch('/auth/profile', {
+        whatsappMessage: whatsappMessage || null,
+      });
+
+      // Refresh auth store to get updated user data
+      await checkAuth();
+
+      toast.success(t('settings.whatsappMessageSaved'));
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || error.message || t('settings.whatsappMessageSaveFailed'));
+    } finally {
+      setSavingProfile(false);
+    }
+  };
+
+  const handleProfileAvatarChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      // Validate file type
+      if (!file.type.startsWith('image/')) {
+        toast.error(t('settings.selectImageFile'));
+        return;
+      }
+      // Validate file size (5MB)
+      if (file.size > 5 * 1024 * 1024) {
+        toast.error(t('settings.imageSizeLimit'));
+        return;
+      }
+      setProfileAvatar(file);
+      setProfileAvatarPreview(URL.createObjectURL(file));
+      setAvatarRemoved(false);
+    }
+  };
+
+  const handleRemoveAvatar = () => {
+    setProfileAvatar(null);
+    setProfileAvatarPreview(null);
+    setAvatarRemoved(true);
+    if (profileAvatarInputRef.current) {
+      profileAvatarInputRef.current.value = '';
+    }
+  };
+
+  const handleSettingsPasswordConfirm = async (password: string) => {
+    if (!password.trim()) {
+      toast.error(t('settings.passwordRequired') || 'Password is required');
+      return;
+    }
+
+    try {
+      // Verify admin password using the dedicated endpoint
+      await api.post('/auth/verify-admin-password', {
+        password: password,
+      });
+
+      setSettingsPasswordVerified(true);
+      // Store verification in sessionStorage so it persists for the session
+      sessionStorage.setItem('settings_password_verified', 'true');
+      setShowSettingsPasswordModal(false);
+      setSettingsPassword('');
+      toast.success(t('settings.passwordVerified') || 'Admin password verified successfully');
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.error?.message || t('settings.invalidPassword') || 'Invalid admin password';
+      toast.error(errorMessage);
+      // Don't close modal on error - keep it open so user can try again
+    }
+  };
+
+  const loadOrderStatusConfig = async () => {
+    try {
+      setLoadingStatusConfig(true);
+      const response = await api.get('/config/order-statuses');
+      if (response.data.success) {
+        setOrderStatusConfig(response.data.data || {});
+      }
+    } catch (error: any) {
+      console.error('Failed to load order status config:', error);
+    } finally {
+      setLoadingStatusConfig(false);
+    }
+  };
+
+  const loadOrderCounterConfig = async () => {
+    try {
+      setLoadingOrderCounter(true);
+      const response = await api.get('/config/order-counter');
+      if (response.data.success) {
+        setOrderCounter(response.data.data.counter || 0);
+        setOrderPrefix(response.data.data.prefix || '');
+      }
+    } catch (error) {
+      console.error('Failed to load order counter config:', error);
+    } finally {
+      setLoadingOrderCounter(false);
+    }
+  };
+
+  const loadUsersConfig = async () => {
+    try {
+      setLoadingUsersConfig(true);
+      const [globalRes, enabledRes, overridesRes, usersRes] = await Promise.all([
+        api.get('/config/users_see_only_own_orders'),
+        api.get('/config/users_orders_visibility_overrides_enabled').catch(() => null),
+        api.get('/config/users_orders_visibility_overrides').catch(() => null),
+        api.get('/users').catch(() => null),
+      ]);
+
+      if (globalRes?.data?.success) {
+        const value = globalRes.data.data?.value || 'false';
+        setUsersSeeOnlyOwnOrders(value === 'true');
+      }
+
+      if (enabledRes?.data?.success) {
+        const value = enabledRes.data.data?.value || 'false';
+        setEnableUsersVisibilityOverrides(value === 'true');
+      } else {
+        setEnableUsersVisibilityOverrides(false);
+      }
+
+      // Overrides config is optional for backward-compat
+      try {
+        const raw = overridesRes?.data?.data?.value;
+        if (typeof raw === 'string' && raw.trim().length > 0) {
+          const parsed = JSON.parse(raw) as Record<string, unknown>;
+          const cleaned: Record<string, 'OWN' | 'ALL'> = {};
+          for (const [userId, v] of Object.entries(parsed || {})) {
+            if (v === 'OWN' || v === 'ALL') cleaned[userId] = v;
+          }
+          setUsersVisibilityOverrides(cleaned);
+        } else {
+          setUsersVisibilityOverrides({});
+        }
+      } catch {
+        setUsersVisibilityOverrides({});
+      }
+
+      if (usersRes?.data?.success) {
+        setUsersForVisibility(usersRes.data.data || []);
+      }
+    } catch (error) {
+      console.error('Failed to load users config:', error);
+      // Default to false if config doesn't exist
+      setUsersSeeOnlyOwnOrders(false);
+      setEnableUsersVisibilityOverrides(false);
+      setUsersVisibilityOverrides({});
+    } finally {
+      setLoadingUsersConfig(false);
+    }
+  };
+
+  const handleSaveUsersConfig = async () => {
+    try {
+      setSavingUsersConfig(true);
+      await Promise.all([
+        api.put('/config/users_see_only_own_orders', {
+          value: usersSeeOnlyOwnOrders ? 'true' : 'false',
+        }),
+        api.put('/config/users_orders_visibility_overrides_enabled', {
+          value: enableUsersVisibilityOverrides ? 'true' : 'false',
+        }),
+        api.put('/config/users_orders_visibility_overrides', {
+          value: JSON.stringify(usersVisibilityOverrides || {}),
+        }),
+      ]);
+      toast.success(t('settings.usersConfigSaved'));
+    } catch (error: any) {
+      console.error('Failed to save users config:', error);
+      toast.error(error.response?.data?.error?.message || t('settings.usersConfigSaveFailed'));
+    } finally {
+      setSavingUsersConfig(false);
+    }
+  };
+
+  const handleResetOrderCounter = async () => {
+    try {
+      setResettingCounter(true);
+      await api.post('/config/order-counter/reset');
+      toast.success(t('settings.orderCounterReset'));
+      await loadOrderCounterConfig();
+    } catch (error: any) {
+      console.error('Failed to reset order counter:', error);
+      toast.error(error.response?.data?.error?.message || t('settings.orderCounterResetFailed'));
+    } finally {
+      setResettingCounter(false);
+    }
+  };
+
+  const handleSaveOrderPrefix = async () => {
+    try {
+      setSavingPrefix(true);
+      await api.put('/config/order-counter/prefix', { prefix: orderPrefix });
+      toast.success(t('settings.orderPrefixSaved'));
+    } catch (error: any) {
+      console.error('Failed to save order prefix:', error);
+      toast.error(error.response?.data?.error?.message || t('settings.orderPrefixSaveFailed'));
+    } finally {
+      setSavingPrefix(false);
+    }
+  };
+
+  const handleSaveOrderStatusConfig = async () => {
+    try {
+      setSavingStatusConfig(true);
+      await api.put('/config/order-statuses', orderStatusConfig);
+      clearStatusConfigCache(); // Clear cache so components reload the new config
+      toast.success(t('settings.orderStatusConfigSaved'));
+    } catch (error: any) {
+      toast.error(
+        error.response?.data?.error?.message ||
+          error.message ||
+          t('settings.orderStatusConfigSaveFailed')
+      );
+    } finally {
+      setSavingStatusConfig(false);
+    }
+  };
+
+  const updateStatusConfig = (status: string, field: string, value: any) => {
+    setOrderStatusConfig(prev => ({
+      ...prev,
+      [status]: {
+        ...prev[status],
+        [field]: value,
+      },
+    }));
+  };
+
+  // Get translated status label for preview
+  // If custom text is configured, use it; otherwise use translation
+  const getStatusLabelForPreview = (status: string) => {
+    const normalizedStatus = status.toUpperCase().trim();
+    const customText = orderStatusConfig[normalizedStatus]?.text;
+    
+    // If custom text exists and is not empty, use it
+    if (customText && customText.trim()) {
+      return customText;
+    }
+    
+    // Otherwise, use translation
+    switch (normalizedStatus) {
+      case 'PENDING':
+        return t('orders.statusPending');
+      case 'RECEIVED':
+        return t('orders.statusReceived');
+      case 'NOTIFIED_CALL':
+        return t('orders.statusNotifiedCall');
+      case 'NOTIFIED_WHATSAPP':
+        return t('orders.statusNotifiedWhatsApp');
+      case 'READY_TO_SEND':
+        return t('orders.statusReadyToSend');
+      case 'SENT':
+        return t('orders.statusSent');
+      case 'DELIVERED_COUNTER':
+        return t('orders.statusDeliveredCounter');
+      case 'CANCELLED':
+        return t('orders.statusCancelled');
+      case 'INCOMPLETO':
+        return t('orders.statusIncompleto');
+      default:
+        // Fallback: try to translate if it's a known status key
+        const statusKey = `orders.status${normalizedStatus.charAt(0) + normalizedStatus.slice(1).toLowerCase().replace(/_([a-z])/g, (_, letter) => letter.toUpperCase())}`;
+        const translated = t(statusKey, { defaultValue: normalizedStatus });
+        return translated !== statusKey ? translated : normalizedStatus;
+    }
+  };
+
+  const handleUpdateProfile = async () => {
+    if (!isAuthenticated) {
+      toast.error(t('settings.mustBeLoggedInProfile'));
+      return;
+    }
+
+    // Validate password if provided
+    if (profilePassword && profilePassword !== profileConfirmPassword) {
+      toast.error(t('settings.passwordsDoNotMatch'));
+      return;
+    }
+
+    if (profilePassword && profilePassword.length < 6) {
+      toast.error(t('settings.passwordMinLength'));
+      return;
+    }
+
+    try {
+      setUpdatingProfile(true);
+
+      // Upload avatar first if a new one is selected
+      if (profileAvatar) {
+        const formData = new FormData();
+        formData.append('avatar', profileAvatar);
+        await api.post('/auth/profile/avatar', formData, {
+          headers: {
+            'Content-Type': 'multipart/form-data',
+          },
+        });
+      }
+
+      // Update profile data
+      const updateData: any = {};
+      if (profileUsername && profileUsername !== user?.username) {
+        updateData.username = profileUsername;
+      }
+      if (profilePassword) {
+        updateData.password = profilePassword;
+      }
+      if (avatarRemoved && !profileAvatar) {
+        // User explicitly removed avatar
+        updateData.avatar = null;
+      }
+
+      if (Object.keys(updateData).length > 0) {
+        await api.patch('/auth/profile', updateData);
+      }
+
+      // Refresh auth store to get updated user data
+      await checkAuth();
+
+      // Clear password fields and reset avatar state
+      setProfilePassword('');
+      setProfileConfirmPassword('');
+      setProfileAvatar(null);
+      setAvatarRemoved(false);
+
+      toast.success(t('settings.profileUpdated'));
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || error.message || t('settings.profileUpdateFailed'));
+    } finally {
+      setUpdatingProfile(false);
+    }
+  };
+
+  const handleBackupDatabase = async () => {
+    if (!isAuthenticated) {
+      toast.error(t('settings.mustBeLoggedInBackup'));
+      return;
+    }
+    
+    // Check if Electron dialog is available
+    if (!window.electron?.dialog?.showSaveDialog) {
+      toast.error(t('settings.fileDialogNotAvailable'));
+      return;
+    }
+
+    try {
+      // Show file save dialog FIRST to choose backup location and filename
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').split('T')[0] + '_' + 
+                       new Date().toTimeString().split(' ')[0].replace(/:/g, '-');
+      const defaultFileName = `database_backup_${timestamp}.omw`;
+
+      const result = await window.electron.dialog.showSaveDialog({
+        title: t('settings.saveDatabaseBackup'),
+        defaultPath: defaultFileName,
+        filters: [
+          { name: t('settings.backupFiles'), extensions: ['omw'] },
+          { name: t('settings.allFiles'), extensions: ['*'] },
+        ],
+      });
+
+      if (result.canceled || !result.filePath) {
+        // User cancelled, don't proceed
+        return;
+      }
+
+      // Store the selected file path and show password modal
+      setPendingBackupFilePath(result.filePath);
+      setShowBackupPasswordModal(true);
+    } catch (error: any) {
+      console.error('Error showing save dialog:', error);
+      toast.error(t('settings.fileDialogError', { error: error.message || 'Unknown error' }));
+    }
+  };
+
+  // Helper function to simulate progress
+  const startProgressSimulation = (setProgress: (value: number | ((prev: number) => number)) => void): NodeJS.Timeout => {
+    let progress = 0;
+    // Faster progress at the start (0-70%), slower near completion (70-90%), then wait for completion
+    return setInterval(() => {
+      if (progress < 70) {
+        progress += Math.random() * 15 + 5; // Fast progress: 5-20% per interval
+      } else if (progress < 90) {
+        progress += Math.random() * 5 + 2; // Slower progress: 2-7% per interval
+      } else if (progress < 95) {
+        progress += Math.random() * 2 + 0.5; // Very slow: 0.5-2.5% per interval
+      }
+      // Don't exceed 95% until backup is actually complete
+      setProgress(Math.min(95, progress));
+    }, 200); // Update every 200ms
+  };
+
+  const handleConfirmBackupPassword = async (password: string) => {
+    // Close password modal
+    setShowBackupPasswordModal(false);
+
+    // Get the file path that was selected before password modal
+    const filePath = pendingBackupFilePath;
+    setPendingBackupFilePath(null);
+
+    if (!filePath) {
+      toast.error(t('settings.noFilePathSelected'));
+      return;
+    }
+
+    try {
+      setBackingUp(true);
+      setBackupProgress(0);
+
+      // Start progress simulation
+      progressIntervalRef.current = startProgressSimulation(setBackupProgress);
+
+      // Create backup at user-selected location with optional password
+      const response = await api.post('/backup/create', {
+        password: password || undefined,
+        filePath: filePath,
+      });
+      
+      // Clear progress interval and set to 100%
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+      setBackupProgress(100);
+      
+      const { size, encrypted } = response.data.data;
+
+      // Wait a bit to show 100% before hiding
+      setTimeout(() => {
+        setBackingUp(false);
+        setBackupProgress(0);
+      }, 500);
+
+      // Show success message
+      toast.success(
+        `${t('settings.databaseBackupCreated')} (${size} MB)${encrypted ? ` (${t('settings.encrypted')})` : ''}\n${t('settings.savedTo')}: ${filePath.split(/[/\\]/).pop()}`,
+        { duration: 6000 }
+      );
+    } catch (error: any) {
+      // Clear progress on error
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+        progressIntervalRef.current = null;
+      }
+      setBackupProgress(0);
+      setBackingUp(false);
+      toast.error(error.response?.data?.error?.message || error.message || 'Failed to create backup');
+    }
+  };
+
+  // Cleanup progress interval on unmount
+  useEffect(() => {
+    return () => {
+      if (progressIntervalRef.current) {
+        clearInterval(progressIntervalRef.current);
+      }
+    };
+  }, []);
+
+  const handleSelectRestoreFile = async () => {
+    if (!isAuthenticated) {
+      toast.error(t('settings.mustBeLoggedInRestore'));
+      return;
+    }
+
+    try {
+      if (!window.electron?.dialog) {
+        toast.error(t('settings.fileSelectionNotAvailable'));
+        return;
+      }
+
+      const result = await window.electron.dialog.showOpenDialog({
+        title: t('settings.selectDatabaseBackupFile'),
+        filters: [
+          { name: t('settings.backupFiles'), extensions: ['omw', 'encrypted.omw'] },
+          { name: t('settings.legacyFiles'), extensions: ['db', 'encrypted.db', 'sql', 'encrypted.sql'] },
+          { name: t('settings.allFiles'), extensions: ['*'] },
+        ],
+        properties: ['openFile'],
+      });
+
+      if (!result.canceled && result.filePaths && result.filePaths.length > 0) {
+        const selectedPath = result.filePaths[0];
+        setRestoreFilePath(selectedPath);
+        
+        // Check if the backup is encrypted
+        try {
+          const checkResponse = await api.post('/backup/check-encryption', {
+            filePath: selectedPath,
+          });
+          
+          const { encrypted } = checkResponse.data.data;
+          
+          if (encrypted) {
+            // Show password modal for encrypted backup
+            setRestorePassword('');
+            setShowRestorePasswordModal(true);
+          } else {
+            // Not encrypted, show restore confirmation directly
+            setShowRestoreConfirm(true);
+          }
+        } catch (error: any) {
+          // If check fails, assume not encrypted and proceed
+          console.error('Failed to check encryption:', error);
+          setShowRestoreConfirm(true);
+        }
+      }
+    } catch (error: any) {
+      toast.error(t('settings.failedToSelectBackupFile'));
+      console.error('File selection error:', error);
+    }
+  };
+
+  const handleConfirmRestorePassword = (password: string) => {
+    setRestorePassword(password);
+    setShowRestorePasswordModal(false);
+    // Show restore confirmation modal after password is entered
+    setShowRestoreConfirm(true);
+  };
+
+  const handleRestoreDatabase = async () => {
+    if (!restoreFilePath) {
+      toast.error(t('settings.selectBackupFileFirst'));
+      return;
+    }
+
+    try {
+      setRestoring(true);
+      setShowRestoreConfirm(false);
+
+      // Send restore request to backend with password if provided
+      await api.post('/backup/restore', {
+        filePath: restoreFilePath,
+        password: restorePassword || undefined,
+      });
+
+      toast.success(
+        t('settings.databaseRestoredSuccessfully'),
+        { duration: 6000 }
+      );
+      
+      setRestoreFilePath('');
+      setRestorePassword('');
+    } catch (error: any) {
+      const errorMessage = error.response?.data?.error?.message || error.message || t('settings.failedToRestoreDatabase');
+      
+      // If password was wrong, show password modal again
+      if (errorMessage.includes('password') || errorMessage.includes('decrypt')) {
+        setShowRestorePasswordModal(true);
+      } else {
+        toast.error(errorMessage);
+        setRestoreFilePath('');
+        setRestorePassword('');
+      }
+    } finally {
+      setRestoring(false);
+    }
+  };
+
+  if (loading || !config) {
+    return (
+      <div className="page-container">
+        <div className="loading-container">
+          <Loader2 className="spinner" size={32} />
+          <p>{t('common.loading')}</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page-container" style={!isAuthenticated ? { padding: '2rem', maxWidth: '1200px', margin: '0 auto' } : {}}>
+      {!isAuthenticated && (
+        <div style={{ marginBottom: '2rem', display: 'flex', alignItems: 'center', gap: '1rem' }}>
+          <button
+            onClick={() => navigate('/login')}
+            className="btn-secondary"
+            style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+          >
+            <ArrowLeft size={18} />
+            {t('settings.backToLogin')}
+          </button>
+        </div>
+      )}
+      <div className="page-header">
+        <div>
+          <h1>{t('settings.applicationSettings')}</h1>
+          <p className="page-subtitle">{t('settings.configureSettings')}</p>
+          {!isAuthenticated && (
+            <p className="page-subtitle" style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', marginTop: '0.5rem' }}>
+              {t('settings.configureBeforeLogin')}
+            </p>
+          )}
+        </div>
+        <button
+          className="btn-primary"
+          onClick={() => setShowSaveModal(true)}
+          disabled={saving}
+        >
+          <Save size={20} />
+          {t('settings.saveSettings')}
+        </button>
+      </div>
+
+      {/* Password Protection for Non-Admin Users */}
+      {isAuthenticated && user?.role !== 'SUPER_ADMIN' && !settingsPasswordVerified && (
+        <div className="info-box" style={{ marginBottom: '2rem', padding: '1.5rem', background: 'var(--warning-light)', border: '1px solid var(--warning)' }}>
+          <AlertCircle size={20} />
+          <div style={{ flex: 1 }}>
+            <p style={{ fontWeight: 600, marginBottom: '0.5rem' }}>{t('settings.advancedSettingsProtected') || 'Advanced Settings Protected'}</p>
+            <p style={{ fontSize: '0.875rem', marginBottom: '1rem' }}>
+              {t('settings.advancedSettingsProtectedDesc') || 'To access database configuration, server port settings, and other advanced settings, you must verify the admin password.'}
+            </p>
+            <button
+              className="btn-primary"
+              onClick={() => setShowSettingsPasswordModal(true)}
+            >
+              {t('settings.enterPassword') || 'Enter Admin Password'}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Tabs Navigation */}
+      <div className="settings-tabs">
+        <div className="settings-tabs-container">
+          <button
+            onClick={() => setActiveTab('system')}
+            className={`settings-tab ${activeTab === 'system' ? 'active' : ''}`}
+          >
+            <Server size={18} />
+            <span>{t('settings.systemSettings') || 'System Settings'}</span>
+          </button>
+          {isAuthenticated && (
+            <button
+              onClick={() => setActiveTab('user')}
+              className={`settings-tab ${activeTab === 'user' ? 'active' : ''}`}
+            >
+              <User size={18} />
+              <span>{t('settings.userSettings') || 'User Settings'}</span>
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="settings-grid">
+        {/* System Settings Tab */}
+        {activeTab === 'system' && (
+          <>
+            {/* Server/Client Mode Configuration
+                - Visible before login for initial setup
+                - After login, only SUPER_ADMIN or users who verified password */}
+            {(!isAuthenticated || user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
+        <section className="settings-section">
+          <div className="section-header">
+            <Server size={24} />
+            <h2>{t('settings.applicationMode')}</h2>
+          </div>
+
+          <div className="settings-content">
+            <div className="form-group">
+              <label>
+                {t('settings.mode')} <span className="required">*</span>
+              </label>
+              <div className="radio-group">
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="appMode"
+                    value="server"
+                    checked={config.mode === 'server'}
+                    onChange={async () => {
+                      // When switching to server mode, automatically set serverAddress to localhost, 127.0.0.1, or PC IP
+                      let serverAddress = 'localhost';
+                      
+                      // Try to get the local network IP address
+                      if (window.electron?.getLocalIp) {
+                        try {
+                          const ip = await window.electron.getLocalIp();
+                          // If we got a valid network IP (not localhost or 127.0.0.1), use it for serverAddress
+                          // This allows the server to be accessed via network IP
+                          if (ip && ip !== 'localhost' && !ip.startsWith('127.')) {
+                            // Use the network IP for serverAddress when in server mode
+                            serverAddress = ip;
+                          } else {
+                            // Fallback to localhost
+                            serverAddress = 'localhost';
+                          }
+                        } catch (error) {
+                          // Fallback to localhost
+                          serverAddress = 'localhost';
+                        }
+                      }
+                      
+                      setConfig({ ...config, mode: 'server', serverAddress });
+                    }}
+                  />
+                  <span>{t('settings.serverMode')}</span>
+                  <small>{t('settings.serverModeDesc')}</small>
+                </label>
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="appMode"
+                    value="client"
+                    checked={config.mode === 'client'}
+                    onChange={() =>
+                      setConfig({ ...config, mode: 'client' })
+                    }
+                  />
+                  <span>{t('settings.clientMode')}</span>
+                  <small>{t('settings.clientModeDesc')}</small>
+                </label>
+              </div>
+            </div>
+
+            {config.mode === 'server' && (
+              <div className="form-group">
+                <label>{t('settings.serverPort')}</label>
+                <input
+                  type="number"
+                  value={config.serverPort || 3000}
+                  onChange={(e) =>
+                    setConfig({
+                      ...config,
+                      serverPort: parseInt(e.target.value) || 3000,
+                    })
+                  }
+                  min={1024}
+                  max={65535}
+                  className="form-input"
+                />
+                  <small className="form-hint">{t('settings.defaultPort')}</small>
+                {localIp && localIp !== 'localhost' && localIp !== '127.0.0.1' && (
+                  <div className="info-box" style={{ marginTop: '0.5rem' }}>
+                    <Wifi size={16} />
+                    <span>{t('settings.shareAddress', { address: `${localIp}:${config.serverPort || 3000}` })}</span>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {config.mode === 'client' && (
+              <>
+                <div className="form-group">
+                  <label>
+                    {t('settings.serverIpAddress')} <span className="required">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={config.serverAddress || ''}
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        serverAddress: e.target.value,
+                      })
+                    }
+                    placeholder="192.168.1.100"
+                    className="form-input"
+                  />
+                  <small className="form-hint">
+                    {t('settings.ipAddressHint')}
+                  </small>
+                </div>
+                
+                <div className="form-group">
+                  <label>{t('settings.serverPort')}</label>
+                  <input
+                    type="number"
+                    value={config.serverPort || 3000}
+                    onChange={(e) =>
+                      setConfig({
+                        ...config,
+                        serverPort: parseInt(e.target.value) || 3000,
+                      })
+                    }
+                    min={1024}
+                    max={65535}
+                    className="form-input"
+                  />
+                  <small className="form-hint">{t('settings.portHint')}</small>
+                </div>
+
+                <div className="form-actions-inline">
+                  <button
+                    className="btn-secondary"
+                    onClick={testServerConnection}
+                    disabled={testingConnection || !config.serverAddress}
+                  >
+                    {testingConnection ? (
+                      <>
+                        <Loader2 className="spinner" size={16} />
+                        {t('settings.testing')}
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={16} />
+                        {t('settings.testConnection')}
+                      </>
+                    )}
+                  </button>
+                  {connectionStatus !== 'idle' && (
+                    <div className={`connection-status ${connectionStatus}`}>
+                      {connectionStatus === 'success' ? (
+                        <>
+                          <CheckCircle size={16} />
+                          {connectionMessage}
+                        </>
+                      ) : (
+                        <>
+                          <AlertCircle size={16} />
+                          {connectionMessage}
+                        </>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </div>
+        </section>
+        )}
+
+        {/* Database Configuration
+            - Visible before login for initial setup
+            - After login, only SUPER_ADMIN or users who verified password */}
+        {(!isAuthenticated || user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
+        <section className="settings-section">
+          <div className="section-header">
+            <Database size={24} />
+            <h2>{t('settings.databaseConfiguration')}</h2>
+          </div>
+
+          <div className="settings-content">
+            <div className="form-group">
+              <label>
+                {t('settings.databaseProvider')} <span className="required">*</span>
+              </label>
+              <div className="radio-group">
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="dbProvider"
+                    value="sqlite"
+                    checked={config.database.type === 'sqlite'}
+                    onChange={() => handleDatabaseProviderChange('sqlite')}
+                  />
+                  <span>{t('settings.sqliteDefault')}</span>
+                </label>
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="dbProvider"
+                    value="mysql"
+                    checked={config.database.type === 'mysql'}
+                    onChange={() => handleDatabaseProviderChange('mysql')}
+                  />
+                  <span>MySQL</span>
+                </label>
+                <label className="radio-label">
+                  <input
+                    type="radio"
+                    name="dbProvider"
+                    value="postgresql"
+                    checked={config.database.type === 'postgresql'}
+                    onChange={() => handleDatabaseProviderChange('postgresql')}
+                  />
+                  <span>PostgreSQL</span>
+                </label>
+              </div>
+            </div>
+
+            <div className="form-group">
+              <label>
+                {config.database.type === 'sqlite' ? t('settings.databasePath') : t('settings.databaseUrl')} <span className="required">*</span>
+              </label>
+              <input
+                type="text"
+                value={config.database.type === 'sqlite' 
+                  ? (config.database.path || config.database.url?.replace('file:', '') || '')
+                  : (config.database.url || '')
+                }
+                onChange={(e) => {
+                  if (config.database.type === 'sqlite') {
+                    const normalizedPath = e.target.value.replace(/\\/g, '/');
+                    setConfig({
+                      ...config,
+                      database: { ...config.database, path: normalizedPath, url: `file:${normalizedPath}` },
+                    });
+                  } else {
+                    setConfig({
+                      ...config,
+                      database: { ...config.database, url: e.target.value },
+                    });
+                  }
+                }}
+                placeholder={getDefaultDatabaseUrl(config.database.type)}
+                className="form-input"
+              />
+              <small className="form-hint">
+                {config.database.type === 'sqlite' && t('settings.sqlitePathHint')}
+                {config.database.type === 'mysql' && t('settings.mysqlUrlHint')}
+                {config.database.type === 'postgresql' && t('settings.postgresqlUrlHint')}
+              </small>
+            </div>
+
+            {config.mode === 'server' && (
+            <div className="form-actions-inline" style={{ flexWrap: 'wrap', gap: '0.5rem' }}>
+              <button
+                className="btn-secondary"
+                onClick={testDatabaseConnection}
+                disabled={testingConnection || initializingDatabase || !hasValidDbConfig(config)}
+              >
+                {testingConnection ? (
+                  <>
+                    <Loader2 className="spinner" size={16} />
+                    {t('settings.testingConnection')}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw size={16} />
+                    {t('settings.testConnection')}
+                  </>
+                )}
+              </button>
+              <button
+                className="btn-primary"
+                onClick={handleUpgradeDatabase}
+                disabled={testingConnection || upgradingDatabase || initializingDatabase || !hasValidDbConfig(config)}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                {upgradingDatabase ? (
+                  <>
+                    <Loader2 className="spinner" size={16} />
+                    {t('settings.upgradingDatabase')}
+                  </>
+                ) : (
+                  <>
+                    <Database size={16} />
+                    {t('settings.upgradeDatabaseSchema')}
+                  </>
+                )}
+              </button>
+              <button
+                className="btn-primary"
+                onClick={handleInitializeDatabase}
+                disabled={testingConnection || initializingDatabase || upgradingDatabase || !hasValidDbConfig(config)}
+                style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+              >
+                {initializingDatabase ? (
+                  <>
+                    <Loader2 className="spinner" size={16} />
+                    {t('settings.initializingDatabase')}
+                  </>
+                ) : (
+                  <>
+                    <Database size={16} />
+                    {t('settings.initializeDatabase')}
+                  </>
+                )}
+              </button>
+              {connectionStatus !== 'idle' && (
+                <div className={`connection-status ${connectionStatus}`} style={{ width: '100%', marginTop: '0.5rem' }}>
+                  {connectionStatus === 'success' ? (
+                    <>
+                      <CheckCircle size={16} />
+                      {connectionMessage}
+                    </>
+                  ) : (
+                    <>
+                      <AlertCircle size={16} />
+                      {connectionMessage}
+                    </>
+                  )}
+                </div>
+              )}
+              <small className="form-hint" style={{ width: '100%', marginTop: '0.25rem' }}>
+                <strong>{t('settings.upgradeDatabaseSchema')}:</strong> {t('settings.upgradeDatabaseSchemaDesc')}
+              </small>
+              <small className="form-hint" style={{ width: '100%', marginTop: '0.25rem' }}>
+                <strong>{t('settings.initializeDatabase')}:</strong> {t('settings.initializeDatabaseDesc')}
+              </small>
+            </div>
+            )}
+          </div>
+        </section>
+            )}
+
+            {/* Appearance & Language Configuration */}
+            <section className="settings-section">
+              <div className="section-header">
+                <Monitor size={24} />
+                <h2>{t('settings.appearance')} & {t('settings.language')}</h2>
+              </div>
+
+              <div className="settings-content">
+                {/* Theme Configuration */}
+                <div className="form-group">
+                  <label>
+                    {t('settings.theme')} <span className="required">*</span>
+                  </label>
+                  <div className="radio-group">
+                    <label className="radio-label">
+                      <input
+                        type="radio"
+                        name="theme"
+                        value="light"
+                        checked={config.theme === 'light'}
+                        onChange={() =>
+                          setConfig({ ...config, theme: 'light' })
+                        }
+                      />
+                      <span>{t('settings.light')}</span>
+                    </label>
+                    <label className="radio-label">
+                      <input
+                        type="radio"
+                        name="theme"
+                        value="dark"
+                        checked={config.theme === 'dark'}
+                        onChange={() =>
+                          setConfig({ ...config, theme: 'dark' })
+                        }
+                      />
+                      <span>{t('settings.dark')}</span>
+                    </label>
+                    <label className="radio-label">
+                      <input
+                        type="radio"
+                        name="theme"
+                        value="system"
+                        checked={config.theme === 'system'}
+                        onChange={() =>
+                          setConfig({ ...config, theme: 'system' })
+                        }
+                      />
+                      <span>{t('settings.system')}</span>
+                    </label>
+                  </div>
+                </div>
+
+                {/* Language Configuration */}
+                <div className="form-group">
+                  <label>
+                    {t('settings.language')} <span className="required">*</span>
+                  </label>
+                  <div className="radio-group">
+                    <label className="radio-label">
+                      <input
+                        type="radio"
+                        name="language"
+                        value="es"
+                        checked={(config.language || 'es') === 'es'}
+                        onChange={() =>
+                          setConfig({ ...config, language: 'es' })
+                        }
+                      />
+                      <span>{t('settings.spanish')}</span>
+                    </label>
+                    <label className="radio-label">
+                      <input
+                        type="radio"
+                        name="language"
+                        value="en"
+                        checked={config.language === 'en'}
+                        onChange={() =>
+                          setConfig({ ...config, language: 'en' })
+                        }
+                      />
+                      <span>{t('settings.english')}</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </section>
+          </>
+        )}
+
+        {/* User Settings Tab */}
+        {activeTab === 'user' && isAuthenticated && (
+          <>
+            {/* Profile Configuration - Only visible when authenticated */}
+            <section className="settings-section">
+              <div className="section-header">
+                <User size={24} />
+                <h2>{t('settings.profile')}</h2>
+              </div>
+
+            <div className="settings-content">
+              {/* Avatar Upload */}
+              <div className="form-group">
+                <label>{t('settings.profileAvatar')}</label>
+                <div className="avatar-upload-container" style={{ marginTop: '0.5rem' }}>
+                  <div className="avatar-preview-wrapper">
+                    {profileAvatarPreview ? (
+                      <div style={{ position: 'relative', display: 'inline-block' }}>
+                        <img
+                          src={profileAvatarPreview}
+                          alt={t('users.avatarPreview')}
+                          style={{
+                            width: '100px',
+                            height: '100px',
+                            borderRadius: '50%',
+                            objectFit: 'cover',
+                            border: '2px solid var(--border-color)',
+                          }}
+                        />
+                        {(profileAvatar || user?.avatar) && (
+                          <button
+                            type="button"
+                            onClick={handleRemoveAvatar}
+                            style={{
+                              position: 'absolute',
+                              top: '-8px',
+                              right: '-8px',
+                              background: 'var(--danger-color)',
+                              color: 'white',
+                              border: 'none',
+                              borderRadius: '50%',
+                              width: '24px',
+                              height: '24px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                            }}
+                            title={t('users.removeAvatar')}
+                          >
+                            <X size={14} />
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          width: '100px',
+                          height: '100px',
+                          borderRadius: '50%',
+                          background: 'var(--bg-secondary)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          border: '2px dashed var(--border-color)',
+                        }}
+                      >
+                        <User size={48} style={{ color: 'var(--text-secondary)' }} />
+                      </div>
+                    )}
+                  </div>
+                  <input
+                    type="file"
+                    ref={profileAvatarInputRef}
+                    onChange={handleProfileAvatarChange}
+                    accept="image/*"
+                    id="profile-avatar-upload"
+                    style={{ display: 'none' }}
+                  />
+                  <label
+                    htmlFor="profile-avatar-upload"
+                    className="btn-secondary"
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '0.5rem',
+                      cursor: 'pointer',
+                      marginTop: '0.5rem',
+                    }}
+                  >
+                    <ImageIcon size={16} />
+                    {profileAvatarPreview ? t('users.changeAvatar') : t('users.uploadAvatar')}
+                  </label>
+                </div>
+                <small className="form-hint">
+                  {t('settings.avatarUploadHint')}
+                </small>
+              </div>
+
+              {/* Username - Only editable for SUPER_ADMIN */}
+              <div className="form-group">
+                <label>
+                  {t('users.username')} {user?.role === 'SUPER_ADMIN' && <span className="required">*</span>}
+                </label>
+                <input
+                  type="text"
+                  value={profileUsername}
+                  onChange={(e) => {
+                    // Only allow editing if user is SUPER_ADMIN
+                    if (user?.role === 'SUPER_ADMIN') {
+                      setProfileUsername(e.target.value);
+                    }
+                  }}
+                  placeholder={t('users.enterUsername')}
+                  className="form-input"
+                  disabled={user?.role !== 'SUPER_ADMIN'}
+                  readOnly={user?.role !== 'SUPER_ADMIN'}
+                />
+                <small className="form-hint">
+                  {user?.role !== 'SUPER_ADMIN' 
+                    ? t('settings.usernameNotEditable')
+                    : t('settings.usernameHint')
+                  }
+                </small>
+              </div>
+
+              {/* Password */}
+              <div className="form-group">
+                <label>
+                  {t('settings.newPassword')}
+                </label>
+                <input
+                  type="password"
+                  value={profilePassword}
+                  onChange={(e) => setProfilePassword(e.target.value)}
+                  placeholder={t('users.enterNewPassword')}
+                  className="form-input"
+                />
+                <small className="form-hint">
+                  {t('settings.passwordHint')}
+                </small>
+              </div>
+
+              {/* Confirm Password */}
+              {profilePassword && (
+                <div className="form-group">
+                  <label>
+                    {t('settings.confirmNewPassword')}
+                  </label>
+                  <input
+                    type="password"
+                    value={profileConfirmPassword}
+                    onChange={(e) => setProfileConfirmPassword(e.target.value)}
+                    placeholder={t('settings.confirmNewPasswordPlaceholder')}
+                    className="form-input"
+                  />
+                </div>
+              )}
+
+              {/* WhatsApp Message Configuration */}
+              <div className="form-group" style={{ marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border-color)' }}>
+                <label>
+                  {t('settings.whatsappMessageTemplate')}
+                </label>
+                <textarea
+                  value={whatsappMessage}
+                  onChange={(e) => setWhatsappMessage(e.target.value)}
+                  placeholder="Hola, tu pedido está listo para recoger."
+                  className="form-input"
+                  rows={4}
+                  style={{ resize: 'vertical' }}
+                />
+                <small className="form-hint">
+                  {t('settings.whatsappMessageHint')}
+                </small>
+              </div>
+
+              <div className="form-actions-inline">
+                <button
+                  className="btn-primary"
+                  onClick={handleUpdateProfile}
+                  disabled={updatingProfile || !isAuthenticated}
+                >
+                  {updatingProfile ? (
+                    <>
+                      <Loader2 className="spinner" size={16} />
+                      {t('common.loading')}
+                    </>
+                  ) : (
+                    <>
+                      <Save size={16} />
+                      {t('settings.updateProfile')}
+                    </>
+                  )}
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={handleSaveProfile}
+                  disabled={savingProfile}
+                >
+                  {savingProfile ? (
+                    <>
+                      <Loader2 className="spinner" size={16} />
+                      {t('common.loading')}
+                    </>
+                  ) : (
+                    <>
+                      <MessageSquare size={16} />
+                      {t('settings.saveWhatsAppMessage')}
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          </section>
+
+          {/* Order Status Customization - Only visible when authenticated as Super Admin */}
+          {isAuthenticated && user?.role === 'SUPER_ADMIN' && (
+            <section className="settings-section">
+              <div className="section-header">
+                <Palette size={24} />
+                <h2>{t('settings.orderStatusCustomization')}</h2>
+              </div>
+
+            <div className="settings-content">
+              {loadingStatusConfig ? (
+                <div style={{ display: 'flex', justifyContent: 'center', padding: '2rem' }}>
+                  <Loader2 className="spinner" size={32} />
+                </div>
+              ) : (
+                <>
+                  <p className="form-hint" style={{ marginBottom: '1.5rem' }}>
+                    {t('settings.orderStatusCustomizationHint')}
+                  </p>
+                  
+                  {/* Status Selector */}
+                  <div className="form-group" style={{ marginBottom: '1.5rem' }}>
+                    <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                      {t('settings.selectStatus') || 'Select Status'}
+                    </label>
+                    <select
+                      value={selectedStatus}
+                      onChange={(e) => setSelectedStatus(e.target.value)}
+                      className="form-input"
+                      style={{ fontSize: '1rem', padding: '0.75rem' }}
+                    >
+                      <option value="PENDING">{t('orders.statusPending')}</option>
+                      <option value="RECEIVED">{t('orders.statusReceived')}</option>
+                      <option value="READY_TO_SEND">{t('orders.statusReadyToSend')}</option>
+                      <option value="SENT">{t('orders.statusSent')}</option>
+                      <option value="NOTIFIED_CALL">{t('orders.statusNotifiedCall')}</option>
+                      <option value="NOTIFIED_WHATSAPP">{t('orders.statusNotifiedWhatsApp')}</option>
+                      <option value="CANCELLED">{t('orders.statusCancelled')}</option>
+                      <option value="INCOMPLETO">{t('orders.statusIncompleto')}</option>
+                      <option value="DELIVERED_COUNTER">{t('orders.statusDeliveredCounter')}</option>
+                    </select>
+                  </div>
+
+                  {/* Configuration Fields for Selected Status */}
+                  <div className="form-group" style={{ 
+                    padding: '1.5rem', 
+                    border: '1px solid var(--border-color)', 
+                    borderRadius: 'var(--radius-lg)',
+                    backgroundColor: 'var(--card-bg)'
+                  }}>
+                    <h3 style={{ marginBottom: '1.5rem', fontSize: '1.125rem', fontWeight: 600 }}>
+                      {getStatusLabelForPreview(selectedStatus)}
+                    </h3>
+                    
+                    {/* Text Field - Full Width */}
+                    <div style={{ marginBottom: '1rem' }}>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                        {t('settings.statusText')}
+                      </label>
+                      <input
+                        type="text"
+                        value={orderStatusConfig[selectedStatus]?.text || ''}
+                        onChange={(e) => updateStatusConfig(selectedStatus, 'text', e.target.value)}
+                        placeholder={t('settings.enterStatusText')}
+                        className="form-input"
+                      />
+                    </div>
+
+                    {/* Colors - Inline */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                      {/* Text Color */}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                          {t('settings.statusColor')}
+                        </label>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <input
+                            type="color"
+                            value={orderStatusConfig[selectedStatus]?.color || '#000000'}
+                            onChange={(e) => updateStatusConfig(selectedStatus, 'color', e.target.value)}
+                            style={{ width: '50px', height: '38px', cursor: 'pointer', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}
+                          />
+                          <input
+                            type="text"
+                            value={orderStatusConfig[selectedStatus]?.color || ''}
+                            onChange={(e) => updateStatusConfig(selectedStatus, 'color', e.target.value)}
+                            placeholder="#000000"
+                            className="form-input"
+                            style={{ flex: 1 }}
+                          />
+                        </div>
+                      </div>
+
+                      {/* Background Color */}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                          {t('settings.statusBackgroundColor')}
+                        </label>
+                        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                          <input
+                            type="color"
+                            value={orderStatusConfig[selectedStatus]?.backgroundColor || '#ffffff'}
+                            onChange={(e) => updateStatusConfig(selectedStatus, 'backgroundColor', e.target.value)}
+                            style={{ width: '50px', height: '38px', cursor: 'pointer', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-md)' }}
+                          />
+                          <input
+                            type="text"
+                            value={orderStatusConfig[selectedStatus]?.backgroundColor || ''}
+                            onChange={(e) => updateStatusConfig(selectedStatus, 'backgroundColor', e.target.value)}
+                            placeholder="#ffffff"
+                            className="form-input"
+                            style={{ flex: 1 }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Font Settings - Inline */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '1rem', marginBottom: '1rem' }}>
+                      {/* Font Family */}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                          {t('settings.statusFontFamily')}
+                        </label>
+                        <select
+                          value={orderStatusConfig[selectedStatus]?.fontFamily || 'inherit'}
+                          onChange={(e) => updateStatusConfig(selectedStatus, 'fontFamily', e.target.value)}
+                          className="form-input"
+                        >
+                          <option value="inherit">{t('settings.inherit')}</option>
+                          <option value="Arial, sans-serif">Arial</option>
+                          <option value="'Times New Roman', serif">Times New Roman</option>
+                          <option value="'Courier New', monospace">Courier New</option>
+                          <option value="Georgia, serif">Georgia</option>
+                          <option value="Verdana, sans-serif">Verdana</option>
+                          <option value="'Trebuchet MS', sans-serif">Trebuchet MS</option>
+                        </select>
+                      </div>
+
+                      {/* Font Size */}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                          {t('settings.statusFontSize')}
+                        </label>
+                        <input
+                          type="text"
+                          value={orderStatusConfig[selectedStatus]?.fontSize || ''}
+                          onChange={(e) => updateStatusConfig(selectedStatus, 'fontSize', e.target.value)}
+                          placeholder="inherit (e.g., 14px)"
+                          className="form-input"
+                        />
+                      </div>
+
+                      {/* Font Weight */}
+                      <div>
+                        <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500 }}>
+                          {t('settings.statusFontWeight')}
+                        </label>
+                        <select
+                          value={orderStatusConfig[selectedStatus]?.fontWeight || 'normal'}
+                          onChange={(e) => updateStatusConfig(selectedStatus, 'fontWeight', e.target.value)}
+                          className="form-input"
+                        >
+                          <option value="normal">{t('settings.normal')}</option>
+                          <option value="bold">{t('settings.bold')}</option>
+                          <option value="600">600</option>
+                          <option value="700">700</option>
+                          <option value="800">800</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Preview */}
+                    <div style={{ marginTop: '1.5rem', padding: '1rem', backgroundColor: 'var(--bg-secondary)', borderRadius: 'var(--radius-md)' }}>
+                      <label style={{ display: 'block', marginBottom: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                        {t('settings.preview')}:
+                      </label>
+                      <span
+                        style={{
+                          display: 'inline-block',
+                          padding: '0.5rem 1rem',
+                          borderRadius: 'var(--radius-md)',
+                          color: orderStatusConfig[selectedStatus]?.color || '#000000',
+                          backgroundColor: orderStatusConfig[selectedStatus]?.backgroundColor || '#ffffff',
+                          fontFamily: orderStatusConfig[selectedStatus]?.fontFamily || 'inherit',
+                          fontSize: orderStatusConfig[selectedStatus]?.fontSize || 'inherit',
+                          fontWeight: orderStatusConfig[selectedStatus]?.fontWeight || 'normal',
+                          border: '1px solid var(--border-color)',
+                        }}
+                      >
+                        {getStatusLabelForPreview(selectedStatus)}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="form-actions-inline" style={{ marginTop: '1.5rem' }}>
+                    <button
+                      className="btn-primary"
+                      onClick={handleSaveOrderStatusConfig}
+                      disabled={savingStatusConfig}
+                    >
+                      {savingStatusConfig ? (
+                        <>
+                          <Loader2 className="spinner" size={16} />
+                          {t('common.saving')}
+                        </>
+                      ) : (
+                        <>
+                          <Save size={16} />
+                          {t('settings.saveOrderStatusConfig')}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Order Counter Management - Only visible to SUPER_ADMIN */}
+        {isAuthenticated && user?.role === 'SUPER_ADMIN' && (
+          <section className="settings-section">
+            <div className="section-header">
+              <Hash size={24} />
+              <h2>{t('settings.orderCounterManagement')}</h2>
+            </div>
+            <div className="settings-content">
+              {loadingOrderCounter ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '1rem' }}>
+                  <Loader2 className="spinner" size={16} />
+                  <span>{t('common.loading')}</span>
+                </div>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label>{t('settings.currentOrderCounter')}</label>
+                    <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '0.5rem' }}>
+                      {t('settings.currentOrderCounterHint')}
+                    </p>
+                    <div style={{ 
+                      padding: '1rem', 
+                      backgroundColor: 'var(--bg-secondary)', 
+                      borderRadius: 'var(--radius-md)',
+                      border: '1px solid var(--border-color)',
+                      fontSize: '1.25rem',
+                      fontWeight: '600',
+                      color: 'var(--text-primary)'
+                    }}>
+                      {orderPrefix ? `${orderPrefix}${String(orderCounter).padStart(3, '0')}` : orderCounter}
+                    </div>
+                  </div>
+
+                  <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                    <label>{t('settings.orderPrefix')}</label>
+                    <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '0.5rem' }}>
+                      {t('settings.orderPrefixHint')}
+                    </p>
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <input
+                        type="text"
+                        value={orderPrefix}
+                        onChange={(e) => {
+                          // Only allow numeric input
+                          const value = e.target.value.replace(/\D/g, '');
+                          setOrderPrefix(value);
+                        }}
+                        placeholder={t('settings.orderPrefixPlaceholder')}
+                        className="form-input"
+                        style={{ maxWidth: '200px' }}
+                      />
+                      <button
+                        className="btn-primary"
+                        onClick={handleSaveOrderPrefix}
+                        disabled={savingPrefix}
+                        style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                      >
+                        {savingPrefix ? (
+                          <>
+                            <Loader2 className="spinner" size={16} />
+                            {t('common.saving')}
+                          </>
+                        ) : (
+                          <>
+                            <Save size={16} />
+                            {t('settings.savePrefix')}
+                          </>
+                        )}
+                      </button>
+                    </div>
+                    {orderPrefix && (
+                      <p className="form-hint" style={{ marginTop: '0.5rem', color: 'var(--text-secondary)' }}>
+                        {t('settings.orderPrefixExample', { prefix: orderPrefix, example: `${orderPrefix}001` })}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                    <label>{t('settings.resetOrderCounter')}</label>
+                    <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '0.5rem' }}>
+                      {t('settings.resetOrderCounterHint')}
+                    </p>
+                    <button
+                      className="btn-danger"
+                      onClick={handleResetOrderCounter}
+                      disabled={resettingCounter}
+                      style={{ 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center',
+                        gap: '0.5rem',
+                        padding: '0.75rem 1.5rem',
+                        fontSize: '0.9375rem',
+                        fontWeight: '500',
+                        minWidth: '150px'
+                      }}
+                    >
+                      {resettingCounter ? (
+                        <>
+                          <Loader2 className="spinner" size={16} />
+                          {t('settings.resetting')}
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw size={16} />
+                          {t('settings.resetToZero')}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        )}
+
+        {/* Users Configuration - Only visible to SUPER_ADMIN */}
+        {isAuthenticated && user?.role === 'SUPER_ADMIN' && (
+          <section className="settings-section">
+            <div className="section-header">
+              <User size={24} />
+              <h2>{t('settings.usersConfiguration')}</h2>
+            </div>
+            <div className="settings-content">
+              {loadingUsersConfig ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '1rem' }}>
+                  <Loader2 className="spinner" size={16} />
+                  <span>{t('common.loading')}</span>
+                </div>
+              ) : (
+                <>
+                  <div className="form-group">
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={usersSeeOnlyOwnOrders}
+                        onChange={(e) => setUsersSeeOnlyOwnOrders(e.target.checked)}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                      />
+                      <span>{t('settings.usersSeeOnlyOwnOrders')}</span>
+                    </label>
+                    <p className="form-hint" style={{ marginTop: '0.5rem' }}>
+                      {t('settings.usersSeeOnlyOwnOrdersHint')}
+                    </p>
+                  </div>
+
+                  <div className="form-group" style={{ marginTop: '1.25rem' }}>
+                    <label style={{ marginBottom: '0.5rem' }}>{t('settings.usersPerUserOrderVisibility')}</label>
+                    <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '0.75rem' }}>
+                      {t('settings.usersPerUserOrderVisibilityHint')}
+                    </p>
+
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                      <input
+                        type="checkbox"
+                        checked={enableUsersVisibilityOverrides}
+                        onChange={(e) => setEnableUsersVisibilityOverrides(e.target.checked)}
+                        style={{ width: '18px', height: '18px', cursor: 'pointer' }}
+                      />
+                      <span>{t('settings.enableSpecialUsersSettings')}</span>
+                    </label>
+                    <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '0.75rem' }}>
+                      {t('settings.enableSpecialUsersSettingsHint')}
+                    </p>
+
+                    {!enableUsersVisibilityOverrides ? null : (
+                      <>
+                    <input
+                      type="text"
+                      className="form-input"
+                      placeholder={t('settings.usersSearchPlaceholder')}
+                      value={usersVisibilitySearch}
+                      onChange={(e) => setUsersVisibilitySearch(e.target.value)}
+                      style={{ maxWidth: '420px' }}
+                    />
+
+                    {(() => {
+                      const q = usersVisibilitySearch.trim().toLowerCase();
+                      const visibleUsers = (usersForVisibility || [])
+                        .filter((u) => u.role !== 'SUPER_ADMIN')
+                        .filter((u) => !q || String(u.username).toLowerCase().includes(q));
+
+                      const selectedSet = new Set(usersVisibilitySelectedIds);
+                      const overrideOwnCount = Object.values(usersVisibilityOverrides || {}).filter((v) => v === 'OWN').length;
+                      const overrideAllCount = Object.values(usersVisibilityOverrides || {}).filter((v) => v === 'ALL').length;
+
+                      const applyToSelected = (mode: 'OWN' | 'ALL' | 'DEFAULT') => {
+                        setUsersVisibilityOverrides((prev) => {
+                          const next = { ...(prev || {}) };
+                          for (const userId of usersVisibilitySelectedIds) {
+                            if (mode === 'DEFAULT') {
+                              delete next[userId];
+                            } else {
+                              next[userId] = mode;
+                            }
+                          }
+                          return next;
+                        });
+                      };
+
+                      return (
+                        <>
+                          <div style={{ marginTop: '0.75rem', display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                            <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                              {t('settings.usersSelectedCount', { count: usersVisibilitySelectedIds.length })}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => applyToSelected('OWN')}
+                              disabled={usersVisibilitySelectedIds.length === 0}
+                            >
+                              {t('settings.applyOwnToSelected')}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => applyToSelected('ALL')}
+                              disabled={usersVisibilitySelectedIds.length === 0}
+                            >
+                              {t('settings.applyAllToSelected')}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => applyToSelected('DEFAULT')}
+                              disabled={usersVisibilitySelectedIds.length === 0}
+                            >
+                              {t('settings.resetSelectedToDefault')}
+                            </button>
+                            <button
+                              type="button"
+                              className="btn-secondary"
+                              onClick={() => setUsersVisibilitySelectedIds([])}
+                              disabled={usersVisibilitySelectedIds.length === 0}
+                            >
+                              {t('settings.clearSelection')}
+                            </button>
+                          </div>
+
+                          <div style={{ marginTop: '0.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+                            {t('settings.usersOverridesSummary', { own: overrideOwnCount, all: overrideAllCount })}
+                          </div>
+
+                          <div style={{ marginTop: '0.75rem', display: 'grid', gap: '0.5rem' }}>
+                            {visibleUsers.map((u) => {
+                              const current = usersVisibilityOverrides[u.id] ?? 'DEFAULT';
+                              const checked = selectedSet.has(u.id);
+                              return (
+                                <div
+                                  key={u.id}
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between',
+                                    gap: '1rem',
+                                    padding: '0.5rem 0.75rem',
+                                    border: '1px solid var(--border-color)',
+                                    borderRadius: 'var(--radius-md)',
+                                    background: 'var(--card-bg)',
+                                    maxWidth: '720px',
+                                  }}
+                                >
+                                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', cursor: 'pointer' }}>
+                                    <input
+                                      type="checkbox"
+                                      checked={checked}
+                                      onChange={(e) => {
+                                        const isChecked = e.target.checked;
+                                        setUsersVisibilitySelectedIds((prev) => {
+                                          const set = new Set(prev);
+                                          if (isChecked) set.add(u.id);
+                                          else set.delete(u.id);
+                                          return Array.from(set);
+                                        });
+                                      }}
+                                      style={{ width: '18px', height: '18px' }}
+                                    />
+                                    <div style={{ display: 'flex', flexDirection: 'column' }}>
+                                      <strong style={{ fontSize: '0.95rem' }}>{u.username}</strong>
+                                      <span style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                                        {t('settings.usersOrderVisibilityLabel')}: {current === 'OWN'
+                                          ? t('settings.usersOrderVisibilityOwn')
+                                          : current === 'ALL'
+                                            ? t('settings.usersOrderVisibilityAll')
+                                            : t('settings.usersOrderVisibilityDefault')}
+                                      </span>
+                                    </div>
+                                  </label>
+                                  <select
+                                    className="form-input"
+                                    style={{ maxWidth: '280px' }}
+                                    value={current}
+                                    onChange={(e) => {
+                                      const val = e.target.value as 'DEFAULT' | 'OWN' | 'ALL';
+                                      setUsersVisibilityOverrides((prev) => {
+                                        const next = { ...(prev || {}) };
+                                        if (val === 'DEFAULT') delete next[u.id];
+                                        else next[u.id] = val;
+                                        return next;
+                                      });
+                                    }}
+                                  >
+                                    <option value="DEFAULT">{t('settings.usersOrderVisibilityDefault')}</option>
+                                    <option value="OWN">{t('settings.usersOrderVisibilityOwn')}</option>
+                                    <option value="ALL">{t('settings.usersOrderVisibilityAll')}</option>
+                                  </select>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </>
+                      );
+                    })()}
+                      </>
+                    )}
+                  </div>
+
+                  <div className="form-actions-inline" style={{ marginTop: '1.5rem' }}>
+                    <button
+                      className="btn-primary"
+                      onClick={handleSaveUsersConfig}
+                      disabled={savingUsersConfig}
+                    >
+                      {savingUsersConfig ? (
+                        <>
+                          <Loader2 className="spinner" size={16} />
+                          {t('common.saving')}
+                        </>
+                      ) : (
+                        <>
+                          <Save size={16} />
+                          {t('settings.saveUsersConfig')}
+                        </>
+                      )}
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+          </section>
+        )}
+
+          {/* Database Backup & Restore - Only visible when authenticated as Super Admin or with password */}
+          {isAuthenticated && (user?.role === 'SUPER_ADMIN' || settingsPasswordVerified) && (
+            <section className="settings-section">
+              <div className="section-header">
+                <HardDrive size={24} />
+                <h2>{t('settings.databaseBackupRestore')}</h2>
+              </div>
+
+            <div className="settings-content">
+              <div className="form-group">
+                <label>{t('settings.backupDatabase')}</label>
+                <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '1rem' }}>
+                  {t('settings.backupDatabaseHint')}
+                </p>
+                <button
+                  className="btn-secondary"
+                  onClick={handleBackupDatabase}
+                  disabled={backingUp}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: backingUp ? '1rem' : '0' }}
+                >
+                  {backingUp ? (
+                    <>
+                      <Loader2 className="spinner" size={16} />
+                      {t('settings.creatingBackup')}
+                    </>
+                  ) : (
+                    <>
+                      <Download size={16} />
+                      {t('settings.createBackup')}
+                    </>
+                  )}
+                </button>
+                {backingUp && (
+                  <div style={{ marginTop: '0.5rem' }}>
+                    <ProgressBar
+                      progress={backupProgress}
+                      label={t('settings.backupProgress')}
+                      showPercentage={true}
+                      animated={true}
+                      color="primary"
+                      size="md"
+                      striped={true}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="form-group" style={{ marginTop: '1.5rem' }}>
+                <label>{t('settings.restoreDatabase')}</label>
+                <p className="form-hint" style={{ marginTop: '0.25rem', marginBottom: '1rem' }}>
+                  {t('settings.restoreDatabaseHint')}
+                </p>
+                <button
+                  className="btn-secondary"
+                  onClick={handleSelectRestoreFile}
+                  disabled={restoring || backingUp}
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                >
+                  {restoring ? (
+                    <>
+                      <Loader2 className="spinner" size={16} />
+                      {t('settings.restoring')}
+                    </>
+                  ) : (
+                    <>
+                      <Upload size={16} />
+                      {t('settings.restoreFromBackup')}
+                    </>
+                  )}
+                </button>
+                {restoreFilePath && (
+                  <p className="form-hint" style={{ marginTop: '0.5rem', color: 'var(--primary-color)' }}>
+                    {t('settings.selected')}: {restoreFilePath.split(/[/\\]/).pop()}
+                  </p>
+                )}
+                {restorePassword && (
+                  <p className="form-hint" style={{ marginTop: '0.25rem', color: 'var(--text-secondary)', fontSize: '0.8125rem' }}>
+                    {t('settings.passwordEntered')}
+                  </p>
+                )}
+              </div>
+              </div>
+            </section>
+          )}
+          </>
+        )}
+      </div>
+
+      {/* Save Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showSaveModal}
+        onClose={() => setShowSaveModal(false)}
+        onConfirm={handleSave}
+        title={t('settings.saveSettings')}
+        message={
+          <div>
+            <p>{t('settings.saveSettingsConfirm')}</p>
+            {config.database.type !== 'sqlite' && (
+              <p className="warning-text">
+                {t('settings.databaseMigrationWarning')}
+              </p>
+            )}
+            {config.mode === 'client' && !config.serverAddress && (
+              <p className="warning-text">
+                {t('settings.clientModeServerAddressRequired')}
+              </p>
+            )}
+            <p className="warning-text" style={{ marginTop: '1rem' }}>
+              <strong>{t('common.note')}:</strong> {t('settings.someChangesRequireRestart')}
+            </p>
+          </div>
+        }
+        confirmText={t('settings.saveSettings')}
+        cancelText={t('common.cancel')}
+        type="info"
+        loading={saving}
+      />
+
+      {/* Restore Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showRestoreConfirm}
+        onClose={() => {
+          setShowRestoreConfirm(false);
+          setRestoreFilePath('');
+          setRestorePassword('');
+        }}
+        onConfirm={handleRestoreDatabase}
+        title={t('settings.database.restore.confirmTitle')}
+        message={
+          <div>
+            <p>
+              {t('settings.database.restore.confirmMessage')}
+            </p>
+            {restorePassword && (
+              <p style={{ marginTop: '0.75rem', color: 'var(--primary-color)', fontSize: '0.875rem' }}>
+                <strong>{t('settings.database.restore.encryptedBackup')}:</strong> {t('settings.database.restore.passwordEntered')}
+              </p>
+            )}
+            <p className="warning-text" style={{ marginTop: '1rem' }}>
+              <strong>{t('common.warning')}:</strong> {t('settings.database.restore.warningMessage')}
+            </p>
+            <p className="warning-text" style={{ marginTop: '0.5rem' }}>
+              {t('settings.database.restore.restartRequired')}
+            </p>
+          </div>
+        }
+        confirmText={t('settings.restoreDatabase')}
+        cancelText={t('common.cancel')}
+        type="danger"
+        loading={restoring}
+      />
+
+      {/* Settings Password Modal for Non-Admin Users */}
+      <PasswordModal
+        isOpen={showSettingsPasswordModal}
+        onClose={() => {
+          setShowSettingsPasswordModal(false);
+          setSettingsPassword('');
+        }}
+        onConfirm={handleSettingsPasswordConfirm}
+        title={t('settings.enterPasswordToAccess')}
+        message={t('settings.enterPasswordToAccessDesc')}
+        placeholder={t('settings.enterPassword')}
+        required={true}
+      />
+
+      {/* Backup Password Modal */}
+      <PasswordModal
+        isOpen={showBackupPasswordModal}
+        onClose={() => setShowBackupPasswordModal(false)}
+        onConfirm={handleConfirmBackupPassword}
+        title={t('settings.database.backup.encryptTitle')}
+        message={t('settings.database.backup.encryptMessage')}
+        placeholder={t('settings.database.backup.encryptPlaceholder')}
+        required={false}
+        loading={backingUp}
+      />
+
+      {/* Restore Password Modal */}
+      <PasswordModal
+        isOpen={showRestorePasswordModal}
+        onClose={() => {
+          setShowRestorePasswordModal(false);
+          setRestoreFilePath('');
+          setRestorePassword('');
+        }}
+        onConfirm={handleConfirmRestorePassword}
+        title={t('settings.database.restore.enterPasswordTitle')}
+        message={t('settings.database.restore.encryptedBackupMessage')}
+        placeholder={t('settings.database.restore.enterPasswordPlaceholder')}
+        required={true}
+        loading={restoring}
+      />
+    </div>
+  );
+}

@@ -1,0 +1,1439 @@
+import { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { 
+  ArrowLeft, 
+  Phone, 
+  MessageSquare, 
+  Edit2, 
+  Clock,
+  User,
+  Package,
+  AlertCircle,
+  AlertTriangle,
+  PhoneCall,
+  Loader2,
+  Plus,
+  Send,
+  CheckCircle,
+  Trash2,
+  X,
+  Save
+} from 'lucide-react';
+import api from '../lib/api';
+import toast from 'react-hot-toast';
+import ConfirmModal from '../components/ConfirmModal';
+import { useOrderStatusConfig, getStatusConfig } from '../hooks/useOrderStatusConfig';
+import WhatsAppModal from '../components/WhatsAppModal';
+import WhatsAppIcon from '../components/WhatsAppIcon';
+import { useAuthStore } from '../store/authStore';
+import '../styles/order-detail.css';
+
+interface Supplier {
+  id: string;
+  name: string;
+}
+
+interface Product {
+  id: string;
+  supplierId: string;
+  productRef: string;
+  quantity: string;
+  price: string;
+  receivedQuantity?: string | null;
+  deletionReason?: string | null;
+  deletedAt?: string | null;
+  supplier: Supplier;
+}
+
+interface AuditLog {
+  id: string;
+  action: string;
+  fieldChanged?: string;
+  oldValue?: string;
+  newValue?: string;
+  timestamp: string;
+  metadata?: string | Record<string, any>;
+  user: {
+    username: string;
+  };
+}
+
+interface Order {
+  id: string;
+  orderNumber?: number; // Auto-incremental order number (1, 2, 3...)
+  customerName?: string;
+  customerId?: string;
+  customerPhone?: string;
+  countryCode?: string;
+  status: string;
+  notificationMethod?: string;
+  observations?: string;
+  cancellationReason?: string;
+  createdAt: string;
+  updatedAt: string;
+  notifiedAt?: string;
+  createdBy: {
+    id: string;
+    username: string;
+  };
+  customer?: {
+    id: string;
+    name: string;
+    phone?: string;
+    countryCode?: string;
+  } | null;
+  suppliers: Supplier[];
+  products: Product[];
+  totalAmount: string;
+  auditLogs?: AuditLog[];
+}
+
+type OrderStatus = 'PENDING' | 'RECEIVED' | 'NOTIFIED_CALL' | 'NOTIFIED_WHATSAPP' | 'CANCELLED' | 'INCOMPLETO' | 'DELIVERED_COUNTER' | 'READY_TO_SEND' | 'SENT';
+
+export default function OrderDetailPage() {
+  const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { t } = useTranslation();
+  const [order, setOrder] = useState<Order | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [updating, setUpdating] = useState(false);
+  const [showStatusModal, setShowStatusModal] = useState(false);
+  const [showWhatsAppModal, setShowWhatsAppModal] = useState(false);
+  const [showPhoneCallModal, setShowPhoneCallModal] = useState(false);
+  const [whatsappMessage, setWhatsappMessage] = useState<string>('');
+  const [selectedStatus, setSelectedStatus] = useState<OrderStatus | null>(null);
+  const [cancellationReason, setCancellationReason] = useState<string>('');
+  const [updatingProducts, setUpdatingProducts] = useState<Set<string>>(new Set());
+  const [localReceivedQuantities, setLocalReceivedQuantities] = useState<Record<string, string>>({});
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [showSaveQuantityModal, setShowSaveQuantityModal] = useState(false);
+  const [pendingQuantityUpdate, setPendingQuantityUpdate] = useState<{ productId: string; value: string | null } | null>(null);
+  const [showDeleteProductModal, setShowDeleteProductModal] = useState(false);
+  const [productToDelete, setProductToDelete] = useState<Product | null>(null);
+  const [deletingProduct, setDeletingProduct] = useState(false);
+  const [deleteProductReason, setDeleteProductReason] = useState('');
+  const [savedScrollPosition, setSavedScrollPosition] = useState<number | null>(null);
+  const { user } = useAuthStore();
+  const isAdmin = user?.role === 'SUPER_ADMIN';
+
+  useEffect(() => {
+    if (id) {
+      fetchOrder(id);
+    }
+  }, [id]);
+
+  // Restore scroll position after order data updates
+  useEffect(() => {
+    if (savedScrollPosition !== null && order) {
+      window.scrollTo(0, savedScrollPosition);
+      setSavedScrollPosition(null);
+    }
+  }, [order, savedScrollPosition]);
+
+
+  const fetchOrder = async (orderId: string) => {
+    try {
+      setLoading(true);
+      const response = await api.get<{
+        success: true;
+        data: Order;
+      }>(`/orders/${orderId}`);
+      setOrder(response.data.data);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || t('orderDetail.loadOrderFailed'));
+      navigate('/orders');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const getStatusIcon = (status: string, color?: string) => {
+    const iconProps = { size: 16, color: color || 'currentColor' };
+    switch (status) {
+      case 'RECEIVED':
+        return <AlertTriangle {...iconProps} />;
+      case 'NOTIFIED_CALL':
+        return <PhoneCall {...iconProps} />;
+      case 'NOTIFIED_WHATSAPP':
+        return <MessageSquare {...iconProps} />;
+      case 'READY_TO_SEND':
+        return <Send {...iconProps} />;
+      case 'SENT':
+        return <CheckCircle {...iconProps} />;
+      case 'CANCELLED':
+        return <X {...iconProps} />;
+      default:
+        return <Clock {...iconProps} />;
+    }
+  };
+
+  const { config: statusConfig } = useOrderStatusConfig();
+
+  const getStatusColor = (status: string) => {
+    // Use custom config if available, otherwise fallback to default
+    const config = getStatusConfig(status, statusConfig);
+    return 'status-custom';
+  };
+
+  const getStatusLabel = (status: string) => {
+    const config = getStatusConfig(status, statusConfig);
+    return config.text || status;
+  };
+
+  const getStatusStyle = (status: string) => {
+    const config = getStatusConfig(status, statusConfig);
+    return {
+      color: config.color || '#6b7280',
+      backgroundColor: config.backgroundColor || '#f3f4f6',
+      fontFamily: config.fontFamily || 'inherit',
+      fontSize: config.fontSize || 'inherit',
+      fontWeight: config.fontWeight || 'normal',
+    };
+  };
+
+
+  const handleWhatsAppClick = async () => {
+    if (!order) return;
+
+    try {
+      // Get WhatsApp message template - prefer user's personal message, fallback to global config
+      // Use translated default message based on current language
+      let message = t('whatsapp.defaultMessage');
+      
+      // First, try to get current user's WhatsApp message
+      try {
+        const userResponse = await api.get<{
+          success: true;
+          data: {
+            id: string;
+            username: string;
+            role: string;
+            whatsappMessage?: string | null;
+          };
+        }>('/auth/me');
+        
+        if (userResponse.data.data?.whatsappMessage) {
+          message = userResponse.data.data.whatsappMessage;
+        } else {
+          // If user doesn't have a personal message, fallback to global config
+          try {
+            const configResponse = await api.get<{
+              success: true;
+              data: { value: string };
+            }>('/config/whatsapp_default_message');
+            
+            if (configResponse.data.data?.value) {
+              message = configResponse.data.data.value;
+            }
+          } catch (configError) {
+            console.warn('Failed to load global WhatsApp message config, using default');
+          }
+        }
+      } catch (userError) {
+        // If /auth/me fails, try global config as fallback
+        console.warn('Failed to load user profile, trying global config');
+        try {
+          const configResponse = await api.get<{
+            success: true;
+            data: { value: string };
+          }>('/config/whatsapp_default_message');
+          
+          if (configResponse.data.data?.value) {
+            message = configResponse.data.data.value;
+          }
+        } catch (configError) {
+          console.warn('Failed to load WhatsApp message config, using default');
+        }
+      }
+
+      // Store message for modal display
+      setWhatsappMessage(message);
+      setShowWhatsAppModal(true);
+      
+    } catch (error: any) {
+      toast.error(t('orderDetail.whatsappConfigFailed'));
+      console.error('WhatsApp error:', error);
+    }
+  };
+
+  const confirmWhatsAppAction = async (message: string) => {
+    if (!order) return;
+
+    try {
+      setShowWhatsAppModal(false);
+
+      // Get phone number and country code
+      const phoneNumber = order.customerPhone || order.customer?.phone || '';
+      if (!phoneNumber) {
+        toast.error(t('orders.noPhoneNumber'));
+        return;
+      }
+      
+      // Get country code (default to +34 if not provided)
+      const countryCode = order.countryCode || order.customer?.countryCode || '+34';
+      
+      // Check if phone number already includes country code (starts with +)
+      let fullPhone: string;
+      if (phoneNumber.startsWith('+')) {
+        // Phone already includes country code, use it directly
+        fullPhone = phoneNumber.replace(/\D/g, '');
+      } else {
+        // Combine country code and phone number
+        // Remove + and any non-digits from country code
+        const cleanCountryCode = countryCode.replace(/^\+/, '').replace(/\D/g, '');
+        // Remove all non-digits from phone number
+        const cleanPhone = phoneNumber.replace(/\D/g, '');
+        fullPhone = cleanCountryCode + cleanPhone;
+      }
+
+      // Use WhatsApp API URL format that works with desktop and mobile apps
+      // Format: https://api.whatsapp.com/send/?phone={phone}&text={message}&type=phone_number&app_absent=0
+      const whatsappUrl = `https://api.whatsapp.com/send/?phone=${fullPhone}&text=${encodeURIComponent(message)}&type=phone_number&app_absent=0`;
+
+      // Use Electron's shell.openExternal if available, otherwise fallback to window.open
+      if (window.electron?.openExternal) {
+        try {
+          await window.electron.openExternal(whatsappUrl);
+        } catch (error: any) {
+          console.error('Failed to open WhatsApp via Electron:', error);
+          // Fallback to window.open
+          window.open(whatsappUrl, '_blank');
+        }
+      } else {
+        // Fallback for web version
+        window.open(whatsappUrl, '_blank');
+      }
+
+      // Update status to NOTIFIED_WHATSAPP after opening WhatsApp
+      setTimeout(async () => {
+        try {
+          await updateOrderStatus('NOTIFIED_WHATSAPP');
+          toast.success(t('orderDetail.statusUpdatedWhatsApp'));
+        } catch (error: any) {
+          console.error('Failed to update status:', error);
+          toast.error(t('orderDetail.updateStatusFailed'));
+        }
+      }, 500);
+      
+    } catch (error: any) {
+      toast.error(t('orderDetail.whatsappFailed'));
+      console.error('WhatsApp error:', error);
+    }
+  };
+
+  const handlePhoneCallClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!order) return;
+    setShowPhoneCallModal(true);
+  };
+
+  const confirmPhoneCallAction = async () => {
+    if (!order) return;
+    setShowPhoneCallModal(false);
+    
+    try {
+      const phoneNumber = order.customerPhone || order.customer?.phone;
+      if (!phoneNumber) {
+        toast.error(t('orders.noPhoneNumber'));
+        return;
+      }
+      
+      // Get country code (default to +34 if not provided)
+      const countryCode = order.countryCode || order.customer?.countryCode || '+34';
+      
+      // Build full phone number for tel: URL
+      // If phone already starts with +, use it directly; otherwise combine with country code
+      const fullPhone = phoneNumber.startsWith('+') 
+        ? phoneNumber 
+        : `${countryCode}${phoneNumber}`;
+      
+      const phoneUrl = `tel:${fullPhone}`;
+      
+      // Use Electron's shell.openExternal if available, otherwise fallback
+      if (window.electron?.openExternal) {
+        try {
+          await window.electron.openExternal(phoneUrl);
+        } catch (error: any) {
+          console.error('Failed to open phone dialer via Electron:', error);
+          window.location.href = phoneUrl;
+        }
+      } else {
+        window.location.href = phoneUrl;
+      }
+      
+      // Update status to NOTIFIED_CALL after a delay
+      setTimeout(async () => {
+        try {
+          await updateOrderStatus('NOTIFIED_CALL');
+          toast.success(t('orderDetail.statusUpdatedCall'));
+        } catch (error: any) {
+          console.error('Failed to update status:', error);
+          toast.error(t('orderDetail.updateStatusFailed'));
+        }
+      }, 1000);
+    } catch (error: any) {
+      toast.error(t('orderDetail.phoneCallFailed'));
+      console.error('Phone call error:', error);
+    }
+  };
+
+  const handleDeleteOrder = async () => {
+    if (!order || !id) return;
+
+    try {
+      setDeleting(true);
+      await api.delete(`/orders/${id}`);
+      toast.success(t('orderDetail.deleteSuccess'));
+      navigate('/orders');
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || t('orderDetail.deleteFailed'));
+      setShowDeleteModal(false);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDeleteProduct = async () => {
+    if (!order || !id || !productToDelete) return;
+    if (!deleteProductReason.trim()) {
+      toast.error(t('orderDetail.deleteProductReasonRequired') || 'Please write a reason for deleting this product');
+      return;
+    }
+
+    try {
+      setDeletingProduct(true);
+      const scrollPos = window.scrollY;
+      await api.patch(`/orders/${id}/products/${productToDelete.id}/delete`, { reason: deleteProductReason.trim() });
+      toast.success(t('orderDetail.productDeleteSuccess') || 'Product deleted successfully');
+      setShowDeleteProductModal(false);
+      setProductToDelete(null);
+      setDeleteProductReason('');
+      // Refresh the full order to get updated products list and audit logs
+      const response = await api.get<{ success: true; data: Order }>(`/orders/${id}`);
+      setOrder(response.data.data);
+      setSavedScrollPosition(scrollPos);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || t('orderDetail.productDeleteFailed') || 'Failed to delete product');
+    } finally {
+      setDeletingProduct(false);
+    }
+  };
+
+  const updateOrderStatus = async (newStatus: OrderStatus, reason?: string) => {
+    if (!order || !id) return;
+
+    try {
+      setUpdating(true);
+      const scrollPos = window.scrollY;
+      await api.patch(`/orders/${id}/status`, {
+        status: newStatus,
+        notificationMethod: newStatus.startsWith('NOTIFIED_')
+          ? newStatus.replace('NOTIFIED_', '')
+          : undefined,
+        cancellationReason: newStatus === 'CANCELLED' ? reason : undefined
+      });
+
+      // Always fetch fresh order to ensure auditLogs are up to date
+      const freshResponse = await api.get<{ success: true; data: Order }>(`/orders/${id}`);
+      setOrder(freshResponse.data.data);
+      setSavedScrollPosition(scrollPos);
+      toast.success(t('orderDetail.statusUpdated'));
+      setShowStatusModal(false);
+    } catch (error: any) {
+      toast.error(error.response?.data?.error?.message || t('orderDetail.updateStatusGenericFailed'));
+    } finally {
+      setUpdating(false);
+    }
+  };
+
+  const handleStatusUpdate = (status: OrderStatus) => {
+    setSelectedStatus(status);
+    setCancellationReason(''); // Reset cancellation reason
+    setShowStatusModal(true);
+  };
+
+  const handleUpdateReceivedQuantity = async (productId: string, receivedQuantity: string | null) => {
+    if (!order || !id) return;
+
+    // Check if this product is already being updated to prevent race conditions
+    if (updatingProducts.has(productId)) {
+      return;
+    }
+
+    // Find the product to get the ordered quantity
+    const product = order.products.find((p) => p.id === productId);
+    if (!product) return;
+
+    // Client-side validation: Check if received quantity exceeds ordered quantity
+    if (receivedQuantity !== null && receivedQuantity !== '') {
+      const received = parseFloat(receivedQuantity);
+      const ordered = parseFloat(product.quantity) || 0;
+
+      if (isNaN(received)) {
+        toast.error(t('orderDetail.invalidQuantity') || 'Invalid quantity entered');
+        // Reset local value on error
+        setLocalReceivedQuantities((prev) => {
+          const newState = { ...prev };
+          delete newState[productId];
+          return newState;
+        });
+        return;
+      }
+
+      if (received < 0) {
+        toast.error(t('orderDetail.negativeQuantity') || 'Received quantity cannot be negative');
+        // Reset local value on error
+        setLocalReceivedQuantities((prev) => {
+          const newState = { ...prev };
+          delete newState[productId];
+          return newState;
+        });
+        return;
+      }
+
+      if (received > ordered) {
+        toast.error(
+          t('orderDetail.quantityExceeded') || 
+          `Received quantity (${received}) cannot exceed ordered quantity (${ordered})`
+        );
+        // Reset local value on error
+        setLocalReceivedQuantities((prev) => {
+          const newState = { ...prev };
+          delete newState[productId];
+          return newState;
+        });
+        return;
+      }
+    }
+
+    setUpdatingProducts((prev) => new Set(prev).add(productId));
+
+    try {
+      await api.patch(`/orders/${id}/products/${productId}/received`, {
+        receivedQuantity: receivedQuantity || null,
+      });
+
+      // Clear local value for this product after successful update
+      setLocalReceivedQuantities((prev) => {
+        const newState = { ...prev };
+        delete newState[productId];
+        return newState;
+      });
+
+      toast.success(t('orderDetail.receivedQuantityUpdated'));
+
+      // Refresh full order to get updated products, status and audit logs
+      const freshResponse = await api.get<{ success: true; data: Order }>(`/orders/${id}`);
+      setOrder(freshResponse.data.data);
+    } catch (error: any) {
+      console.error('Failed to update received quantity:', error);
+      const errorMessage = error.response?.data?.error?.message || t('orderDetail.updateFailed');
+      toast.error(errorMessage);
+      // Reset local value on error
+      setLocalReceivedQuantities((prev) => {
+        const newState = { ...prev };
+        delete newState[productId];
+        return newState;
+      });
+    } finally {
+      setUpdatingProducts((prev) => {
+        const newSet = new Set(prev);
+        newSet.delete(productId);
+        return newSet;
+      });
+    }
+  };
+
+  const handleSaveQuantityClick = (productId: string) => {
+    const value = localReceivedQuantities[productId];
+    const product = order?.products.find((p) => p.id === productId);
+    const currentSaved = product?.receivedQuantity || '';
+    
+    if (value !== undefined && value !== currentSaved) {
+      handleUpdateReceivedQuantity(productId, value || null);
+    }
+  };
+
+  const handleQuantityBlur = (productId: string, value: string) => {
+    const product = order?.products.find((p) => p.id === productId);
+    const currentSaved = product?.receivedQuantity || '';
+    
+    // Only show confirmation if value has changed
+    if (value !== currentSaved) {
+      setPendingQuantityUpdate({ productId, value: value || null });
+      setShowSaveQuantityModal(true);
+    } else {
+      // Clear local value if unchanged
+      setLocalReceivedQuantities((prev) => {
+        const newState = { ...prev };
+        delete newState[productId];
+        return newState;
+      });
+    }
+  };
+
+  const confirmSaveQuantity = () => {
+    if (pendingQuantityUpdate) {
+      handleUpdateReceivedQuantity(pendingQuantityUpdate.productId, pendingQuantityUpdate.value);
+      setShowSaveQuantityModal(false);
+      setPendingQuantityUpdate(null);
+    }
+  };
+
+  const cancelSaveQuantity = () => {
+    if (pendingQuantityUpdate) {
+      // Restore saved value
+      const product = order?.products.find((p) => p.id === pendingQuantityUpdate.productId);
+      setLocalReceivedQuantities((prev) => {
+        const newState = { ...prev };
+        if (product) {
+          newState[pendingQuantityUpdate.productId] = product.receivedQuantity || '';
+        } else {
+          delete newState[pendingQuantityUpdate.productId];
+        }
+        return newState;
+      });
+      setShowSaveQuantityModal(false);
+      setPendingQuantityUpdate(null);
+    }
+  };
+
+  const confirmStatusUpdate = () => {
+    if (selectedStatus) {
+      // Validate cancellation reason is required when cancelling
+      if (selectedStatus === 'CANCELLED' && !cancellationReason.trim()) {
+        toast.error(t('orderDetail.cancellationReasonRequired'));
+        return;
+      }
+      updateOrderStatus(selectedStatus, cancellationReason.trim() || undefined);
+    }
+  };
+
+  const formatDate = (dateString: string) => {
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+  };
+
+  const formatDateTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    const seconds = String(date.getSeconds()).padStart(2, '0');
+    return `${day}/${month}/${year} ${hours}:${minutes}:${seconds}`;
+  };
+
+  const getActionIcon = (action: string) => {
+    switch (action) {
+      case 'CREATE':
+        return <Plus size={14} />;
+      case 'UPDATE':
+      case 'QUANTITY_UPDATE':
+        return <Edit2 size={14} />;
+      case 'EDIT_ORDER':
+        return <Edit2 size={14} />;
+      case 'STATUS_CHANGE':
+        return <CheckCircle size={14} />;
+      case 'PRODUCT_DELETED':
+        return <Trash2 size={14} />;
+      default:
+        return <AlertCircle size={14} />;
+    }
+  };
+
+  const getActionLabel = (action: string) => {
+    switch (action) {
+      case 'CREATE':
+        return t('orderDetail.actionCreate');
+      case 'UPDATE':
+      case 'QUANTITY_UPDATE':
+        return t('orderDetail.actionUpdate');
+      case 'EDIT_ORDER':
+        return t('orderDetail.actionEditOrder');
+      case 'STATUS_CHANGE':
+        return t('orderDetail.actionStatusChange');
+      case 'PRODUCT_DELETED':
+        return t('orderDetail.actionProductDeleted');
+      default:
+        return action;
+    }
+  };
+
+  const getFieldLabel = (fieldName: string) => {
+    // Translate common field names
+    const fieldTranslations: Record<string, string> = {
+      'status': t('common.status'),
+      'customerName': t('orders.customerName'),
+      'customerPhone': t('orders.customerPhone'),
+      'observations': t('orders.observations'),
+      'totalAmount': t('orderDetail.totalAmount'),
+      'receivedQuantity': t('orderDetail.receivedQuantity'),
+      'price': t('orderDetail.price'),
+      // Audit log custom fields from backend
+      'supplier': t('orderDetail.supplier'),
+      'product': t('orderDetail.productRef'),
+      'products': t('orderDetail.products'),
+      'quantity': t('orderDetail.quantity'),
+    };
+    return fieldTranslations[fieldName] || fieldName;
+  };
+
+  const translateStatusValue = (statusValue: string) => {
+    // If it's a status code, translate it using getStatusLabel
+    // Common status codes that need translation
+    const statusCodes = ['PENDING', 'RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'CANCELLED', 'INCOMPLETO', 'DELIVERED_COUNTER', 'READY_TO_SEND', 'SENT'];
+    if (statusCodes.includes(statusValue)) {
+      return getStatusLabel(statusValue);
+    }
+    return statusValue;
+  };
+
+  if (loading) {
+    return (
+      <div className="page-container">
+        <div className="loading-container">
+          <Loader2 className="spinner" size={32} />
+          <p>{t('orderDetail.loadingOrder')}</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!order) {
+    return (
+      <div className="page-container">
+        <div className="empty-state">
+          <AlertCircle size={48} />
+          <p>{t('orderDetail.orderNotFound')}</p>
+          <button className="btn-primary" onClick={() => navigate('/orders')}>
+            {t('orderDetail.backToOrders')}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="page-container">
+      <div className="page-header">
+        <button
+          className="btn-icon"
+          onClick={() => navigate('/orders')}
+          title={t('orderDetail.backToOrders')}
+        >
+          <ArrowLeft size={20} />
+        </button>
+        <div>
+          <h1>{t('orderDetail.title')}</h1>
+        </div>
+        <div className="header-actions" style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {isAdmin && (
+            <button
+              className="btn-secondary"
+              onClick={() => setShowDeleteModal(true)}
+            >
+              <Trash2 size={18} />
+              {t('orderDetail.deleteOrder')}
+            </button>
+          )}
+          <button
+            className="btn-secondary"
+            onClick={() => navigate(`/orders/${id}/edit`)}
+          >
+            <Edit2 size={18} />
+            {t('orderDetail.editOrder')}
+          </button>
+        </div>
+      </div>
+
+      <div className="order-detail-grid">
+        {/* {t('orderDetail.orderInfo')} */}
+        <section className="detail-card">
+          <h2>{t('orderDetail.orderInfo')}</h2>
+          <div className="detail-content">
+            <div className="detail-row">
+              <span className="detail-label">{t('orderDetail.orderNumber')}</span>
+              <span className="detail-value" style={{ fontWeight: 600, color: 'var(--primary)' }}>{order.orderNumber || '-'}</span>
+            </div>
+            <div className="detail-row">
+              <span className="detail-label">{t('common.status')}</span>
+              <div className="detail-value">
+                <span 
+                  className="status-badge status-custom"
+                  style={{ ...getStatusStyle(order.status), display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}
+                >
+                  {getStatusIcon(order.status, getStatusStyle(order.status).color)}
+                  {getStatusLabel(order.status)}
+                </span>
+              </div>
+            </div>
+            <div className="detail-row">
+              <span className="detail-label">{t('orders.createdAt')}</span>
+              <span className="detail-value">{formatDate(order.createdAt)}</span>
+            </div>
+            <div className="detail-row">
+              <span className="detail-label">{t('orderDetail.createdBy')}</span>
+              <span className="detail-value">
+                <User size={16} />
+                {order.createdBy.username}
+              </span>
+            </div>
+            <div className="detail-row">
+              <span className="detail-label">{t('orders.updatedAt')}</span>
+              <span className="detail-value">{formatDate(order.updatedAt)}</span>
+            </div>
+            {order.notifiedAt && (
+              <div className="detail-row">
+                <span className="detail-label">{t('orders.notifiedAt')}</span>
+                <span className="detail-value">{formatDate(order.notifiedAt)}</span>
+              </div>
+            )}
+            <div className="detail-row">
+              <span className="detail-label">{t('orderDetail.totalAmount')}</span>
+              <span className="detail-value total-amount">{order.totalAmount} €</span>
+            </div>
+          </div>
+        </section>
+
+        {/* {t('orderDetail.customerInfo')} */}
+        <section className="detail-card">
+          <h2>{t('orderDetail.customerInfo')}</h2>
+          <div className="detail-content">
+            <div className="detail-row">
+              <span className="detail-label">{t('orders.customerName')}</span>
+              <span className="detail-value">{order.customerName || order.customer?.name || '-'}</span>
+            </div>
+            <div className="detail-row">
+              <span className="detail-label">{t('orders.customerPhone')}</span>
+              <div className="detail-value phone-actions">
+                {(() => {
+                  const phone = order.customerPhone || order.customer?.phone;
+                  if (!phone) {
+                    return <span>-</span>;
+                  }
+                  const countryCode = order.countryCode || order.customer?.countryCode || '+34';
+                  const fullPhone = `${countryCode} ${phone}`;
+                  return (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        navigator.clipboard.writeText(fullPhone);
+                        toast.success(t('common.copied'));
+                      }}
+                      className="phone-link"
+                      style={{ background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.5rem' }}
+                      title={t('orders.clickToCopy')}
+                    >
+                      <Phone size={16} />
+                      {fullPhone}
+                    </button>
+                  );
+                })()}
+                <button
+                  className="btn-icon btn-whatsapp"
+                  onClick={handleWhatsAppClick}
+                  title={t('orderDetail.sendWhatsApp')}
+                >
+                  <WhatsAppIcon size={24} />
+                </button>
+              </div>
+            </div>
+            {order.observations && (
+              <div className="detail-row">
+                <span className="detail-label">{t('orders.observations')}</span>
+                <span className="detail-value observations">{order.observations}</span>
+              </div>
+            )}
+            {order.cancellationReason && (
+              <div className="detail-row">
+                <span className="detail-label">{t('orderDetail.cancellationReason')}</span>
+                <span className="detail-value" style={{ color: 'var(--error-color)', fontStyle: 'italic' }}>
+                  {order.cancellationReason}
+                </span>
+              </div>
+            )}
+          </div>
+        </section>
+
+        {/* Status Actions */}
+        <section className="detail-card">
+          <h2>{t('orderDetail.updateStatus')}</h2>
+          <div className="status-actions">
+            {/* Show actionable status options (PENDING, RECEIVED and INCOMPLETO are automatic/initial states, not selectable) */}
+            {(['READY_TO_SEND', 'SENT', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'DELIVERED_COUNTER', 'CANCELLED'] as OrderStatus[]).map((status) => {
+              const isActive = order.status === status;
+
+              // Completed states: RECEIVED, NOTIFIED_CALL, NOTIFIED_WHATSAPP, DELIVERED_COUNTER
+              const completedStates: OrderStatus[] = ['RECEIVED', 'NOTIFIED_CALL', 'NOTIFIED_WHATSAPP', 'DELIVERED_COUNTER'];
+              const isOrderCompleted = completedStates.includes(order.status as OrderStatus);
+
+              // Check if all products are fully received
+              const productsArr = Array.isArray(order.products) ? order.products : [];
+              const isFullyReceivedByProducts =
+                productsArr.length === 0 ||
+                productsArr.every((p) => {
+                  const qty = parseFloat(p.quantity || '0') || 0;
+                  if (p.receivedQuantity === null || p.receivedQuantity === undefined || p.receivedQuantity === '') return false;
+                  const rec = parseFloat(p.receivedQuantity);
+                  if (Number.isNaN(rec)) return false;
+                  return rec >= qty;
+                });
+
+              // READY_TO_SEND requires order to be completed and fully received
+              const isBlockedReadyToSend =
+                status === 'READY_TO_SEND' && (!isOrderCompleted || !isFullyReceivedByProducts);
+
+              // SENT can only be set when order is currently in READY_TO_SEND status
+              const isBlockedSent = status === 'SENT' && order.status !== 'READY_TO_SEND';
+
+              // Block notification statuses until order is fully received/completed,
+              // and also block them once order is in READY_TO_SEND or later
+              const isInSendingFlow = order.status === 'READY_TO_SEND' || order.status === 'SENT';
+              const isBlockedNotifiedCall = status === 'NOTIFIED_CALL' && (!isFullyReceivedByProducts || isInSendingFlow);
+              const isBlockedNotifiedWhatsApp = status === 'NOTIFIED_WHATSAPP' && (!isFullyReceivedByProducts || isInSendingFlow);
+              const isBlockedDeliveredCounter = status === 'DELIVERED_COUNTER' && (!isFullyReceivedByProducts || isInSendingFlow);
+
+              // CANCELLED can only be set when order is PENDING or INCOMPLETO
+              const isBlockedCancelled = status === 'CANCELLED' && order.status !== 'PENDING' && order.status !== 'INCOMPLETO';
+
+              // Once SENT, no status changes are allowed
+              const isBlockedBySent = order.status === 'SENT' && !isActive;
+
+              const isDisabled = updating || isActive || isBlockedReadyToSend || isBlockedSent || isBlockedNotifiedCall || isBlockedNotifiedWhatsApp || isBlockedDeliveredCounter || isBlockedCancelled || isBlockedBySent;
+              const statusConfigData = getStatusConfig(status, statusConfig);
+              
+              // Use the exact same style values as the status badge
+              const statusStyle = getStatusStyle(status);
+              
+              // Get icon for each status with the same color as text
+              let statusIcon;
+              const iconColor = statusStyle.color;
+              switch (status) {
+                case 'PENDING':
+                  statusIcon = <Clock size={20} color={iconColor} />;
+                  break;
+                case 'RECEIVED':
+                  statusIcon = <AlertTriangle size={20} color={iconColor} />;
+                  break;
+                case 'DELIVERED_COUNTER':
+                  statusIcon = <Package size={20} color={iconColor} />;
+                  break;
+                case 'NOTIFIED_CALL':
+                  statusIcon = <PhoneCall size={20} color={iconColor} />;
+                  break;
+                case 'NOTIFIED_WHATSAPP':
+                  statusIcon = <WhatsAppIcon size={20} color={iconColor} />;
+                  break;
+                case 'READY_TO_SEND':
+                  statusIcon = <Send size={20} color={iconColor} />;
+                  break;
+                case 'SENT':
+                  statusIcon = <CheckCircle size={20} color={iconColor} />;
+                  break;
+                case 'CANCELLED':
+                  statusIcon = <X size={20} color={iconColor} />;
+                  break;
+                default:
+                  statusIcon = <Clock size={20} color={iconColor} />;
+              }
+              
+              return (
+            <button
+                  key={status}
+                  className="status-action-btn"
+                  style={{
+                    // Use configured colors even when active, but add visual distinction
+                    borderColor: statusConfigData.color || '#6b7280',
+                    borderWidth: isActive ? '3px' : '2px',
+                    // Use exact same colors as status badge (always use configured colors)
+                    color: statusStyle.color,
+                    backgroundColor: statusStyle.backgroundColor,
+                    // Use exact same font styles as status badge
+                    fontFamily: statusStyle.fontFamily,
+                    fontSize: statusStyle.fontSize,
+                    fontWeight: statusStyle.fontWeight,
+                    // Keep button behavior
+                    cursor: isActive ? 'default' : 'pointer',
+                    // Add visual distinction for active state: thicker border and subtle shadow
+                    boxShadow: isActive ? `0 0 0 3px ${statusConfigData.color || '#6b7280'}30, 0 2px 4px rgba(0,0,0,0.1)` : 'none',
+                  }}
+                  onClick={() => status === 'NOTIFIED_WHATSAPP' ? handleWhatsAppClick() : handleStatusUpdate(status)}
+                  disabled={isDisabled}
+                  title={
+                    isActive
+                      ? t('orderDetail.currentStatus')
+                      : isBlockedBySent
+                        ? t('orderDetail.blockedBySent') || 'El pedido ya fue enviado, no se puede cambiar el estado.'
+                      : isBlockedCancelled
+                        ? t('orderDetail.blockedCancelled') || 'Solo se puede cancelar cuando el pedido está pendiente de recibir o incompleto.'
+                      : (isBlockedNotifiedCall || isBlockedNotifiedWhatsApp || isBlockedDeliveredCounter) && isInSendingFlow
+                        ? t('orderDetail.blockedByReadyToSend') || 'No disponible una vez preparado para enviar.'
+                      : isBlockedReadyToSend
+                        ? '"Preparado para enviar" solo se puede activar cuando el pedido está completado.'
+                      : isBlockedSent
+                        ? '"Enviado" solo se puede activar cuando el pedido está en estado "Preparado para enviar".'
+                      : getStatusLabel(status)
+                  }
+                  onMouseEnter={(e) => {
+                    if (!isDisabled && !isActive) {
+                      e.currentTarget.style.background = statusConfigData.color || '#6b7280';
+                      e.currentTarget.style.color = '#ffffff';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isDisabled && !isActive) {
+                      e.currentTarget.style.background = statusStyle.backgroundColor;
+                      e.currentTarget.style.color = statusStyle.color;
+                    }
+                  }}
+                >
+                  {statusIcon}
+                  {getStatusLabel(status)}
+            </button>
+              );
+            })}
+          </div>
+        </section>
+
+        {/* Products */}
+        <section className="detail-card full-width">
+          <h2>
+            {t('orderDetail.products')} ({order.products.filter(p => !p.deletionReason).length})
+            {order.products.some(p => p.deletionReason) && (
+              <span style={{ color: 'var(--danger)', fontSize: '0.85em', marginLeft: '0.5rem' }}>
+                — {order.products.filter(p => p.deletionReason).length} {t('orderDetail.deletedProducts') || 'eliminado(s)'}
+              </span>
+            )}
+          </h2>
+          <div className="products-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>{t('orderDetail.supplier')}</th>
+                  <th>{t('orderDetail.productRef')}</th>
+                  <th>{t('orderDetail.quantity')}</th>
+                  <th style={{ textAlign: 'center' }}>{t('orderDetail.receivedQuantity')}</th>
+                  <th>{t('orderDetail.priceWithoutIGIC')}</th>
+                  <th>{t('orderDetail.priceWithIGIC')}</th>
+                  <th>{t('orderDetail.subtotal')}</th>
+                  <th style={{ width: '60px' }}>{t('common.actions')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {order.products.map((product) => {
+                  const quantity = parseFloat(product.quantity) || 0;
+                  const received = product.receivedQuantity ? parseFloat(product.receivedQuantity) : 0;
+                  const price = parseFloat(product.price) || 0;
+                  const subtotal = quantity * price;
+                  const isReceived = received > 0;
+                  const isFullyReceived = received >= quantity;
+                  const isUpdating = updatingProducts.has(product.id);
+                  const isDeleted = !!product.deletionReason;
+                  const activeProducts = order.products.filter(p => !p.deletionReason);
+
+                  return (
+                    <React.Fragment key={product.id}>
+                    <tr
+                      className={isDeleted ? 'product-deleted' : isReceived ? (isFullyReceived ? 'product-received' : 'product-partial') : ''}
+                    >
+                      <td style={isDeleted ? { textDecoration: 'line-through' } : undefined}>{product.supplier.name}</td>
+                      <td style={isDeleted ? { textDecoration: 'line-through' } : undefined}>{product.productRef}</td>
+                      <td style={isDeleted ? { textDecoration: 'line-through' } : undefined}>{Math.round(parseFloat(product.quantity) || 0)}</td>
+                      <td>
+                        {isDeleted ? (
+                          <span style={{ textDecoration: 'line-through', display: 'block', textAlign: 'center' }}>{received || 0}</span>
+                        ) : (
+                        <div style={{ position: 'relative', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <input
+                            type="number"
+                            min="0"
+                            max={quantity}
+                            step="1"
+                            className={`received-qty-input ${isReceived ? 'received-qty-filled' : ''}`}
+                            value={localReceivedQuantities[product.id] !== undefined ? localReceivedQuantities[product.id] : (received || '')}
+                            onChange={(e) => {
+                              const value = e.target.value;
+                              // Update local state only, don't call API yet
+                              setLocalReceivedQuantities((prev) => ({
+                                ...prev,
+                                [product.id]: value
+                              }));
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                const value = e.currentTarget.value;
+                                handleQuantityBlur(product.id, value);
+                                e.currentTarget.blur();
+                              }
+                            }}
+                            onBlur={(e) => {
+                              const value = e.target.value;
+                              handleQuantityBlur(product.id, value);
+                            }}
+                            placeholder="0"
+                            disabled={isUpdating}
+                          />
+                          {localReceivedQuantities[product.id] !== undefined &&
+                           localReceivedQuantities[product.id] !== (product.receivedQuantity || '') && (
+                            <button
+                              onClick={() => handleSaveQuantityClick(product.id)}
+                              disabled={isUpdating}
+                              style={{
+                                position: 'absolute',
+                                right: '-32px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: '4px',
+                                border: '1px solid var(--primary-color)',
+                                borderRadius: '4px',
+                                backgroundColor: 'var(--primary-color)',
+                                color: 'white',
+                                cursor: isUpdating ? 'not-allowed' : 'pointer',
+                                opacity: isUpdating ? 0.5 : 1,
+                                minWidth: '28px',
+                                minHeight: '28px',
+                              }}
+                              title={t('common.save') || 'Save'}
+                            >
+                              <Save size={14} />
+                            </button>
+                          )}
+                          {isFullyReceived && (
+                            <CheckCircle size={16} style={{ color: 'var(--success)' }} />
+                          )}
+                        </div>
+                        )}
+                      </td>
+                      <td style={isDeleted ? { textDecoration: 'line-through' } : undefined}>
+                        {(() => {
+                          const priceWithIGIC = parseFloat(product.price) || 0;
+                          if (priceWithIGIC === 0) return '-';
+                          const priceWithoutIGIC = priceWithIGIC / 1.07;
+                          return priceWithoutIGIC.toFixed(2) + ' €';
+                        })()}
+                      </td>
+                      <td style={isDeleted ? { textDecoration: 'line-through' } : undefined}>{product.price} €</td>
+                      <td style={isDeleted ? { textDecoration: 'line-through' } : undefined}>{subtotal.toFixed(2)} €</td>
+                      <td style={{ textAlign: 'center' }}>
+                        {isDeleted ? (
+                          <Trash2 size={16} style={{ color: 'var(--text-muted)', opacity: 0.5 }} />
+                        ) : (
+                        <button
+                          onClick={() => {
+                            setProductToDelete(product);
+                            setShowDeleteProductModal(true);
+                          }}
+                          disabled={activeProducts.length <= 1 || isReceived}
+                          className="btn-icon-danger"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            padding: '6px',
+                            border: 'none',
+                            borderRadius: '4px',
+                            backgroundColor: (activeProducts.length <= 1 || isReceived) ? 'var(--bg-secondary)' : 'var(--danger-light)',
+                            color: (activeProducts.length <= 1 || isReceived) ? 'var(--text-muted)' : 'var(--danger)',
+                            cursor: (activeProducts.length <= 1 || isReceived) ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.15s ease',
+                          }}
+                          title={activeProducts.length <= 1
+                            ? (t('orderDetail.cannotDeleteLastProduct') || 'Cannot delete the last product')
+                            : isReceived
+                            ? (t('orderDetail.cannotDeleteReceivedProduct') || 'Cannot delete a received product')
+                            : (t('orderDetail.deleteProduct') || 'Delete product')
+                          }
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                        )}
+                      </td>
+                    </tr>
+                    {isDeleted && (
+                      <tr className="product-deleted-reason">
+                        <td colSpan={8} style={{ padding: '0.25rem 1rem 0.75rem', borderTop: 'none' }}>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--danger)', fontStyle: 'italic' }}>
+                            {t('orderDetail.deletionReason') || 'Motivo'}: {product.deletionReason}
+                          </span>
+                        </td>
+                      </tr>
+                    )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+              <tfoot>
+                <tr>
+                  <td colSpan={7} className="text-right">{t('orderDetail.total')}:</td>
+                  <td className="total-amount">{order.totalAmount} €</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        </section>
+
+        {/* Audit History */}
+        {order.auditLogs && order.auditLogs.length > 0 && (
+          <section className="detail-card full-width">
+            <h2>{t('orderDetail.orderHistory')}</h2>
+            <div className="audit-timeline">
+              {order.auditLogs.map((log) => (
+                <div key={log.id} className="audit-entry">
+                  <div className="audit-icon">
+                    {getActionIcon(log.action)}
+                  </div>
+                  <div className="audit-content">
+                    <div className="audit-header">
+                      <span className="audit-action">{getActionLabel(log.action)}</span>
+                      <span className="audit-user">{t('orderDetail.by')} {log.user.username}</span>
+                      <span className="audit-time">{formatDateTime(log.timestamp)}</span>
+                    </div>
+                    {log.fieldChanged && (
+                      <div className="audit-details">
+                        <div>
+                          {log.metadata && (() => {
+                            try {
+                              const meta = typeof log.metadata === 'string' ? JSON.parse(log.metadata) : log.metadata;
+                              if (meta.productRef && meta.supplierName) {
+                                return (
+                                  <span style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginRight: '0.25rem' }}>
+                                    {meta.productRef} ({meta.supplierName})
+                                  </span>
+                                );
+                              }
+                              return null;
+                            } catch {
+                              return null;
+                            }
+                          })()}
+                          <span className="field-name">{getFieldLabel(log.fieldChanged)}: </span>
+                          {log.oldValue && (
+                            <span className="old-value">
+                              {log.fieldChanged === 'status' ? translateStatusValue(log.oldValue) : log.oldValue}
+                              {log.fieldChanged === 'price' ? ' €' : ''}
+                            </span>
+                          )}
+                          {log.oldValue && log.newValue && <span> → </span>}
+                          {log.newValue && (
+                            <span className="new-value">
+                              {log.fieldChanged === 'status' ? translateStatusValue(log.newValue) : log.newValue}
+                              {log.fieldChanged === 'price' ? ' €' : ''}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+      </div>
+
+      {/* Status Update Modal */}
+      <ConfirmModal
+        isOpen={showStatusModal}
+        onClose={() => setShowStatusModal(false)}
+        onConfirm={confirmStatusUpdate}
+        title={t('orderDetail.confirmStatusUpdate')}
+        message={
+          <div>
+            <p>{t('orderDetail.confirmStatusUpdateMessage')}</p>
+            <div className="status-preview">
+              <span 
+                className="status-badge status-custom"
+                style={{ ...getStatusStyle(selectedStatus!), display: 'inline-flex', alignItems: 'center', gap: '0.375rem' }}
+              >
+                {getStatusIcon(selectedStatus!, getStatusStyle(selectedStatus!).color)}
+                {getStatusLabel(selectedStatus!)}
+              </span>
+            </div>
+            {selectedStatus === 'CANCELLED' && (
+              <div style={{ marginTop: '1rem' }}>
+                <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 500, color: 'var(--text-primary)' }}>
+                  {t('orderDetail.cancellationReason')} <span style={{ color: 'var(--error-color)' }}>*</span>
+                </label>
+                <textarea
+                  value={cancellationReason}
+                  onChange={(e) => setCancellationReason(e.target.value)}
+                  placeholder={t('orderDetail.enterCancellationReason')}
+                  style={{
+                    width: '100%',
+                    minHeight: '100px',
+                    padding: '0.75rem',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: 'var(--radius-md)',
+                    backgroundColor: 'var(--input-bg)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.9375rem',
+                    fontFamily: 'inherit',
+                    resize: 'vertical'
+                  }}
+                  required
+                />
+              </div>
+            )}
+            {selectedStatus !== 'CANCELLED' && (
+              <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                {t('orderDetail.statusUpdateDescription')}
+              </p>
+            )}
+          </div>
+        }
+        confirmText={t('common.confirm')}
+        cancelText={t('common.cancel')}
+        type="info"
+        loading={updating}
+      />
+
+      {/* WhatsApp Confirmation Modal */}
+      {order && (
+        <WhatsAppModal
+          isOpen={showWhatsAppModal}
+          onClose={() => setShowWhatsAppModal(false)}
+          onConfirm={confirmWhatsAppAction}
+          phoneNumber={(() => {
+            const phone = order.customerPhone || order.customer?.phone || '';
+            const countryCode = order.countryCode || order.customer?.countryCode || '+34';
+            return phone ? `${countryCode}${phone}` : '';
+          })()}
+          initialMessage={whatsappMessage}
+        />
+      )}
+
+      {/* Phone Call Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showPhoneCallModal}
+        onClose={() => setShowPhoneCallModal(false)}
+        onConfirm={confirmPhoneCallAction}
+        title={t('orderDetail.confirmCall')}
+        message={
+          <div>
+            <p>
+              {(() => {
+                const phone = order?.customerPhone || order?.customer?.phone;
+                const countryCode = order?.countryCode || order?.customer?.countryCode || '+34';
+                const fullPhone = phone ? `${countryCode} ${phone}` : '-';
+                return t('orderDetail.callConfirm', { phone: fullPhone });
+              })()}
+            </p>
+            <p style={{ marginTop: '1rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+              {t('orderDetail.callDescription')}
+            </p>
+          </div>
+        }
+        confirmText={t('orderDetail.callCustomer')}
+        cancelText={t('common.cancel')}
+        type="info"
+      />
+
+      {/* Delete Order Modal */}
+      {isAdmin && (
+        <ConfirmModal
+          isOpen={showDeleteModal}
+          onClose={() => setShowDeleteModal(false)}
+          onConfirm={handleDeleteOrder}
+          title={t('orderDetail.deleteOrder')}
+          message={t('orderDetail.deleteConfirm')}
+          confirmText={t('orderDetail.deleteOrder')}
+          cancelText={t('common.cancel')}
+          type="danger"
+          loading={deleting}
+        />
+      )}
+
+      {/* Delete Product Modal */}
+      <ConfirmModal
+        isOpen={showDeleteProductModal}
+        onClose={() => {
+          setShowDeleteProductModal(false);
+          setProductToDelete(null);
+          setDeleteProductReason('');
+        }}
+        onConfirm={handleDeleteProduct}
+        title={t('orderDetail.deleteProductTitle') || 'Delete Product'}
+        message={
+          productToDelete ? (
+            <div>
+              <p>{t('orderDetail.deleteProductConfirm') || 'Are you sure you want to delete this product from the order?'}</p>
+              <div style={{ marginTop: '1rem', padding: '0.75rem', backgroundColor: 'var(--bg-secondary)', borderRadius: '6px' }}>
+                <p style={{ fontWeight: 600 }}>{productToDelete.supplier.name}</p>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  {t('orderDetail.productRef')}: {productToDelete.productRef}
+                </p>
+                <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                  {t('orderDetail.quantity')}: {productToDelete.quantity} × {productToDelete.price} €
+                </p>
+              </div>
+              <div style={{ marginTop: '1rem' }}>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: '0.5rem', fontSize: '0.875rem' }}>
+                  {t('orderDetail.deleteProductReasonLabel') || 'Reason for deletion'} *
+                </label>
+                <textarea
+                  value={deleteProductReason}
+                  onChange={(e) => setDeleteProductReason(e.target.value)}
+                  placeholder={t('orderDetail.deleteProductReasonPlaceholder') || 'Write the reason for deleting this product...'}
+                  style={{
+                    width: '100%',
+                    minHeight: '80px',
+                    padding: '0.5rem 0.75rem',
+                    border: '1px solid var(--border-color)',
+                    borderRadius: '6px',
+                    backgroundColor: 'var(--input-bg)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.875rem',
+                    resize: 'vertical',
+                    fontFamily: 'inherit',
+                  }}
+                />
+              </div>
+              <p style={{ marginTop: '0.75rem', fontSize: '0.875rem', color: 'var(--warning)' }}>
+                {t('orderDetail.deleteProductWarning') || 'This action will be recorded in the order history.'}
+              </p>
+            </div>
+          ) : null
+        }
+        confirmText={t('common.delete') || 'Delete'}
+        cancelText={t('common.cancel')}
+        type="danger"
+        loading={deletingProduct}
+      />
+
+      {/* Save Quantity Confirmation Modal */}
+      <ConfirmModal
+        isOpen={showSaveQuantityModal}
+        onClose={cancelSaveQuantity}
+        onConfirm={confirmSaveQuantity}
+        title={t('orderDetail.saveQuantity') || 'Save Quantity'}
+        message={
+          pendingQuantityUpdate ? (
+            <div>
+              <p>{t('orderDetail.saveQuantityMessage') || 'Do you want to save the changes to the received quantity?'}</p>
+              {order && (() => {
+                const product = order.products.find(p => p.id === pendingQuantityUpdate.productId);
+                return product ? (
+                  <p style={{ marginTop: '0.5rem', fontSize: '0.875rem', color: 'var(--text-secondary)' }}>
+                    <strong>{product.productRef}</strong>: {product.receivedQuantity || '0'} → {pendingQuantityUpdate.value || '0'}
+                  </p>
+                ) : null;
+              })()}
+            </div>
+          ) : null
+        }
+        confirmText={t('common.save') || 'Save'}
+        cancelText={t('common.cancel')}
+        type="info"
+      />
+    </div>
+  );
+}
